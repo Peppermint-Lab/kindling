@@ -1,0 +1,40 @@
+# Binaries
+/bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go
+/vendor/
+
+# Node
+node_modules/
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data
+*.db
+*.db-wal
+*.db-shm
+
+# Env
+.env
+.env.local
+*.env
+
+# Build artifacts
+/data/
+*.qcow2
+*.ext4
+*.cpio.gz
