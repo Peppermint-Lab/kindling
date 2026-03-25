@@ -114,6 +114,13 @@ func (r *AppleRuntime) startVM(ctx context.Context, inst Instance) (string, erro
 	}
 	vmCfg.SetSerialPortsVirtualMachineConfiguration([]*vz.VirtioConsoleDeviceSerialPortConfiguration{consoleCfg})
 
+	// Vsock device (for guest agent ↔ host communication).
+	vsockCfg, err := vz.NewVirtioSocketDeviceConfiguration()
+	if err != nil {
+		return "", fmt.Errorf("create vsock config: %w", err)
+	}
+	vmCfg.SetSocketDevicesVirtualMachineConfiguration([]vz.SocketDeviceConfiguration{vsockCfg})
+
 	// Entropy device (for /dev/random in guest).
 	entropyCfg, err := vz.NewVirtioEntropyDeviceConfiguration()
 	if err != nil {
