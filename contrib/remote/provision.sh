@@ -49,8 +49,11 @@ if ! cloud-hypervisor --version 2>/dev/null | grep -q "$CH_VERSION"; then
 fi
 echo "Cloud Hypervisor: $(cloud-hypervisor --version)"
 
+# Create data directories (before downloading anything)
+sudo mkdir -p /data/base /data/work
+sudo chown -R "$USER:$USER" /data
+
 # Kernel/firmware for Cloud Hypervisor
-sudo mkdir -p /data
 if [ ! -f /data/vmlinuz.bin ]; then
   echo "Downloading hypervisor firmware..."
   curl -fsSL "https://github.com/cloud-hypervisor/rust-hypervisor-firmware/releases/download/0.4.2/hypervisor-fw" \
@@ -87,10 +90,6 @@ if ! docker ps | grep -q kindling-postgres; then
     postgres:17 \
     postgres -c wal_level=logical -c max_replication_slots=10 -c max_wal_senders=10
 fi
-
-# Create data directories
-sudo mkdir -p /data/base /data/work
-sudo chown -R "$USER:$USER" /data
 
 echo ""
 echo "=== Provisioning complete ==="
