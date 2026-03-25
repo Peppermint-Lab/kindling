@@ -230,6 +230,16 @@ WHERE v.server_id = $1
 -- name: DeploymentFindByProjectID :many
 SELECT * FROM deployments WHERE project_id = $1 ORDER BY created_at DESC;
 
+-- name: DeploymentLatestRunningByProjectID :one
+SELECT * FROM deployments
+WHERE project_id = $1
+  AND running_at IS NOT NULL
+  AND stopped_at IS NULL
+  AND failed_at IS NULL
+  AND deleted_at IS NULL
+ORDER BY running_at DESC
+LIMIT 1;
+
 -- name: DeploymentFindRecentWithProject :many
 SELECT
     d.id,

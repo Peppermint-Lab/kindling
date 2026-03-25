@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/githubapi"
 	"github.com/kindlingvm/kindling/internal/rpc"
 	"github.com/spf13/cobra"
 )
@@ -158,12 +160,18 @@ func deployCmd() *cobra.Command {
 	var (
 		projectID string
 		commit    string
+		ref       string
 		dbURL     string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "deploy",
 		Short: "Trigger a deployment",
+		Long: `Trigger a deployment for a project.
+
+Pass --commit with a SHA/branch the builder can fetch, or omit --commit to resolve
+the tip of a branch via the GitHub API (default branch, or the branch from --ref).
+Private repositories need GITHUB_TOKEN in the environment.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dbURL = resolveDBURL(dbURL)
 			pool, err := pgxpool.New(cmd.Context(), dbURL)
@@ -178,25 +186,47 @@ func deployCmd() *cobra.Command {
 			}
 
 			q := queries.New(pool)
+			resolved := commit
+			if strings.TrimSpace(resolved) == "" {
+				p, err := q.ProjectFirstByID(cmd.Context(), pgtype.UUID{Bytes: id, Valid: true})
+				if err != nil {
+					return fmt.Errorf("project not found: %w", err)
+				}
+				repo := strings.TrimSpace(p.GithubRepository)
+				if repo == "" {
+					return fmt.Errorf("project has no github_repository; pass --commit")
+				}
+				sha, usedRef, err := githubapi.ResolveCommit(cmd.Context(), nil, strings.TrimSpace(os.Getenv("GITHUB_TOKEN")), repo, ref)
+				if err != nil {
+					return fmt.Errorf("resolve GitHub ref: %w", err)
+				}
+				resolved = sha
+				short := resolved
+				if len(short) > 7 {
+					short = short[:7]
+				}
+				fmt.Fprintf(os.Stderr, "Resolved %s (%s) -> %s\n", githubapi.NormalizeRepo(repo), usedRef, short)
+			}
+
 			dep, err := q.DeploymentCreate(cmd.Context(), queries.DeploymentCreateParams{
 				ID:           pgtype.UUID{Bytes: uuid.New(), Valid: true},
 				ProjectID:    pgtype.UUID{Bytes: id, Valid: true},
-				GithubCommit: commit,
+				GithubCommit: resolved,
 			})
 			if err != nil {
 				return fmt.Errorf("create deployment: %w", err)
 			}
 
-			fmt.Printf("Deployment created: %x (commit: %s)\n", dep.ID.Bytes, commit)
+			fmt.Printf("Deployment created: %x (commit: %s)\n", dep.ID.Bytes, resolved)
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&projectID, "project", "", "Project UUID (required)")
-	cmd.Flags().StringVar(&commit, "commit", "", "Git commit SHA (required)")
+	cmd.Flags().StringVar(&commit, "commit", "", "Git commit SHA or ref for the builder tarball (optional; uses GitHub API when omitted)")
+	cmd.Flags().StringVar(&ref, "ref", "", "Branch or tag when resolving via GitHub API without --commit (default: repo default branch)")
 	cmd.Flags().StringVar(&dbURL, "database-url", "", "PostgreSQL connection string")
 	cmd.MarkFlagRequired("project")
-	cmd.MarkFlagRequired("commit")
 
 	return cmd
 }

@@ -101,6 +101,18 @@ export type GitHubSetup = {
   instructions: string
 }
 
+export type GitHead = {
+  repository: string
+  ref: string
+  sha: string
+  short_sha: string
+  running_deployment_id: string
+  running_commit: string
+  latest_deployed_commit: string
+  update_available: boolean
+  github_token_configured: boolean
+}
+
 export const api = {
   getMeta: () => request<APIMeta>("/api/meta"),
   updateMeta: (data: { public_base_url: string }) =>
@@ -127,6 +139,11 @@ export const api = {
     request<{ github_webhook_secret: string; webhook_url: string }>(
       `/api/projects/${projectId}/rotate-webhook-secret`,
       { method: "POST", body: JSON.stringify({}) },
+    ),
+
+  getGitHead: (projectId: string, ref?: string) =>
+    request<GitHead>(
+      `/api/projects/${projectId}/git-head${ref != null && ref !== "" ? `?ref=${encodeURIComponent(ref)}` : ""}`,
     ),
 
   listDeployments: (projectId: string) =>

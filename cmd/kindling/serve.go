@@ -81,6 +81,7 @@ func runServe(ctx context.Context, listenAddr, databaseURL, publicBaseURL string
 	// Set up core services
 	serverID := loadServerID()
 	q := queries.New(db.Pool)
+	ghTok := strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
 
 	// Register this server in the database.
 	_, err = q.ServerRegister(ctx, queries.ServerRegisterParams{
@@ -105,6 +106,7 @@ func runServe(ctx context.Context, listenAddr, databaseURL, publicBaseURL string
 
 	bldr := builder.New(builder.Config{
 		RegistryURL: "kindling",
+		GitHubToken: ghTok,
 	}, q, serverID)
 
 	deployer := deploy.New(q, serverID)
@@ -194,7 +196,7 @@ func runServe(ctx context.Context, listenAddr, databaseURL, publicBaseURL string
 	slog.Info("WAL listener started")
 
 	// API server
-	api := rpc.NewAPI(q)
+	api := rpc.NewAPI(q, ghTok)
 	webhookHandler := webhook.NewHandler(q)
 
 	mux := http.NewServeMux()

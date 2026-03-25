@@ -13,12 +13,14 @@ import (
 
 // API provides REST endpoints for the dashboard.
 type API struct {
-	q *queries.Queries
+	q           *queries.Queries
+	githubToken string
 }
 
-// NewAPI creates a new API handler.
-func NewAPI(q *queries.Queries) *API {
-	return &API{q: q}
+// NewAPI creates a new API handler. githubToken is optional; when set it is used
+// for GitHub API calls (private repos and higher rate limits).
+func NewAPI(q *queries.Queries, githubToken string) *API {
+	return &API{q: q, githubToken: githubToken}
 }
 
 // Register mounts all API routes on the given mux.
@@ -31,6 +33,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/projects/{id}", a.deleteProject)
 	mux.HandleFunc("GET /api/projects/{id}/deployments", a.listDeployments)
 	mux.HandleFunc("GET /api/projects/{id}/github-setup", a.getGitHubSetup)
+	mux.HandleFunc("GET /api/projects/{id}/git-head", a.gitHead)
 	mux.HandleFunc("POST /api/projects/{id}/rotate-webhook-secret", a.rotateWebhookSecret)
 	mux.HandleFunc("GET /api/deployments", a.listAllDeployments)
 	mux.HandleFunc("GET /api/deployments/{id}", a.getDeployment)

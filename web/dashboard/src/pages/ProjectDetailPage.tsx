@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react"
 import { useParams, Link, useNavigate } from "react-router-dom"
-import { api, type Project, type Deployment, type GitHubSetup, APIError } from "@/lib/api"
+import { api, type Project, type Deployment, type GitHubSetup, type GitHead, APIError } from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -16,7 +16,16 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ArrowLeftIcon, RocketIcon, TrashIcon, CopyIcon, RefreshCwIcon, FolderGitIcon, LayoutListIcon } from "lucide-react"
+import {
+  ArrowLeftIcon,
+  RocketIcon,
+  TrashIcon,
+  CopyIcon,
+  RefreshCwIcon,
+  FolderGitIcon,
+  LayoutListIcon,
+  CloudDownloadIcon,
+} from "lucide-react"
 import { phaseLabel, phaseVariant } from "@/lib/deploy-badge"
 
 async function copyText(label: string, text: string) {
@@ -43,6 +52,12 @@ export function ProjectDetailPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [rotating, setRotating] = useState(false)
+
+  const [gitHead, setGitHead] = useState<GitHead | null>(null)
+  const [gitHeadLoading, setGitHeadLoading] = useState(false)
+  const [sourceCheckError, setSourceCheckError] = useState<string | null>(null)
+  const [gitHeadRef, setGitHeadRef] = useState("")
+  const [fetchingHeadForDialog, setFetchingHeadForDialog] = useState(false)
 
   const loadGitHubSetup = useCallback(async (projectId: string, hasRepo: boolean) => {
     if (!hasRepo) {
@@ -83,6 +98,51 @@ export function ProjectDetailPage() {
       setError(e instanceof APIError ? e.message : "Deploy failed")
     } finally {
       setDeploying(false)
+    }
+  }
+
+  const handleCheckGitHead = async () => {
+    if (!id) return
+    setGitHeadLoading(true)
+    setSourceCheckError(null)
+    try {
+      const h = await api.getGitHead(id, gitHeadRef.trim() || undefined)
+      setGitHead(h)
+    } catch (e) {
+      setGitHead(null)
+      setSourceCheckError(e instanceof APIError ? e.message : "Could not reach GitHub")
+    } finally {
+      setGitHeadLoading(false)
+    }
+  }
+
+  const handleDeployGitHead = async (sha: string) => {
+    if (!id) return
+    setDeploying(true)
+    setError(null)
+    try {
+      const dep = await api.triggerDeploy(id, sha)
+      setDeployDialogOpen(false)
+      setCommitSha("")
+      navigate(`/deployments/${dep.id}`)
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Deploy failed")
+    } finally {
+      setDeploying(false)
+    }
+  }
+
+  const handleFetchLatestIntoDialog = async () => {
+    if (!id) return
+    setFetchingHeadForDialog(true)
+    setError(null)
+    try {
+      const h = await api.getGitHead(id)
+      setCommitSha(h.sha)
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not resolve latest commit")
+    } finally {
+      setFetchingHeadForDialog(false)
     }
   }
 
@@ -295,6 +355,71 @@ export function ProjectDetailPage() {
                     After rotating, update the secret in GitHub. New projects generate a secret when a repo is linked.
                   </p>
                 </div>
+
+                <div className="border-t pt-4 mt-2 space-y-3">
+                  <div>
+                    <p className="text-sm font-medium">Without a webhook</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Resolve the tip of a branch from the GitHub API, compare it to your running deployment, then deploy
+                      that commit. Set <code className="font-mono text-[0.7rem]">GITHUB_TOKEN</code> on the kindling server
+                      for private repositories.
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                    <div className="flex-1 space-y-1 min-w-0">
+                      <Label className="text-xs text-muted-foreground">Optional ref (branch or tag)</Label>
+                      <Input
+                        value={gitHeadRef}
+                        onChange={(e) => setGitHeadRef(e.target.value)}
+                        placeholder="repository default branch"
+                        className="font-mono text-sm h-9"
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="shrink-0"
+                      disabled={gitHeadLoading}
+                      onClick={() => void handleCheckGitHead()}
+                    >
+                      <CloudDownloadIcon className={`mr-2 size-4 ${gitHeadLoading ? "animate-pulse" : ""}`} />
+                      {gitHeadLoading ? "Checking…" : "Check for updates"}
+                    </Button>
+                  </div>
+                  {sourceCheckError ? (
+                    <p className="text-xs text-destructive">{sourceCheckError}</p>
+                  ) : null}
+                  {gitHead ? (
+                    <div className="rounded-lg border bg-muted/30 px-3 py-3 text-sm space-y-2">
+                      <p>
+                        <span className="text-muted-foreground">Tip of </span>
+                        <span className="font-mono">{gitHead.ref}</span>
+                        <span className="text-muted-foreground"> → </span>
+                        <span className="font-mono">{gitHead.short_sha}</span>
+                      </p>
+                      <p className="text-xs">
+                        {gitHead.update_available ? (
+                          <span className="text-amber-800 dark:text-amber-200">
+                            Differs from your running deployment or latest recorded deployment — a new deploy may be
+                            warranted.
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">Matches what is already running or last deployed for this ref.</span>
+                        )}
+                      </p>
+                      {!gitHead.github_token_configured ? (
+                        <p className="text-xs text-amber-900/90 dark:text-amber-100/90">
+                          No <code className="font-mono">GITHUB_TOKEN</code> on the server: public repos only unless you set
+                          the token in the kindling process environment.
+                        </p>
+                      ) : null}
+                      <Button size="sm" onClick={() => void handleDeployGitHead(gitHead.sha)} disabled={deploying}>
+                        {deploying ? "Deploying…" : `Deploy ${gitHead.short_sha}`}
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
               </CardContent>
             </Card>
           )}
@@ -358,6 +483,17 @@ export function ProjectDetailPage() {
               className="font-mono"
             />
             <p className="text-xs text-muted-foreground">Defaults to main if left empty.</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full sm:w-auto"
+              disabled={deploying || fetchingHeadForDialog || !project.github_repository?.trim()}
+              onClick={() => void handleFetchLatestIntoDialog()}
+            >
+              <CloudDownloadIcon className="mr-2 size-4" />
+              {fetchingHeadForDialog ? "Fetching…" : "Fill with latest from GitHub"}
+            </Button>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeployDialogOpen(false)}>
