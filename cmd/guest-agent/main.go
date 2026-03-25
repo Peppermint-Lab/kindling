@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 )
 
 const (
@@ -38,6 +39,12 @@ type ConfigResponse struct {
 	IPAddr   string   `json:"ip_addr"`
 	IPGW     string   `json:"ip_gw"`
 	Hostname string   `json:"hostname"`
+	Port     int      `json:"port"`
+}
+
+type commandSpec struct {
+	name string
+	args []string
 }
 
 func main() {
@@ -75,6 +82,20 @@ func main() {
 	if appCmd == nil {
 		log.Println("no application found, idling")
 		select {} // block forever
+	}
+
+	readyPort := cfg.Port
+	if readyPort == 0 {
+		readyPort = 3000
+	}
+	readyCtx, readyCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer readyCancel()
+	if err := waitForTCPReady(readyCtx, fmt.Sprintf("127.0.0.1:%d", readyPort)); err != nil {
+		log.Printf("warning: readiness probe failed: %v", err)
+	} else if err := notifyReady(); err != nil {
+		log.Printf("warning: ready notification failed: %v", err)
+	} else {
+		log.Printf("app became ready on port %d", readyPort)
 	}
 
 	// Wait for app to exit or signal.
@@ -132,19 +153,20 @@ func fetchConfig() (*ConfigResponse, error) {
 }
 
 func configureNetwork(cfg *ConfigResponse) error {
-	if cfg.IPAddr == "" {
-		return nil
-	}
-
-	if err := run("ip", "addr", "add", cfg.IPAddr, "dev", "eth0"); err != nil {
-		return fmt.Errorf("add addr: %w", err)
-	}
-	if err := run("ip", "link", "set", "eth0", "up"); err != nil {
-		return fmt.Errorf("link up: %w", err)
-	}
-	if cfg.IPGW != "" {
-		if err := run("ip", "route", "add", "default", "via", cfg.IPGW); err != nil {
-			return fmt.Errorf("default route: %w", err)
+	for _, cmd := range networkCommands(cfg) {
+		if err := run(cmd.name, cmd.args...); err != nil {
+			switch {
+			case len(cmd.args) >= 4 && cmd.args[0] == "link" && cmd.args[1] == "set" && cmd.args[2] == "lo":
+				return fmt.Errorf("bring up loopback: %w", err)
+			case len(cmd.args) >= 4 && cmd.args[0] == "link" && cmd.args[1] == "set" && cmd.args[2] == "eth0":
+				return fmt.Errorf("link up: %w", err)
+			case len(cmd.args) >= 4 && cmd.args[0] == "addr" && cmd.args[1] == "add":
+				return fmt.Errorf("add addr: %w", err)
+			case len(cmd.args) >= 5 && cmd.args[0] == "route" && cmd.args[1] == "add":
+				return fmt.Errorf("default route: %w", err)
+			default:
+				return err
+			}
 		}
 	}
 
@@ -152,6 +174,24 @@ func configureNetwork(cfg *ConfigResponse) error {
 	os.WriteFile("/etc/resolv.conf", []byte("nameserver 8.8.8.8\nnameserver 1.1.1.1\n"), 0o644)
 
 	return nil
+}
+
+func networkCommands(cfg *ConfigResponse) []commandSpec {
+	cmds := []commandSpec{
+		{name: "ip", args: []string{"link", "set", "lo", "up"}},
+	}
+
+	if cfg.IPAddr == "" {
+		return cmds
+	}
+
+	cmds = append(cmds, commandSpec{name: "ip", args: []string{"link", "set", "eth0", "up"}})
+	cmds = append(cmds, commandSpec{name: "ip", args: []string{"addr", "add", cfg.IPAddr, "dev", "eth0"}})
+	if cfg.IPGW != "" {
+		cmds = append(cmds, commandSpec{name: "ip", args: []string{"route", "add", "default", "via", cfg.IPGW}})
+	}
+
+	return cmds
 }
 
 func startLogStream() io.Writer {
@@ -180,6 +220,39 @@ func startLogStream() io.Writer {
 	}()
 
 	return pw
+}
+
+func notifyReady() error {
+	conn, err := dialVsock(vsockCID, configPort)
+	if err != nil {
+		return fmt.Errorf("vsock connect: %w", err)
+	}
+	defer conn.Close()
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return conn, nil
+			},
+		},
+	}
+
+	req, err := http.NewRequest(http.MethodPost, "http://localhost/ready", nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("POST /ready: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("POST /ready returned status %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
 func startApp(env []string, logWriter io.Writer) *exec.Cmd {
@@ -246,4 +319,24 @@ func run(name string, args ...string) error {
 		return fmt.Errorf("%s %v: %s: %w", name, args, string(out), err)
 	}
 	return nil
+}
+
+func waitForTCPReady(ctx context.Context, addr string) error {
+	dialer := &net.Dialer{Timeout: 200 * time.Millisecond}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		conn, err := dialer.DialContext(ctx, "tcp", addr)
+		if err == nil {
+			conn.Close()
+			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }

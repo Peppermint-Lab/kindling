@@ -161,7 +161,7 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 	logger.Info("instance started", "ip", ip)
 
 	// Step 5: Health check.
-	if !d.healthCheck(ip, 3000) {
+	if requiresExternalHealthCheck(d.rt.Name()) && !d.healthCheck(ip, 3000) {
 		logger.Info("health check failed, retrying")
 		return fmt.Errorf("health check failed")
 	}
@@ -200,6 +200,10 @@ func (d *Deployer) healthCheck(addr string, port int) bool {
 	}
 	resp.Body.Close()
 	return resp.StatusCode >= 200 && resp.StatusCode < 400
+}
+
+func requiresExternalHealthCheck(runtimeName string) bool {
+	return runtimeName != "apple-vz"
 }
 
 func (d *Deployer) stopOldDeployments(ctx context.Context, current queries.Deployment) {

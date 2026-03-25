@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Code-Hex/vz/v3"
 	"github.com/google/uuid"
@@ -32,6 +34,16 @@ type appleInstance struct {
 	logs   []string
 	logMu  sync.Mutex
 	cancel context.CancelFunc
+	ready  chan struct{}
+	once   sync.Once
+}
+
+type guestConfig struct {
+	Env      []string `json:"env"`
+	IPAddr   string   `json:"ip_addr"`
+	IPGW     string   `json:"ip_gw"`
+	Hostname string   `json:"hostname"`
+	Port     int      `json:"port"`
 }
 
 // AppleRuntimeConfig holds configuration for the Apple runtime.
@@ -169,6 +181,7 @@ func (r *AppleRuntime) startVM(ctx context.Context, inst Instance) (string, erro
 		vm:     vm,
 		ip:     fmt.Sprintf("192.168.64.2:%d", port), // macOS NAT default range
 		cancel: cancel,
+		ready:  make(chan struct{}),
 	}
 
 	// Set up vsock listener BEFORE starting the VM.
@@ -189,7 +202,7 @@ func (r *AppleRuntime) startVM(ctx context.Context, inst Instance) (string, erro
 				if err != nil {
 					return
 				}
-				go r.handleVsockConn(conn, inst)
+				go r.handleVsockConn(conn, inst, ai)
 			}
 		}()
 	}
@@ -202,6 +215,11 @@ func (r *AppleRuntime) startVM(ctx context.Context, inst Instance) (string, erro
 	r.mu.Lock()
 	r.instances[inst.ID] = ai
 	r.mu.Unlock()
+
+	if err := waitForGuestReady(runCtx, ai.ready, 30*time.Second); err != nil {
+		cancel()
+		return "", fmt.Errorf("wait for guest ready: %w", err)
+	}
 
 	// Monitor VM state.
 	go func() {
@@ -290,7 +308,7 @@ func (r *AppleRuntime) exportImage(ctx context.Context, imageRef string, id uuid
 }
 
 // handleVsockConn serves HTTP over a vsock connection from the guest agent.
-func (r *AppleRuntime) handleVsockConn(conn net.Conn, inst Instance) {
+func (r *AppleRuntime) handleVsockConn(conn net.Conn, inst Instance, ai *appleInstance) {
 	defer conn.Close()
 
 	// Read the HTTP request from the guest.
@@ -304,34 +322,74 @@ func (r *AppleRuntime) handleVsockConn(conn net.Conn, inst Instance) {
 	request := string(buf[:n])
 
 	if strings.Contains(request, "GET /config") {
-		// Serve config as JSON.
-		hostname := fmt.Sprintf("kindling-%s", inst.ID.String()[:8])
-		config := fmt.Sprintf(`{"env":[%s],"ip_addr":"10.0.0.1/31","ip_gw":"10.0.0.0","hostname":"%s"}`,
-			formatEnvJSON(inst.Env), hostname)
-
+		cfgBytes, err := json.Marshal(appleGuestConfig(inst))
+		if err != nil {
+			response := "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n"
+			conn.Write([]byte(response))
+			return
+		}
 		response := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
-			len(config), config)
+			len(cfgBytes), cfgBytes)
 		conn.Write([]byte(response))
 		slog.Info("served config via vsock", "id", inst.ID)
 	} else if strings.Contains(request, "POST /logs") {
 		// Accept log stream.
 		response := "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"
 		conn.Write([]byte(response))
+	} else if strings.Contains(request, "POST /ready") {
+		ai.markReady()
+		response := "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"
+		conn.Write([]byte(response))
+		slog.Info("guest reported ready", "id", inst.ID)
 	} else {
 		response := "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"
 		conn.Write([]byte(response))
 	}
 }
 
-func formatEnvJSON(env []string) string {
-	if len(env) == 0 {
-		return ""
+func appleGuestConfig(inst Instance) guestConfig {
+	port := inst.Port
+	if port == 0 {
+		port = 3000
 	}
-	var parts []string
-	for _, e := range env {
-		parts = append(parts, fmt.Sprintf(`"%s"`, strings.ReplaceAll(e, `"`, `\"`)))
+
+	return guestConfig{
+		Env:      envWithPort(inst.Env, port),
+		IPAddr:   "10.0.0.1/31",
+		IPGW:     "10.0.0.0",
+		Hostname: fmt.Sprintf("kindling-%s", inst.ID.String()[:8]),
+		Port:     port,
 	}
-	return strings.Join(parts, ",")
+}
+
+func envWithPort(env []string, port int) []string {
+	out := append([]string(nil), env...)
+	for _, entry := range out {
+		if strings.HasPrefix(entry, "PORT=") {
+			return out
+		}
+	}
+	return append(out, fmt.Sprintf("PORT=%d", port))
+}
+
+func waitForGuestReady(ctx context.Context, ready <-chan struct{}, timeout time.Duration) error {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case <-ready:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return fmt.Errorf("timed out after %s", timeout)
+	}
+}
+
+func (ai *appleInstance) markReady() {
+	ai.once.Do(func() {
+		close(ai.ready)
+	})
 }
 
 func (r *AppleRuntime) StopAll() {
@@ -343,4 +401,3 @@ func (r *AppleRuntime) StopAll() {
 		ai.cancel()
 	}
 }
-

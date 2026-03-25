@@ -54,7 +54,6 @@ kernel-build:
 # Build initramfs with guest agent (cross-compile for Linux)
 initramfs:
 	@mkdir -p $(KINDLING_DATA)
-	@test -f $(KINDLING_DATA)/initramfs.cpio.gz && exit 0 || true
 	@GOARCH_TARGET="amd64"; \
 	if [ "$$(uname -m)" = "arm64" ]; then GOARCH_TARGET="arm64"; fi; \
 	echo "Cross-compiling guest agent for Linux/$$GOARCH_TARGET..."; \
@@ -63,10 +62,10 @@ initramfs:
 	@PLATFORM="linux/amd64"; \
 	if [ "$$(uname -m)" = "arm64" ]; then PLATFORM="linux/arm64"; fi; \
 	docker run --rm --platform $$PLATFORM -v /tmp/kindling-init:/init:ro -v $(KINDLING_DATA):/out alpine:3.21 sh -c '\
-		apk add --no-cache cpio && \
+		apk add --no-cache cpio busybox-static && \
 		mkdir -p /rootfs/bin /rootfs/sbin /rootfs/etc /rootfs/proc /rootfs/sys /rootfs/dev /rootfs/tmp /rootfs/app /rootfs/usr/bin /rootfs/usr/sbin && \
 		cp /init /rootfs/init && chmod +x /rootfs/init && \
-		cp $$(which busybox) /rootfs/bin/busybox && \
+		cp /bin/busybox.static /rootfs/bin/busybox && chmod +x /rootfs/bin/busybox && \
 		for cmd in sh ip ifconfig route ping cat ls mkdir mount umount; do \
 			ln -sf busybox /rootfs/bin/$$cmd; \
 		done && \

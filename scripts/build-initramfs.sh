@@ -20,14 +20,30 @@ cp "$TMPDIR/init" "$TMPDIR/rootfs/init"
 chmod +x "$TMPDIR/rootfs/init"
 
 # Add busybox for basic utilities (ip, sh, etc.)
-if command -v busybox &>/dev/null; then
+if command -v busybox.static &>/dev/null; then
+  cp "$(which busybox.static)" "$TMPDIR/rootfs/bin/busybox"
+  chmod +x "$TMPDIR/rootfs/bin/busybox"
+  # Create symlinks for essential commands
+  for cmd in sh ip ifconfig route ping wget cat ls mkdir mount umount; do
+    ln -sf busybox "$TMPDIR/rootfs/bin/$cmd"
+  done
+elif [ -f /bin/busybox.static ]; then
+  cp /bin/busybox.static "$TMPDIR/rootfs/bin/busybox"
+  chmod +x "$TMPDIR/rootfs/bin/busybox"
+  # Create symlinks for essential commands
+  for cmd in sh ip ifconfig route ping wget cat ls mkdir mount umount; do
+    ln -sf busybox "$TMPDIR/rootfs/bin/$cmd"
+  done
+elif command -v busybox &>/dev/null; then
   cp "$(which busybox)" "$TMPDIR/rootfs/bin/busybox"
+  chmod +x "$TMPDIR/rootfs/bin/busybox"
   # Create symlinks for essential commands
   for cmd in sh ip ifconfig route ping wget cat ls mkdir mount umount; do
     ln -sf busybox "$TMPDIR/rootfs/bin/$cmd"
   done
 elif [ -f /bin/busybox ]; then
   cp /bin/busybox "$TMPDIR/rootfs/bin/busybox"
+  chmod +x "$TMPDIR/rootfs/bin/busybox"
   for cmd in sh ip ifconfig route ping wget cat ls mkdir mount umount; do
     ln -sf busybox "$TMPDIR/rootfs/bin/$cmd"
   done
