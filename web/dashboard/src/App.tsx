@@ -1,3 +1,4 @@
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom"
 import { AppSidebar } from "@/components/app-sidebar"
 import {
   Breadcrumb,
@@ -12,35 +13,56 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { ProjectsPage } from "@/pages/ProjectsPage"
+import { ProjectDetailPage } from "@/pages/ProjectDetailPage"
+import { DeploymentDetailPage } from "@/pages/DeploymentDetailPage"
+
+function pageName(pathname: string): string {
+  if (pathname.startsWith("/deployments/")) return "Deployment"
+  if (pathname.startsWith("/projects/")) return "Project"
+  if (pathname === "/settings") return "Settings"
+  return "Projects"
+}
+
+function Layout() {
+  const location = useLocation()
+
+  return (
+    <SidebarProvider>
+      <AppSidebar />
+      <SidebarInset>
+        <header className="flex h-16 shrink-0 items-center gap-2">
+          <div className="flex items-center gap-2 px-4">
+            <SidebarTrigger className="-ml-1" />
+            <Separator orientation="vertical" className="mr-2 h-4" />
+            <Breadcrumb>
+              <BreadcrumbList>
+                <BreadcrumbItem>
+                  <BreadcrumbPage>{pageName(location.pathname)}</BreadcrumbPage>
+                </BreadcrumbItem>
+              </BreadcrumbList>
+            </Breadcrumb>
+          </div>
+        </header>
+        <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
+          <Routes>
+            <Route path="/" element={<ProjectsPage />} />
+            <Route path="/projects" element={<ProjectsPage />} />
+            <Route path="/projects/:id" element={<ProjectDetailPage />} />
+            <Route path="/deployments/:id" element={<DeploymentDetailPage />} />
+          </Routes>
+        </div>
+      </SidebarInset>
+    </SidebarProvider>
+  )
+}
 
 export default function App() {
   return (
     <TooltipProvider>
-      <SidebarProvider>
-        <AppSidebar />
-        <SidebarInset>
-          <header className="flex h-16 shrink-0 items-center gap-2">
-            <div className="flex items-center gap-2 px-4">
-              <SidebarTrigger className="-ml-1" />
-              <Separator orientation="vertical" className="mr-2 h-4" />
-              <Breadcrumb>
-                <BreadcrumbList>
-                  <BreadcrumbItem>
-                    <BreadcrumbPage>Projects</BreadcrumbPage>
-                  </BreadcrumbItem>
-                </BreadcrumbList>
-              </Breadcrumb>
-            </div>
-          </header>
-          <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
-            <div className="grid auto-rows-min gap-4 md:grid-cols-3">
-              <div className="aspect-video rounded-xl bg-muted/50 flex items-center justify-center text-muted-foreground text-sm">
-                No projects yet
-              </div>
-            </div>
-          </div>
-        </SidebarInset>
-      </SidebarProvider>
+      <BrowserRouter>
+        <Layout />
+      </BrowserRouter>
     </TooltipProvider>
   )
 }

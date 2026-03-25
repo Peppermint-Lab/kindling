@@ -15,6 +15,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/listener"
 	"github.com/kindlingvm/kindling/internal/reconciler"
+	"github.com/kindlingvm/kindling/internal/rpc"
 	"github.com/kindlingvm/kindling/internal/vmm"
 	"github.com/kindlingvm/kindling/internal/webhook"
 	"github.com/spf13/cobra"
@@ -151,6 +152,7 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 	slog.Info("WAL listener started")
 
 	// API server
+	api := rpc.NewAPI(q)
 	webhookHandler := webhook.NewHandler(q)
 
 	mux := http.NewServeMux()
@@ -158,9 +160,13 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
+	api.Register(mux)
 	mux.Handle("POST /webhooks/github", webhookHandler)
 
-	srv := &http.Server{Addr: listenAddr, Handler: mux}
+	// CORS wrapper for Vite dev server
+	handler := corsMiddleware(mux)
+
+	srv := &http.Server{Addr: listenAddr, Handler: handler}
 
 	go func() {
 		<-ctx.Done()
@@ -174,4 +180,19 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 	}
 
 	return nil
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
