@@ -22,21 +22,36 @@ dev: build kernel initramfs
 # Data directory
 KINDLING_DATA ?= $(HOME)/.kindling
 
-# Download kernel + build initramfs (one-time)
+# Download kernel (platform-specific)
 kernel:
 	@mkdir -p $(KINDLING_DATA)
-	@test -f $(KINDLING_DATA)/vmlinuz.bin || (echo "Downloading kernel..." && \
+	@test -f $(KINDLING_DATA)/vmlinuz.bin && exit 0 || true
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		echo "Downloading Linux kernel for Apple VZ..." && \
+		ARCH=$$(uname -m) && \
+		if [ "$$ARCH" = "arm64" ]; then ARCH="aarch64"; fi && \
+		curl -fsSL "https://github.com/Code-Hex/puipui-linux/releases/download/v1.0.3/puipui_linux_v1.0.3_$${ARCH}.tar.gz" | tar -xz -C $(KINDLING_DATA) && \
+		mv $(KINDLING_DATA)/puipui_linux_v1.0.3_$${ARCH}/vmlinux $(KINDLING_DATA)/vmlinuz.bin && \
+		rm -rf $(KINDLING_DATA)/puipui_linux_v1.0.3_* && \
+		echo "Kernel downloaded to $(KINDLING_DATA)/vmlinuz.bin"; \
+	else \
+		echo "Downloading Cloud Hypervisor firmware..." && \
 		curl -fsSL "https://github.com/cloud-hypervisor/rust-hypervisor-firmware/releases/download/0.4.2/hypervisor-fw" -o $(KINDLING_DATA)/vmlinuz.bin && \
-		echo "Kernel downloaded to $(KINDLING_DATA)/vmlinuz.bin")
+		echo "Kernel downloaded to $(KINDLING_DATA)/vmlinuz.bin"; \
+	fi
 
 # Build initramfs with guest agent (cross-compile for Linux)
 initramfs:
 	@mkdir -p $(KINDLING_DATA)
 	@test -f $(KINDLING_DATA)/initramfs.cpio.gz && exit 0 || true
-	@echo "Cross-compiling guest agent for Linux..."
-	@CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/kindling-init ./cmd/guest-agent
+	@GOARCH_TARGET="amd64"; \
+	if [ "$$(uname -m)" = "arm64" ]; then GOARCH_TARGET="arm64"; fi; \
+	echo "Cross-compiling guest agent for Linux/$$GOARCH_TARGET..."; \
+	CGO_ENABLED=0 GOOS=linux GOARCH=$$GOARCH_TARGET go build -o /tmp/kindling-init ./cmd/guest-agent
 	@echo "Building initramfs via Docker..."
-	@docker run --rm --platform linux/amd64 -v /tmp/kindling-init:/init:ro -v $(KINDLING_DATA):/out alpine:3.21 sh -c '\
+	@PLATFORM="linux/amd64"; \
+	if [ "$$(uname -m)" = "arm64" ]; then PLATFORM="linux/arm64"; fi; \
+	docker run --rm --platform $$PLATFORM -v /tmp/kindling-init:/init:ro -v $(KINDLING_DATA):/out alpine:3.21 sh -c '\
 		apk add --no-cache cpio && \
 		mkdir -p /rootfs/bin /rootfs/sbin /rootfs/etc /rootfs/proc /rootfs/sys /rootfs/dev /rootfs/tmp /rootfs/app /rootfs/usr/bin /rootfs/usr/sbin && \
 		cp /init /rootfs/init && chmod +x /rootfs/init && \
