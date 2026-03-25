@@ -1,21 +1,29 @@
-import { useEffect, useState, useRef } from "react"
+import { useEffect, useState, useRef, useCallback } from "react"
 import { useParams, Link, useNavigate } from "react-router-dom"
-import { api, type Deployment, type BuildLog } from "@/lib/api"
+import { api, type Deployment, type BuildLog, subscribeDeploymentStream, APIError } from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ArrowLeftIcon, ScrollTextIcon, LoaderIcon, XCircleIcon, RotateCwIcon } from "lucide-react"
+import { ArrowLeftIcon, ScrollTextIcon, LoaderIcon, XCircleIcon, RotateCwIcon, RadioIcon } from "lucide-react"
+import { isTerminalDeployment, phaseLabel, phaseVariant } from "@/lib/deploy-badge"
 
-function deploymentStatus(dep: Deployment): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } {
-  if (dep.failed_at) return { label: "Failed", variant: "destructive" }
-  if (dep.stopped_at) return { label: "Stopped", variant: "secondary" }
-  if (dep.running_at) return { label: "Running", variant: "default" }
-  return { label: "Pending", variant: "outline" }
+function logKey(l: BuildLog): string {
+  if (l.id) return l.id
+  return `${l.created_at}-${l.message.slice(0, 48)}`
 }
 
-function isTerminal(dep: Deployment): boolean {
-  return !!(dep.running_at || dep.failed_at || dep.stopped_at)
+function mergeLogs(prev: BuildLog[], chunk: BuildLog[]): BuildLog[] {
+  const m = new Map<string, BuildLog>()
+  for (const x of prev) {
+    m.set(logKey(x), x)
+  }
+  for (const x of chunk) {
+    m.set(logKey(x), x)
+  }
+  return [...m.values()].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+  )
 }
 
 export function DeploymentDetailPage() {
@@ -25,35 +33,90 @@ export function DeploymentDetailPage() {
   const [logs, setLogs] = useState<BuildLog[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [live, setLive] = useState(false)
   const logEndRef = useRef<HTMLDivElement>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const deploymentRef = useRef<Deployment | null>(null)
+  deploymentRef.current = deployment
 
-  // Initial load.
+  const stopPoll = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+  }, [])
+
   useEffect(() => {
     if (!id) return
-    Promise.all([api.getDeployment(id), api.getDeploymentLogs(id)])
-      .then(([d, l]) => { setDeployment(d); setLogs(l) })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false))
-  }, [id])
+    let cancelled = false
 
-  // Auto-refresh while not terminal.
-  useEffect(() => {
-    if (!id || !deployment || isTerminal(deployment)) return
-
-    const interval = setInterval(async () => {
+    ;(async () => {
+      setError(null)
+      setLoading(true)
+      stopPoll()
+      setLive(false)
       try {
         const [d, l] = await Promise.all([api.getDeployment(id), api.getDeploymentLogs(id)])
+        if (cancelled) return
         setDeployment(d)
         setLogs(l)
-      } catch {
-        // ignore refresh errors
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof APIError ? e.message : String(e))
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
       }
-    }, 3000)
+    })()
 
-    return () => clearInterval(interval)
-  }, [id, deployment])
+    return () => {
+      cancelled = true
+    }
+  }, [id, stopPoll])
 
-  // Auto-scroll logs.
+  useEffect(() => {
+    if (!id || loading) return
+    const d = deploymentRef.current
+    if (!d || isTerminalDeployment(d)) {
+      setLive(false)
+      stopPoll()
+      return
+    }
+
+    stopPoll()
+    setLive(true)
+
+    const unsub = subscribeDeploymentStream(id, {
+      onDeployment: (next) => setDeployment(next),
+      onLogs: (chunk) => setLogs((prev) => mergeLogs(prev, chunk)),
+      onDone: () => {
+        setLive(false)
+        stopPoll()
+      },
+      onError: () => {
+        setLive(false)
+        if (pollRef.current) return
+        pollRef.current = setInterval(async () => {
+          try {
+            const [d2, l] = await Promise.all([api.getDeployment(id), api.getDeploymentLogs(id)])
+            setDeployment(d2)
+            setLogs(l)
+            if (isTerminalDeployment(d2)) {
+              stopPoll()
+            }
+          } catch {
+            /* ignore */
+          }
+        }, 3000)
+      },
+    })
+
+    return () => {
+      unsub()
+      stopPoll()
+    }
+  }, [id, loading, stopPoll])
+
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [logs])
@@ -70,56 +133,78 @@ export function DeploymentDetailPage() {
 
   if (error || !deployment) {
     return (
-      <div className="rounded-xl border border-destructive/50 bg-destructive/5 p-6 text-destructive text-sm">
+      <div className="rounded-xl border border-destructive/50 bg-destructive/5 p-6 text-destructive text-sm max-w-xl">
         {error || "Deployment not found"}
       </div>
     )
   }
 
-  const status = deploymentStatus(deployment)
+  const terminal = isTerminalDeployment(deployment)
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-5xl mx-auto w-full">
       <div>
-        <Link to={`/projects/${deployment.project_id}`} className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-1">
+        <Link
+          to={`/projects/${deployment.project_id}`}
+          className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+        >
           <ArrowLeftIcon className="size-3" /> Back to project
         </Link>
-        <div className="flex items-center justify-between mt-2">
-          <div className="flex items-center gap-3">
+        <div className="flex flex-col gap-3 mt-2 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2 min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight">Deployment</h1>
-            <Badge variant={status.variant}>{status.label}</Badge>
-            {!isTerminal(deployment) && (
-              <LoaderIcon className="size-4 text-muted-foreground animate-spin" />
+            <Badge variant={phaseVariant(deployment.phase)}>{phaseLabel(deployment.phase)}</Badge>
+            {!terminal && (
+              <>
+                {live ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground" title="Live updates">
+                    <RadioIcon className="size-3 text-green-600 dark:text-green-400" />
+                    Live
+                  </span>
+                ) : (
+                  <LoaderIcon className="size-4 text-muted-foreground animate-spin" />
+                )}
+              </>
             )}
           </div>
-          <div className="flex gap-2">
-            {!isTerminal(deployment) && (
-              <Button size="sm" variant="outline" onClick={async () => {
-                if (!id) return
-                await api.cancelDeployment(id)
-                const d = await api.getDeployment(id)
-                setDeployment(d)
-              }}>
+          <div className="flex flex-wrap gap-2 shrink-0">
+            {!terminal && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={async () => {
+                  if (!id) return
+                  await api.cancelDeployment(id)
+                  const d = await api.getDeployment(id)
+                  setDeployment(d)
+                }}
+              >
                 <XCircleIcon className="mr-2 size-4" />
                 Cancel
               </Button>
             )}
-            {isTerminal(deployment) && (
-              <Button size="sm" onClick={async () => {
-                const dep = await api.triggerDeploy(deployment.project_id, deployment.github_commit || "main")
-                navigate(`/deployments/${dep.id}`)
-              }}>
+            {terminal && (
+              <Button
+                size="sm"
+                onClick={async () => {
+                  const dep = await api.triggerDeploy(deployment.project_id, deployment.github_commit || "main")
+                  navigate(`/deployments/${dep.id}`)
+                }}
+              >
                 <RotateCwIcon className="mr-2 size-4" />
                 Redeploy
               </Button>
             )}
           </div>
         </div>
-        <p className="text-sm text-muted-foreground mt-1 font-mono">
+        <p className="text-sm text-muted-foreground mt-1 font-mono break-all">
           {deployment.github_commit ? deployment.github_commit.slice(0, 8) : "manual"}
         </p>
+        {deployment.build_status && (
+          <p className="text-xs text-muted-foreground mt-1">Build status: {deployment.build_status}</p>
+        )}
         <p className="text-xs text-muted-foreground mt-1">
-          Created {new Date(deployment.created_at).toLocaleString()}
+          Created {deployment.created_at ? new Date(deployment.created_at).toLocaleString() : "—"}
         </p>
       </div>
 
@@ -127,27 +212,27 @@ export function DeploymentDetailPage() {
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
             <ScrollTextIcon className="size-4" />
-            Build Logs
+            Build logs
           </CardTitle>
         </CardHeader>
         <CardContent>
           {logs.length === 0 ? (
             <div className="py-4 text-center">
-              {!isTerminal(deployment) ? (
-                <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
-                  <LoaderIcon className="size-4 animate-spin" />
-                  Waiting for build to start...
+              {!terminal ? (
+                <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground px-2">
+                  <LoaderIcon className="size-4 animate-spin shrink-0" />
+                  Waiting for build to start…
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">No build logs.</p>
               )}
             </div>
           ) : (
-            <div className="rounded-lg bg-muted/50 p-4 font-mono text-xs leading-relaxed max-h-[600px] overflow-y-auto space-y-0.5">
-              {logs.map((log, i) => (
-                <div key={i} className={log.level === "error" ? "text-destructive" : "text-foreground"}>
+            <div className="rounded-lg bg-muted/50 p-3 sm:p-4 font-mono text-xs leading-relaxed max-h-[min(60vh,600px)] overflow-y-auto space-y-0.5">
+              {logs.map((log) => (
+                <div key={logKey(log)} className={log.level === "error" ? "text-destructive" : "text-foreground"}>
                   <span className="text-muted-foreground mr-2">
-                    {new Date(log.created_at).toLocaleTimeString()}
+                    {log.created_at ? new Date(log.created_at).toLocaleTimeString() : ""}
                   </span>
                   {log.message}
                 </div>

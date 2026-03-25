@@ -16,10 +16,13 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { ProjectsPage } from "@/pages/ProjectsPage"
 import { ProjectDetailPage } from "@/pages/ProjectDetailPage"
 import { DeploymentDetailPage } from "@/pages/DeploymentDetailPage"
+import { DeploymentsPage } from "@/pages/DeploymentsPage"
 import { SettingsPage } from "@/pages/SettingsPage"
+import { ThemeToggle } from "@/components/theme-toggle"
 
 function pageName(pathname: string): string {
   if (pathname.startsWith("/deployments/")) return "Deployment"
+  if (pathname === "/deployments") return "Deployments"
   if (pathname.startsWith("/projects/")) return "Project"
   if (pathname === "/settings") return "Settings"
   return "Projects"
@@ -32,24 +35,28 @@ function Layout() {
     <SidebarProvider>
       <AppSidebar />
       <SidebarInset>
-        <header className="flex h-16 shrink-0 items-center gap-2">
-          <div className="flex items-center gap-2 px-4">
-            <SidebarTrigger className="-ml-1" />
-            <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
+        <header className="flex h-16 shrink-0 items-center gap-2 pr-2">
+          <div className="flex flex-1 items-center gap-2 px-4 min-w-0">
+            <SidebarTrigger className="-ml-1 shrink-0" />
+            <Separator orientation="vertical" className="mr-2 h-4 hidden sm:block" />
+            <Breadcrumb className="min-w-0">
               <BreadcrumbList>
                 <BreadcrumbItem>
-                  <BreadcrumbPage>{pageName(location.pathname)}</BreadcrumbPage>
+                  <BreadcrumbPage className="truncate">
+                    {pageName(location.pathname)}
+                  </BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
           </div>
+          <ThemeToggle />
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
           <Routes>
             <Route path="/" element={<ProjectsPage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/projects/:id" element={<ProjectDetailPage />} />
+            <Route path="/deployments" element={<DeploymentsPage />} />
             <Route path="/deployments/:id" element={<DeploymentDetailPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>

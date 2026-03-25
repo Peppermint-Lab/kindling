@@ -1,13 +1,20 @@
 import { useEffect, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
-import { api, type Project } from "@/lib/api"
+import { api, type Project, APIError } from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import { FolderIcon, PlusIcon } from "lucide-react"
 
 export function ProjectsPage() {
@@ -17,28 +24,42 @@ export function ProjectsPage() {
   const [error, setError] = useState<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [creating, setCreating] = useState(false)
-  const [form, setForm] = useState({ name: "", github_repository: "" })
+  const [form, setForm] = useState({
+    name: "",
+    github_repository: "",
+    dockerfile_path: "Dockerfile",
+    root_directory: "/",
+  })
 
   useEffect(() => {
-    api.listProjects()
+    api
+      .listProjects()
       .then(setProjects)
-      .catch((e) => setError(e.message))
+      .catch((e) => setError(e instanceof APIError ? e.message : String(e)))
       .finally(() => setLoading(false))
   }, [])
 
   const handleCreate = async () => {
     if (!form.name.trim()) return
     setCreating(true)
+    setError(null)
     try {
       const project = await api.createProject({
         name: form.name.trim(),
         github_repository: form.github_repository.trim() || undefined,
+        dockerfile_path: form.dockerfile_path.trim() || "Dockerfile",
+        root_directory: form.root_directory.trim() || "/",
       })
       setDialogOpen(false)
-      setForm({ name: "", github_repository: "" })
+      setForm({
+        name: "",
+        github_repository: "",
+        dockerfile_path: "Dockerfile",
+        root_directory: "/",
+      })
       navigate(`/projects/${project.id}`)
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create project")
+      setError(e instanceof APIError ? e.message : "Failed to create project")
     } finally {
       setCreating(false)
     }
@@ -58,16 +79,16 @@ export function ProjectsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-6xl mx-auto w-full px-0">
       {error && (
         <div className="rounded-xl border border-destructive/50 bg-destructive/5 p-4 text-destructive text-sm">
           {error}
         </div>
       )}
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
-        <Button size="sm" onClick={() => setDialogOpen(true)}>
+        <Button size="sm" className="shrink-0 self-start sm:self-auto" onClick={() => setDialogOpen(true)}>
           <PlusIcon className="mr-2 size-4" />
           New Project
         </Button>
@@ -75,11 +96,12 @@ export function ProjectsPage() {
 
       {projects.length === 0 ? (
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+          <CardContent className="flex flex-col items-center justify-center py-12 text-center px-4">
             <FolderIcon className="size-10 text-muted-foreground mb-4" />
             <p className="text-muted-foreground">No projects yet.</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Create a project to get started.
+            <p className="text-sm text-muted-foreground mt-1 max-w-sm">
+              Create a project with an optional GitHub repository. You’ll get webhook setup steps on the project
+              page to deploy on push to main.
             </p>
             <Button size="sm" className="mt-4" onClick={() => setDialogOpen(true)}>
               <PlusIcon className="mr-2 size-4" />
@@ -88,16 +110,16 @@ export function ProjectsPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {projects.map((project) => (
-            <Link key={project.id} to={`/projects/${project.id}`}>
-              <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
+            <Link key={project.id} to={`/projects/${project.id}`} className="block min-w-0">
+              <Card className="hover:bg-accent/50 transition-colors cursor-pointer h-full">
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base">{project.name}</CardTitle>
+                  <CardTitle className="text-base truncate">{project.name}</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {project.github_repository ? (
-                    <Badge variant="secondary" className="font-mono text-xs">
+                    <Badge variant="secondary" className="font-mono text-xs max-w-full truncate">
                       {project.github_repository}
                     </Badge>
                   ) : (
@@ -111,10 +133,13 @@ export function ProjectsPage() {
       )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>New Project</DialogTitle>
-            <DialogDescription>Create a new project to start deploying.</DialogDescription>
+            <DialogDescription>
+              Name is required. Link a GitHub repo to enable push-to-deploy (main/master). Dockerfile path and root
+              directory match your repo layout.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
@@ -128,18 +153,42 @@ export function ProjectsPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="repo">GitHub Repository</Label>
+              <Label htmlFor="repo">GitHub repository</Label>
               <Input
                 id="repo"
                 placeholder="owner/repo (optional)"
+                className="font-mono text-sm"
                 value={form.github_repository}
                 onChange={(e) => setForm({ ...form, github_repository: e.target.value })}
-                onKeyDown={(e) => e.key === "Enter" && handleCreate()}
               />
             </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="dockerfile">Dockerfile path</Label>
+                <Input
+                  id="dockerfile"
+                  placeholder="Dockerfile"
+                  className="font-mono text-sm"
+                  value={form.dockerfile_path}
+                  onChange={(e) => setForm({ ...form, dockerfile_path: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="root">Root directory</Label>
+                <Input
+                  id="root"
+                  placeholder="/"
+                  className="font-mono text-sm"
+                  value={form.root_directory}
+                  onChange={(e) => setForm({ ...form, root_directory: e.target.value })}
+                />
+              </div>
+            </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:gap-0">
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+              Cancel
+            </Button>
             <Button onClick={handleCreate} disabled={!form.name.trim() || creating}>
               {creating ? "Creating..." : "Create Project"}
             </Button>
