@@ -86,7 +86,7 @@ dev-up: remote-build
 		nohup ./bin/kindling serve > /tmp/kindling.log 2>&1 &'
 	@sleep 2
 	@echo "Starting dashboard..."
-	@cd web/dashboard && npm install --silent 2>/dev/null && npm run dev &
+	@cd web/dashboard && npm install --silent 2>/dev/null; nohup npx vite --host > /tmp/kindling-dashboard.log 2>&1 &
 	@echo ""
 	@echo "=== Kindling dev environment ==="
 	@echo "API:       http://localhost:8080"
