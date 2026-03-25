@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/kindlingvm/kindling/internal/builder"
@@ -69,7 +70,7 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 	slog.Info("schema migrated")
 
 	// Set up core services
-	serverID := uuid.New() // TODO: use real server ID from /data/server-id
+	serverID := loadServerID()
 	q := queries.New(db.Pool)
 
 	vmmgr := vmm.NewManager(vmm.Defaults(), serverID, q)
@@ -98,11 +99,20 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 		Reconcile: vmmgr.ReconcileVM,
 	})
 
+	// Route change channel — domain/server reconcilers signal the edge proxy.
+	routeChangeCh := make(chan struct{}, 1)
+	notifyRouteChange := func() {
+		select {
+		case routeChangeCh <- struct{}{}:
+		default:
+		}
+	}
+
 	domainReconciler := reconciler.New(reconciler.Config{
 		Name: "domain",
 		Reconcile: func(ctx context.Context, id uuid.UUID) error {
 			slog.Info("reconciling domain", "id", id)
-			// TODO: implement domain reconciler
+			notifyRouteChange()
 			return nil
 		},
 	})
@@ -111,7 +121,7 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 		Name: "server",
 		Reconcile: func(ctx context.Context, id uuid.UUID) error {
 			slog.Info("reconciling server", "id", id)
-			// TODO: implement server reconciler
+			notifyRouteChange()
 			return nil
 		},
 	})
@@ -180,6 +190,26 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 	}
 
 	return nil
+}
+
+func loadServerID() uuid.UUID {
+	data, err := os.ReadFile("/data/server-id")
+	if err == nil {
+		id, err := uuid.Parse(strings.TrimSpace(string(data)))
+		if err == nil {
+			slog.Info("loaded server ID", "server_id", id)
+			return id
+		}
+	}
+
+	// First boot or no /data — generate and try to persist.
+	id := uuid.New()
+	os.MkdirAll("/data", 0o755)
+	if err := os.WriteFile("/data/server-id", []byte(id.String()), 0o644); err != nil {
+		slog.Warn("could not persist server ID", "error", err)
+	}
+	slog.Info("generated server ID", "server_id", id)
+	return id
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
