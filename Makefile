@@ -22,10 +22,21 @@ dev: build kernel initramfs
 # Data directory
 KINDLING_DATA ?= $(HOME)/.kindling
 
-# Build custom Linux kernel with virtio + vsock (one-time, ~5 min)
+# Download prebuilt kernel (or build from source with `make kernel-build`)
+KERNEL_VERSION ?= v0.1.0
 kernel:
 	@mkdir -p $(KINDLING_DATA)
 	@test -f $(KINDLING_DATA)/vmlinuz.bin && exit 0 || true
+	@ARCH=$$(uname -m); \
+	echo "Downloading Kindling kernel ($$ARCH)..." && \
+	curl -fsSL "https://github.com/Peppermint-Lab/kindling/releases/download/$(KERNEL_VERSION)/vmlinuz-$$ARCH" \
+		-o $(KINDLING_DATA)/vmlinuz.bin && \
+	echo "Kernel downloaded to $(KINDLING_DATA)/vmlinuz.bin" || \
+	(echo "Prebuilt kernel not found. Building from source..." && bash scripts/build-kernel.sh)
+
+# Build kernel from source (only needed to create new releases)
+kernel-build:
+	@rm -f $(KINDLING_DATA)/vmlinuz.bin
 	@bash scripts/build-kernel.sh
 
 # Build initramfs with guest agent (cross-compile for Linux)
