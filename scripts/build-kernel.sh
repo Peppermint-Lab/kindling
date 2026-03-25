@@ -67,6 +67,14 @@ docker run --rm \
     scripts/config --enable CONFIG_RD_GZIP
     scripts/config --enable CONFIG_PROC_FS
     scripts/config --enable CONFIG_SYSFS
+    scripts/config --enable CONFIG_FUSE_FS
+    scripts/config --enable CONFIG_VIRTIO_FS
+    scripts/config --enable CONFIG_DAX
+    scripts/config --enable CONFIG_FS_DAX
+    scripts/config --enable CONFIG_9P_FS
+    scripts/config --enable CONFIG_9P_FS_POSIX_ACL
+    scripts/config --enable CONFIG_NET_9P
+    scripts/config --enable CONFIG_NET_9P_VIRTIO
     scripts/config --enable CONFIG_SERIAL_8250
     scripts/config --enable CONFIG_SERIAL_8250_CONSOLE
     scripts/config --enable CONFIG_HVC_DRIVER
