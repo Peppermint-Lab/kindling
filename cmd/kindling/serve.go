@@ -227,7 +227,8 @@ func mustParseCIDR(s string) netip.Prefix {
 }
 
 func loadServerID() uuid.UUID {
-	data, err := os.ReadFile("/data/server-id")
+	home, _ := os.UserHomeDir()
+	data, err := os.ReadFile(home + "/.kindling/server-id")
 	if err == nil {
 		id, err := uuid.Parse(strings.TrimSpace(string(data)))
 		if err == nil {
@@ -236,10 +237,11 @@ func loadServerID() uuid.UUID {
 		}
 	}
 
-	// First boot or no /data — generate and try to persist.
+	// First boot — generate and try to persist.
 	id := uuid.New()
-	os.MkdirAll("/data", 0o755)
-	if err := os.WriteFile("/data/server-id", []byte(id.String()), 0o644); err != nil {
+	dataDir := home + "/.kindling"
+	os.MkdirAll(dataDir, 0o755)
+	if err := os.WriteFile(dataDir+"/server-id", []byte(id.String()), 0o644); err != nil {
 		slog.Warn("could not persist server ID", "error", err)
 	}
 	slog.Info("generated server ID", "server_id", id)
