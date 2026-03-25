@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/kindlingvm/kindling/internal/builder"
 	"github.com/kindlingvm/kindling/internal/database"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/listener"
@@ -64,10 +65,16 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 	}
 	slog.Info("schema migrated")
 
-	// Set up VM manager
+	// Set up core services
+	serverID := uuid.New() // TODO: use real server ID from /data/server-id
 	q := queries.New(db.Pool)
-	vmmgr := vmm.NewManager(vmm.Defaults(), uuid.New(), q) // TODO: use real server ID
+
+	vmmgr := vmm.NewManager(vmm.Defaults(), serverID, q)
 	defer vmmgr.Stop()
+
+	bldr := builder.New(builder.Config{
+		RegistryURL: "ghcr.io",
+	}, q, serverID)
 
 	// Set up reconcilers
 	deploymentReconciler := reconciler.New(reconciler.Config{
@@ -80,12 +87,8 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 	})
 
 	buildReconciler := reconciler.New(reconciler.Config{
-		Name: "build",
-		Reconcile: func(ctx context.Context, id uuid.UUID) error {
-			slog.Info("reconciling build", "id", id)
-			// TODO: implement build reconciler
-			return nil
-		},
+		Name:      "build",
+		Reconcile: bldr.ReconcileBuild,
 	})
 
 	vmReconciler := reconciler.New(reconciler.Config{
