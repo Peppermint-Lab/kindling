@@ -23,16 +23,28 @@ dev: build kernel initramfs
 KINDLING_DATA ?= $(HOME)/.kindling
 
 # Download prebuilt kernel (or build from source with `make kernel-build`)
-KERNEL_VERSION ?= v0.1.0
+KERNEL_RELEASE ?= kernel-v0.1.0
 kernel:
 	@mkdir -p $(KINDLING_DATA)
 	@test -f $(KINDLING_DATA)/vmlinuz.bin && exit 0 || true
 	@ARCH=$$(uname -m); \
+	if [ "$$ARCH" = "arm64" ]; then ARCH="arm64"; fi; \
 	echo "Downloading Kindling kernel ($$ARCH)..." && \
-	curl -fsSL "https://github.com/Peppermint-Lab/kindling/releases/download/$(KERNEL_VERSION)/vmlinuz-$$ARCH" \
+	curl -fsSL "https://github.com/Peppermint-Lab/kindling/releases/download/$(KERNEL_RELEASE)/vmlinuz-$$ARCH" \
 		-o $(KINDLING_DATA)/vmlinuz.bin && \
 	echo "Kernel downloaded to $(KINDLING_DATA)/vmlinuz.bin" || \
 	(echo "Prebuilt kernel not found. Building from source..." && bash scripts/build-kernel.sh)
+
+# Download prebuilt initramfs
+initramfs-download:
+	@mkdir -p $(KINDLING_DATA)
+	@test -f $(KINDLING_DATA)/initramfs.cpio.gz && exit 0 || true
+	@ARCH=$$(uname -m); \
+	if [ "$$ARCH" = "arm64" ]; then ARCH="arm64"; fi; \
+	echo "Downloading initramfs ($$ARCH)..." && \
+	curl -fsSL "https://github.com/Peppermint-Lab/kindling/releases/download/$(KERNEL_RELEASE)/initramfs-$$ARCH.cpio.gz" \
+		-o $(KINDLING_DATA)/initramfs.cpio.gz && \
+	echo "Initramfs downloaded to $(KINDLING_DATA)/initramfs.cpio.gz"
 
 # Build kernel from source (only needed to create new releases)
 kernel-build:
