@@ -114,12 +114,12 @@ UPDATE vms SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1;
 SELECT * FROM vms WHERE server_id = $1 AND deleted_at IS NULL;
 
 -- name: VMNextIPAddress :one
-SELECT CASE
-    WHEN MAX(ip_address) IS NULL THEN (host(network($2::CIDR))::INET + 1)
+SELECT (CASE
+    WHEN MAX(ip_address) IS NULL THEN (host(network(sqlc.arg(ip_range)::CIDR))::INET + 1)
     ELSE (MAX(ip_address) + 2)
-END AS ip_address
+END)::INET AS ip_address
 FROM vms
-WHERE server_id = $1;
+WHERE server_id = sqlc.arg(server_id);
 
 -- Builds --
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/kindlingvm/kindling/internal/builder"
 	"github.com/kindlingvm/kindling/internal/database"
+	"github.com/kindlingvm/kindling/internal/deploy"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/listener"
 	"github.com/kindlingvm/kindling/internal/reconciler"
@@ -76,15 +77,14 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 		RegistryURL: "ghcr.io",
 	}, q, serverID)
 
+	deployer := deploy.New(q, serverID)
+
 	// Set up reconcilers
 	deploymentReconciler := reconciler.New(reconciler.Config{
-		Name: "deployment",
-		Reconcile: func(ctx context.Context, id uuid.UUID) error {
-			slog.Info("reconciling deployment", "id", id)
-			// TODO: implement deployment reconciler
-			return nil
-		},
+		Name:      "deployment",
+		Reconcile: deployer.ReconcileDeployment,
 	})
+	deployer.SetReconciler(deploymentReconciler)
 
 	buildReconciler := reconciler.New(reconciler.Config{
 		Name:      "build",

@@ -1367,22 +1367,22 @@ func (q *Queries) VMLogsByVMID(ctx context.Context, vmID pgtype.UUID) ([]VmLog, 
 }
 
 const vMNextIPAddress = `-- name: VMNextIPAddress :one
-SELECT CASE
-    WHEN MAX(ip_address) IS NULL THEN (host(network($2::CIDR))::INET + 1)
+SELECT (CASE
+    WHEN MAX(ip_address) IS NULL THEN (host(network($1::CIDR))::INET + 1)
     ELSE (MAX(ip_address) + 2)
-END AS ip_address
+END)::INET AS ip_address
 FROM vms
-WHERE server_id = $1
+WHERE server_id = $2
 `
 
 type VMNextIPAddressParams struct {
+	IpRange  netip.Prefix `json:"ip_range"`
 	ServerID pgtype.UUID  `json:"server_id"`
-	Column2  netip.Prefix `json:"column_2"`
 }
 
-func (q *Queries) VMNextIPAddress(ctx context.Context, arg VMNextIPAddressParams) (interface{}, error) {
-	row := q.db.QueryRow(ctx, vMNextIPAddress, arg.ServerID, arg.Column2)
-	var ip_address interface{}
+func (q *Queries) VMNextIPAddress(ctx context.Context, arg VMNextIPAddressParams) (netip.Addr, error) {
+	row := q.db.QueryRow(ctx, vMNextIPAddress, arg.IpRange, arg.ServerID)
+	var ip_address netip.Addr
 	err := row.Scan(&ip_address)
 	return ip_address, err
 }
