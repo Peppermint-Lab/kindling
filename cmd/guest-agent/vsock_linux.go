@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -17,6 +18,20 @@ type sockaddrVM struct {
 	flags     uint8
 	zero      [3]uint8
 }
+
+// vsockConn wraps a raw vsock file descriptor as a net.Conn.
+type vsockConn struct {
+	f *os.File
+}
+
+func (c *vsockConn) Read(b []byte) (int, error)         { return c.f.Read(b) }
+func (c *vsockConn) Write(b []byte) (int, error)        { return c.f.Write(b) }
+func (c *vsockConn) Close() error                       { return c.f.Close() }
+func (c *vsockConn) LocalAddr() net.Addr                { return &net.UnixAddr{Name: "vsock", Net: "vsock"} }
+func (c *vsockConn) RemoteAddr() net.Addr               { return &net.UnixAddr{Name: "vsock", Net: "vsock"} }
+func (c *vsockConn) SetDeadline(t time.Time) error      { return c.f.SetDeadline(t) }
+func (c *vsockConn) SetReadDeadline(t time.Time) error  { return c.f.SetReadDeadline(t) }
+func (c *vsockConn) SetWriteDeadline(t time.Time) error { return c.f.SetWriteDeadline(t) }
 
 func dialVsock(cid, port int) (net.Conn, error) {
 	fd, err := syscall.Socket(40, syscall.SOCK_STREAM, 0) // AF_VSOCK = 40
@@ -42,11 +57,5 @@ func dialVsock(cid, port int) (net.Conn, error) {
 	}
 
 	f := os.NewFile(uintptr(fd), "vsock")
-	conn, err := net.FileConn(f)
-	f.Close()
-	if err != nil {
-		return nil, fmt.Errorf("fileconn: %w", err)
-	}
-
-	return conn, nil
+	return &vsockConn{f: f}, nil
 }
