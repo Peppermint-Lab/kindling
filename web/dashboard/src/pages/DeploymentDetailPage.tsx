@@ -5,7 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ArrowLeftIcon, ScrollTextIcon, LoaderIcon, XCircleIcon, RotateCwIcon, RadioIcon } from "lucide-react"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ArrowLeftIcon, ScrollTextIcon, LoaderIcon, XCircleIcon, RotateCwIcon, RadioIcon, InfoIcon } from "lucide-react"
 import { isTerminalDeployment, phaseLabel, phaseVariant } from "@/lib/deploy-badge"
 
 function logKey(l: BuildLog): string {
@@ -167,81 +168,120 @@ export function DeploymentDetailPage() {
               </>
             )}
           </div>
-          <div className="flex flex-wrap gap-2 shrink-0">
-            {!terminal && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={async () => {
-                  if (!id) return
-                  await api.cancelDeployment(id)
-                  const d = await api.getDeployment(id)
-                  setDeployment(d)
-                }}
-              >
-                <XCircleIcon className="mr-2 size-4" />
-                Cancel
-              </Button>
-            )}
-            {terminal && (
-              <Button
-                size="sm"
-                onClick={async () => {
-                  const dep = await api.triggerDeploy(deployment.project_id, deployment.github_commit || "main")
-                  navigate(`/deployments/${dep.id}`)
-                }}
-              >
-                <RotateCwIcon className="mr-2 size-4" />
-                Redeploy
-              </Button>
-            )}
-          </div>
         </div>
-        <p className="text-sm text-muted-foreground mt-1 font-mono break-all">
-          {deployment.github_commit ? deployment.github_commit.slice(0, 8) : "manual"}
-        </p>
-        {deployment.build_status && (
-          <p className="text-xs text-muted-foreground mt-1">Build status: {deployment.build_status}</p>
-        )}
-        <p className="text-xs text-muted-foreground mt-1">
-          Created {deployment.created_at ? new Date(deployment.created_at).toLocaleString() : "—"}
+        <p className="text-sm text-muted-foreground mt-2">
+          Commit and build logs are on the tabs below.
         </p>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
+      <Tabs defaultValue="overview" className="min-w-0">
+        <TabsList variant="line" className="w-full min-w-0 max-w-full justify-start overflow-x-auto">
+          <TabsTrigger value="overview" className="shrink-0">
+            <InfoIcon className="size-4" />
+            Overview
+          </TabsTrigger>
+          <TabsTrigger value="logs" className="shrink-0">
             <ScrollTextIcon className="size-4" />
-            Build logs
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {logs.length === 0 ? (
-            <div className="py-4 text-center">
-              {!terminal ? (
-                <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground px-2">
-                  <LoaderIcon className="size-4 animate-spin shrink-0" />
-                  Waiting for build to start…
+            Logs
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Status</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4 text-sm">
+              <dl className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Commit</dt>
+                  <dd className="font-mono text-sm mt-1 break-all">
+                    {deployment.github_commit ? deployment.github_commit.slice(0, 8) : "manual"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Created</dt>
+                  <dd className="mt-1">
+                    {deployment.created_at ? new Date(deployment.created_at).toLocaleString() : "—"}
+                  </dd>
+                </div>
+                {deployment.build_status && (
+                  <div className="sm:col-span-2">
+                    <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Build</dt>
+                    <dd className="mt-1">{deployment.build_status}</dd>
+                  </div>
+                )}
+              </dl>
+              <div className="flex flex-wrap gap-2 pt-2">
+                {!terminal && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={async () => {
+                      if (!id) return
+                      await api.cancelDeployment(id)
+                      const d = await api.getDeployment(id)
+                      setDeployment(d)
+                    }}
+                  >
+                    <XCircleIcon className="mr-2 size-4" />
+                    Cancel
+                  </Button>
+                )}
+                {terminal && (
+                  <Button
+                    size="sm"
+                    onClick={async () => {
+                      const dep = await api.triggerDeploy(deployment.project_id, deployment.github_commit || "main")
+                      navigate(`/deployments/${dep.id}`)
+                    }}
+                  >
+                    <RotateCwIcon className="mr-2 size-4" />
+                    Redeploy
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="logs" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <ScrollTextIcon className="size-4" />
+                Build logs
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {logs.length === 0 ? (
+                <div className="py-4 text-center">
+                  {!terminal ? (
+                    <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground px-2">
+                      <LoaderIcon className="size-4 animate-spin shrink-0" />
+                      Waiting for build to start…
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No build logs.</p>
+                  )}
                 </div>
               ) : (
-                <p className="text-sm text-muted-foreground">No build logs.</p>
-              )}
-            </div>
-          ) : (
-            <div className="rounded-lg bg-muted/50 p-3 sm:p-4 font-mono text-xs leading-relaxed max-h-[min(60vh,600px)] overflow-y-auto space-y-0.5">
-              {logs.map((log) => (
-                <div key={logKey(log)} className={log.level === "error" ? "text-destructive" : "text-foreground"}>
-                  <span className="text-muted-foreground mr-2">
-                    {log.created_at ? new Date(log.created_at).toLocaleTimeString() : ""}
-                  </span>
-                  {log.message}
+                <div className="rounded-lg bg-muted/50 p-3 sm:p-4 font-mono text-xs leading-relaxed max-h-[min(70vh,720px)] overflow-y-auto space-y-0.5">
+                  {logs.map((log) => (
+                    <div key={logKey(log)} className={log.level === "error" ? "text-destructive" : "text-foreground"}>
+                      <span className="text-muted-foreground mr-2">
+                        {log.created_at ? new Date(log.created_at).toLocaleTimeString() : ""}
+                      </span>
+                      {log.message}
+                    </div>
+                  ))}
+                  <div ref={logEndRef} />
                 </div>
-              ))}
-              <div ref={logEndRef} />
-            </div>
-          )}
-        </CardContent>
-      </Card>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

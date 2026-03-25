@@ -15,7 +15,8 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { ArrowLeftIcon, RocketIcon, TrashIcon, CopyIcon, RefreshCwIcon } from "lucide-react"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ArrowLeftIcon, RocketIcon, TrashIcon, CopyIcon, RefreshCwIcon, FolderGitIcon, LayoutListIcon } from "lucide-react"
 import { phaseLabel, phaseVariant } from "@/lib/deploy-badge"
 
 async function copyText(label: string, text: string) {
@@ -157,13 +158,7 @@ export function ProjectDetailPage() {
         <div className="flex flex-col gap-3 mt-2 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight break-words">{project.name}</h1>
-            {project.github_repository && (
-              <p className="text-sm text-muted-foreground mt-1 font-mono break-all">{project.github_repository}</p>
-            )}
-            <p className="text-xs text-muted-foreground mt-2">
-              Dockerfile: <span className="font-mono">{project.dockerfile_path}</span> · Root:{" "}
-              <span className="font-mono">{project.root_directory}</span>
-            </p>
+            <p className="text-sm text-muted-foreground mt-1">Use the tabs below for details, GitHub, and deployments.</p>
           </div>
           <div className="flex flex-wrap gap-2 shrink-0">
             <Button size="sm" onClick={() => setDeployDialogOpen(true)}>
@@ -177,108 +172,174 @@ export function ProjectDetailPage() {
         </div>
       </div>
 
-      {project.github_repository && ghSetup && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">GitHub webhook</CardTitle>
-            <p className="text-sm text-muted-foreground font-normal">
-              {ghSetup.instructions}
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {!ghSetup.public_base_url_configured && (
-              <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
-                Set the public base URL under <strong>Settings</strong> so the GitHub webhook payload URL is absolute (it
-                is stored in the database).
-              </div>
-            )}
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Payload URL</Label>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <code className="flex-1 rounded-md border bg-muted/50 px-3 py-2 text-xs font-mono break-all">
-                  {ghSetup.webhook_url || `(your-host)${ghSetup.webhook_path}`}
-                </code>
-                {ghSetup.webhook_url ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0"
-                    onClick={() => void copyText("webhook", ghSetup.webhook_url)}
-                  >
-                    <CopyIcon className="mr-2 size-3" /> Copy
-                  </Button>
-                ) : null}
-              </div>
-            </div>
-            <div className="space-y-1">
-              <div className="flex items-center justify-between gap-2">
-                <Label className="text-xs text-muted-foreground">Webhook secret</Label>
-                <Button type="button" variant="ghost" size="sm" disabled={rotating} onClick={() => void handleRotateSecret()}>
-                  <RefreshCwIcon className={`mr-1 size-3 ${rotating ? "animate-spin" : ""}`} />
-                  Rotate
-                </Button>
-              </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <code className="flex-1 rounded-md border bg-muted/50 px-3 py-2 text-xs font-mono break-all">
-                  {ghSetup.webhook_secret || "—"}
-                </code>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0"
-                  disabled={!ghSetup.webhook_secret}
-                  onClick={() => void copyText("secret", ghSetup.webhook_secret)}
-                >
-                  <CopyIcon className="mr-2 size-3" /> Copy secret
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                After rotating, update the secret in GitHub. New projects generate a secret when a repo is linked.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      <Tabs defaultValue="overview" className="min-w-0">
+        <TabsList variant="line" className="w-full min-w-0 max-w-full justify-start overflow-x-auto">
+          <TabsTrigger value="overview" className="shrink-0">
+            Overview
+          </TabsTrigger>
+          <TabsTrigger value="github" className="shrink-0">
+            <FolderGitIcon className="size-4" />
+            GitHub
+          </TabsTrigger>
+          <TabsTrigger value="deployments" className="shrink-0">
+            <LayoutListIcon className="size-4" />
+            Deployments
+          </TabsTrigger>
+        </TabsList>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Deployments</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {deployments.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center px-2">
-              <RocketIcon className="size-8 text-muted-foreground mb-3" />
-              <p className="text-sm text-muted-foreground">No deployments yet.</p>
-              <Button size="sm" className="mt-3" onClick={() => setDeployDialogOpen(true)}>
-                Deploy now
-              </Button>
-            </div>
+        <TabsContent value="overview" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Project</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Repository</p>
+                <p className="font-mono text-sm mt-1 break-all">
+                  {project.github_repository || "— Not linked —"}
+                </p>
+                {!project.github_repository && (
+                  <p className="text-muted-foreground mt-2 text-xs">
+                    Link a repo under <strong>GitHub</strong> by creating a project with a GitHub path, or recreate this
+                    project with repository details to enable webhooks and push-to-deploy.
+                  </p>
+                )}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Dockerfile</p>
+                  <p className="font-mono text-sm mt-1">{project.dockerfile_path}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Root directory</p>
+                  <p className="font-mono text-sm mt-1">{project.root_directory}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="github" className="mt-4">
+          {!project.github_repository ? (
+            <Card>
+              <CardContent className="py-10 text-center text-sm text-muted-foreground px-4">
+                No GitHub repository is linked to this project. Webhook setup applies only when a repo is configured.
+              </CardContent>
+            </Card>
+          ) : !ghSetup ? (
+            <Card>
+              <CardContent className="py-10 text-center text-sm text-muted-foreground">Loading GitHub setup…</CardContent>
+            </Card>
           ) : (
-            <div className="space-y-3">
-              {deployments.map((dep) => (
-                <Link key={dep.id} to={`/deployments/${dep.id}`} className="block">
-                  <div className="flex flex-col gap-2 rounded-lg border p-3 hover:bg-accent/50 transition-colors sm:flex-row sm:items-center sm:justify-between min-w-0">
-                    <div className="flex flex-wrap items-center gap-2 min-w-0">
-                      <Badge variant={phaseVariant(dep.phase)}>{phaseLabel(dep.phase)}</Badge>
-                      <span className="font-mono text-sm">
-                        {dep.github_commit ? dep.github_commit.slice(0, 8) : "manual"}
-                      </span>
-                      {dep.build_status && (
-                        <span className="text-xs text-muted-foreground hidden sm:inline">Build: {dep.build_status}</span>
-                      )}
-                    </div>
-                    <span className="text-xs text-muted-foreground shrink-0">
-                      {dep.created_at ? new Date(dep.created_at).toLocaleString() : ""}
-                    </span>
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">GitHub webhook</CardTitle>
+                <p className="text-sm text-muted-foreground font-normal">{ghSetup.instructions}</p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {!ghSetup.public_base_url_configured && (
+                  <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
+                    Set the public base URL under <strong>Settings → Public URL</strong> so the GitHub webhook payload
+                    URL is absolute (stored in the database).
                   </div>
-                </Link>
-              ))}
-            </div>
+                )}
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Payload URL</Label>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <code className="flex-1 rounded-md border bg-muted/50 px-3 py-2 text-xs font-mono break-all">
+                      {ghSetup.webhook_url || `(your-host)${ghSetup.webhook_path}`}
+                    </code>
+                    {ghSetup.webhook_url ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0"
+                        onClick={() => void copyText("webhook", ghSetup.webhook_url)}
+                      >
+                        <CopyIcon className="mr-2 size-3" /> Copy
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <Label className="text-xs text-muted-foreground">Webhook secret</Label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={rotating}
+                      onClick={() => void handleRotateSecret()}
+                    >
+                      <RefreshCwIcon className={`mr-1 size-3 ${rotating ? "animate-spin" : ""}`} />
+                      Rotate
+                    </Button>
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <code className="flex-1 rounded-md border bg-muted/50 px-3 py-2 text-xs font-mono break-all">
+                      {ghSetup.webhook_secret || "—"}
+                    </code>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      disabled={!ghSetup.webhook_secret}
+                      onClick={() => void copyText("secret", ghSetup.webhook_secret)}
+                    >
+                      <CopyIcon className="mr-2 size-3" /> Copy secret
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    After rotating, update the secret in GitHub. New projects generate a secret when a repo is linked.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
           )}
-        </CardContent>
-      </Card>
+        </TabsContent>
+
+        <TabsContent value="deployments" className="mt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Deployments</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {deployments.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 text-center px-2">
+                  <RocketIcon className="size-8 text-muted-foreground mb-3" />
+                  <p className="text-sm text-muted-foreground">No deployments yet.</p>
+                  <Button size="sm" className="mt-3" onClick={() => setDeployDialogOpen(true)}>
+                    Deploy now
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {deployments.map((dep) => (
+                    <Link key={dep.id} to={`/deployments/${dep.id}`} className="block">
+                      <div className="flex flex-col gap-2 rounded-lg border p-3 hover:bg-accent/50 transition-colors sm:flex-row sm:items-center sm:justify-between min-w-0">
+                        <div className="flex flex-wrap items-center gap-2 min-w-0">
+                          <Badge variant={phaseVariant(dep.phase)}>{phaseLabel(dep.phase)}</Badge>
+                          <span className="font-mono text-sm">
+                            {dep.github_commit ? dep.github_commit.slice(0, 8) : "manual"}
+                          </span>
+                          {dep.build_status && (
+                            <span className="text-xs text-muted-foreground hidden sm:inline">Build: {dep.build_status}</span>
+                          )}
+                        </div>
+                        <span className="text-xs text-muted-foreground shrink-0">
+                          {dep.created_at ? new Date(dep.created_at).toLocaleString() : ""}
+                        </span>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={deployDialogOpen} onOpenChange={setDeployDialogOpen}>
         <DialogContent>
