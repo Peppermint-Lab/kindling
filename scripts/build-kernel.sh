@@ -32,7 +32,7 @@ docker run --rm \
     set -eu
 
     echo "Installing build dependencies..."
-    apk add --no-cache git build-base flex bison bc perl linux-headers openssl-dev elfutils-dev
+    apk add --no-cache git build-base flex bison bc perl linux-headers openssl-dev elfutils-dev bash
 
     echo "Cloning kernel (branch: $LINUX_BRANCH)..."
     cd /tmp
