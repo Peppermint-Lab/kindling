@@ -13,7 +13,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -102,6 +104,7 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 	b.log(ctx, build.ID, "info", fmt.Sprintf("Building %s@%s", project.GithubRepository, build.GithubCommit))
 
 	// Download source tarball.
+	b.log(ctx, build.ID, "info", "Downloading source...")
 	tarball, err := b.downloadSource(ctx, project.GithubRepository, build.GithubCommit)
 	if err != nil {
 		b.log(ctx, build.ID, "error", fmt.Sprintf("Failed to download source: %v", err))
@@ -109,18 +112,25 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 	}
 	defer tarball.Close()
 
-	// Prepare build context (extract tar, detect framework, inject Dockerfile if needed).
-	buildContext, dockerfile, err := b.prepareBuildContext(ctx, build, tarball, project.RootDirectory, project.DockerfilePath)
+	// Extract to temp directory.
+	buildDir, err := os.MkdirTemp("", "kindling-build-")
 	if err != nil {
-		b.log(ctx, build.ID, "error", fmt.Sprintf("Failed to prepare build context: %v", err))
+		return fmt.Errorf("create build dir: %w", err)
+	}
+	defer os.RemoveAll(buildDir)
+
+	b.log(ctx, build.ID, "info", "Extracting source...")
+	framework, err := b.extractAndDetect(ctx, build, tarball, buildDir, project.RootDirectory, project.DockerfilePath)
+	if err != nil {
+		b.log(ctx, build.ID, "error", fmt.Sprintf("Failed to extract source: %v", err))
 		return b.q.BuildMarkFailed(ctx, build.ID)
 	}
 
-	if dockerfile != "" {
-		b.log(ctx, build.ID, "info", fmt.Sprintf("No Dockerfile found. Detected framework: %s", dockerfile))
+	if framework != "" {
+		b.log(ctx, build.ID, "info", fmt.Sprintf("No Dockerfile found. Detected framework: %s", framework))
 	}
 
-	// Build the Docker image on the host.
+	// Build the Docker image.
 	imageTag := build.GithubCommit
 	if len(imageTag) > 12 {
 		imageTag = imageTag[:12]
@@ -129,7 +139,12 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 
 	b.log(ctx, build.ID, "info", fmt.Sprintf("Building image: %s", imageRef))
 
-	if err := b.runDockerBuild(ctx, build, buildContext, imageRef, project.DockerfilePath); err != nil {
+	dockerfilePath := project.DockerfilePath
+	if dockerfilePath == "" {
+		dockerfilePath = "Dockerfile"
+	}
+
+	if err := b.runDockerBuild(ctx, build, buildDir, imageRef, dockerfilePath); err != nil {
 		b.log(ctx, build.ID, "error", fmt.Sprintf("Docker build failed: %v", err))
 		return b.q.BuildMarkFailed(ctx, build.ID)
 	}
@@ -364,6 +379,145 @@ func (b *Builder) prepareBuildContext(ctx context.Context, build queries.Build, 
 	return pr, framework, nil
 }
 
+// extractAndDetect extracts a GitHub tarball to buildDir, strips the prefix,
+// applies root directory filter, detects framework, and injects Dockerfile if needed.
+// Returns the detected framework name (empty if user provided a Dockerfile).
+func (b *Builder) extractAndDetect(ctx context.Context, build queries.Build, gzipReader io.Reader, buildDir, rootDir, dockerfilePath string) (string, error) {
+	gzr, err := gzip.NewReader(gzipReader)
+	if err != nil {
+		return "", fmt.Errorf("gzip reader: %w", err)
+	}
+	defer gzr.Close()
+
+	tr := tar.NewReader(gzr)
+	var githubPrefix string
+	foundDockerfile := false
+	var signals frameworkSignals
+
+	rootDirPrefix := strings.TrimPrefix(rootDir, "/")
+	if rootDirPrefix != "" && !strings.HasSuffix(rootDirPrefix, "/") {
+		rootDirPrefix += "/"
+	}
+
+	if dockerfilePath == "" {
+		dockerfilePath = "Dockerfile"
+	}
+
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("read tar: %w", err)
+		}
+
+		// Strip GitHub's prefix directory (e.g. "heroku-nodejs-getting-started-abc123/").
+		if githubPrefix == "" {
+			parts := strings.SplitN(header.Name, "/", 2)
+			if len(parts) > 1 {
+				githubPrefix = parts[0] + "/"
+			}
+		}
+
+		path := strings.TrimPrefix(header.Name, githubPrefix)
+		if path == "" {
+			continue
+		}
+
+		// Apply root directory filter.
+		if rootDirPrefix != "" {
+			if !strings.HasPrefix(path, rootDirPrefix) {
+				continue
+			}
+			path = strings.TrimPrefix(path, rootDirPrefix)
+			if path == "" {
+				continue
+			}
+		}
+
+		// Check for Dockerfile.
+		if path == dockerfilePath {
+			foundDockerfile = true
+		}
+
+		// Collect framework signals.
+		if !strings.Contains(path, "/") {
+			switch path {
+			case "nuxt.config.ts", "nuxt.config.js":
+				signals.hasNuxtConfig = true
+			case "next.config.ts", "next.config.js", "next.config.mjs":
+				signals.hasNextConfig = true
+			case "Gemfile":
+				signals.hasGemfile = true
+			case "Rakefile":
+				signals.hasRakefile = true
+			case "artisan":
+				signals.hasArtisan = true
+			case "go.mod":
+				signals.hasGoMod = true
+			}
+		} else if path == "config/routes.rb" {
+			signals.hasRailsRoutes = true
+		}
+
+		// Write file to buildDir.
+		fullPath := filepath.Join(buildDir, path)
+
+		if header.Typeflag == tar.TypeDir {
+			os.MkdirAll(fullPath, 0o755)
+			continue
+		}
+
+		// Ensure parent directory exists.
+		os.MkdirAll(filepath.Dir(fullPath), 0o755)
+
+		f, err := os.Create(fullPath)
+		if err != nil {
+			return "", fmt.Errorf("create %s: %w", path, err)
+		}
+
+		if _, err := io.Copy(f, tr); err != nil {
+			f.Close()
+			return "", fmt.Errorf("write %s: %w", path, err)
+		}
+		f.Close()
+
+		// Set executable bit if needed.
+		if header.Mode&0o111 != 0 {
+			os.Chmod(fullPath, 0o755)
+		}
+
+		// Buffer certain files for framework detection.
+		if !strings.Contains(path, "/") {
+			switch path {
+			case "package.json":
+				signals.packageJSON, _ = os.ReadFile(fullPath)
+			case "Gemfile":
+				signals.gemfileBytes, _ = os.ReadFile(fullPath)
+			case "composer.json":
+				signals.composerJSON, _ = os.ReadFile(fullPath)
+			}
+		}
+	}
+
+	// Inject Dockerfile if not found.
+	if !foundDockerfile {
+		framework := DetectFramework(signals)
+		if framework == "" {
+			return "", fmt.Errorf("no Dockerfile found and could not detect framework")
+		}
+
+		content := GetDockerfile(framework)
+		if err := os.WriteFile(filepath.Join(buildDir, dockerfilePath), []byte(content), 0o644); err != nil {
+			return "", fmt.Errorf("write injected Dockerfile: %w", err)
+		}
+		return framework, nil
+	}
+
+	return "", nil
+}
+
 func (b *Builder) log(ctx context.Context, buildID pgtype.UUID, level, message string) {
 	b.q.BuildLogCreate(ctx, queries.BuildLogCreateParams{
 		ID:      uuidToPgtype(uuid.New()),
@@ -382,15 +536,11 @@ func (b *Builder) releaseLease(buildID uuid.UUID) {
 	})
 }
 
-// runDockerBuild runs `docker build` with the prepared tar context piped to stdin.
-func (b *Builder) runDockerBuild(ctx context.Context, build queries.Build, buildContext io.Reader, imageRef, dockerfilePath string) error {
-	if dockerfilePath == "" {
-		dockerfilePath = "Dockerfile"
-	}
-
-	args := []string{"build", "-t", imageRef, "-f", dockerfilePath, "-"}
+// runDockerBuild runs `docker build` on a directory.
+func (b *Builder) runDockerBuild(ctx context.Context, build queries.Build, buildDir, imageRef, dockerfilePath string) error {
+	args := []string{"build", "-t", imageRef, "-f", dockerfilePath, "."}
 	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Stdin = buildContext
+	cmd.Dir = buildDir
 
 	// Stream stdout/stderr to build logs.
 	stdout, _ := cmd.StdoutPipe()
@@ -400,7 +550,6 @@ func (b *Builder) runDockerBuild(ctx context.Context, build queries.Build, build
 		return fmt.Errorf("start docker build: %w", err)
 	}
 
-	// Read stdout and stderr concurrently to avoid deadlock.
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
