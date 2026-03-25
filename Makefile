@@ -33,10 +33,11 @@ initramfs:
 	@echo "Cross-compiling guest agent for Linux..."
 	@CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/kindling-init ./cmd/guest-agent
 	@echo "Building initramfs via Docker..."
-	@docker run --rm -v /tmp/kindling-init:/init:ro -v $(KINDLING_DATA):/out alpine:3.21 sh -c '\
-		mkdir -p /rootfs/{bin,sbin,etc,proc,sys,dev,tmp,app,usr/bin,usr/sbin} && \
+	@docker run --rm --platform linux/amd64 -v /tmp/kindling-init:/init:ro -v $(KINDLING_DATA):/out alpine:3.21 sh -c '\
+		apk add --no-cache cpio && \
+		mkdir -p /rootfs/bin /rootfs/sbin /rootfs/etc /rootfs/proc /rootfs/sys /rootfs/dev /rootfs/tmp /rootfs/app /rootfs/usr/bin /rootfs/usr/sbin && \
 		cp /init /rootfs/init && chmod +x /rootfs/init && \
-		cp /bin/busybox /rootfs/bin/busybox && \
+		cp $$(which busybox) /rootfs/bin/busybox && \
 		for cmd in sh ip ifconfig route ping cat ls mkdir mount umount; do \
 			ln -sf busybox /rootfs/bin/$$cmd; \
 		done && \
