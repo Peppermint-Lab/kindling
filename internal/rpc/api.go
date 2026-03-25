@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -57,6 +58,12 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"name is required"}`, http.StatusBadRequest)
 		return
 	}
+	// Normalize GitHub repository: strip full URL to owner/repo.
+	req.GithubRepository = strings.TrimPrefix(req.GithubRepository, "https://github.com/")
+	req.GithubRepository = strings.TrimPrefix(req.GithubRepository, "http://github.com/")
+	req.GithubRepository = strings.TrimPrefix(req.GithubRepository, "github.com/")
+	req.GithubRepository = strings.TrimSuffix(req.GithubRepository, ".git")
+
 	if req.DockerfilePath == "" {
 		req.DockerfilePath = "Dockerfile"
 	}

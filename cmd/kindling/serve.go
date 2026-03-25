@@ -5,15 +5,17 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/builder"
 	"github.com/kindlingvm/kindling/internal/database"
-	"github.com/kindlingvm/kindling/internal/deploy"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/deploy"
 	"github.com/kindlingvm/kindling/internal/listener"
 	"github.com/kindlingvm/kindling/internal/reconciler"
 	"github.com/kindlingvm/kindling/internal/rpc"
@@ -72,6 +74,18 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 	// Set up core services
 	serverID := loadServerID()
 	q := queries.New(db.Pool)
+
+	// Register this server in the database.
+	_, err = q.ServerRegister(ctx, queries.ServerRegisterParams{
+		ID:         pgtype.UUID{Bytes: serverID, Valid: true},
+		Hostname:   hostname(),
+		InternalIp: "127.0.0.1",
+		IpRange:    mustParseCIDR("10.0.0.0/20"),
+	})
+	if err != nil {
+		return fmt.Errorf("register server: %w", err)
+	}
+	slog.Info("server registered", "server_id", serverID)
 
 	vmmgr := vmm.NewManager(vmm.Defaults(), serverID, q)
 	defer vmmgr.Stop()
@@ -190,6 +204,19 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 	}
 
 	return nil
+}
+
+func hostname() string {
+	h, _ := os.Hostname()
+	return h
+}
+
+func mustParseCIDR(s string) netip.Prefix {
+	p, err := netip.ParsePrefix(s)
+	if err != nil {
+		panic(err)
+	}
+	return p
 }
 
 func loadServerID() uuid.UUID {
