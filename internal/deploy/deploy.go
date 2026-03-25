@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/reconciler"
+	"github.com/kindlingvm/kindling/internal/runtime"
 )
 
 // Deployer orchestrates deployments via reconciliation.
@@ -21,11 +23,17 @@ type Deployer struct {
 	q                    *queries.Queries
 	serverID             uuid.UUID
 	deploymentReconciler *reconciler.Scheduler
+	rt                   runtime.Runtime
 }
 
 // New creates a new deployer.
 func New(q *queries.Queries, serverID uuid.UUID) *Deployer {
 	return &Deployer{q: q, serverID: serverID}
+}
+
+// SetRuntime sets the runtime for starting instances.
+func (d *Deployer) SetRuntime(rt runtime.Runtime) {
+	d.rt = rt
 }
 
 // SetReconciler sets the deployment reconciler for re-scheduling.
@@ -102,7 +110,7 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 		return nil
 	}
 
-	// Step 3: Update deployment's image.
+	// Step 3: Update deployment's image ref.
 	if dep.ImageID != build.ImageID {
 		dep, err = d.q.DeploymentUpdateImage(ctx, queries.DeploymentUpdateImageParams{
 			ID:      dep.ID,
@@ -113,79 +121,47 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 		}
 	}
 
-	// Step 4: Create VM if needed.
-	if !dep.VmID.Valid {
-		logger.Info("creating VM for deployment")
-
-		// Get the server to place the VM on.
-		server, err := d.q.ServerFindLeastLoaded(ctx)
-		if err != nil {
-			return fmt.Errorf("find server: %w", err)
-		}
-
-		// Allocate IP.
-		ip, err := d.q.VMNextIPAddress(ctx, queries.VMNextIPAddressParams{
-			ServerID: server.ID,
-			IpRange:  server.IpRange,
-		})
-		if err != nil {
-			return fmt.Errorf("allocate IP: %w", err)
-		}
-
-		vm, err := d.q.VMCreate(ctx, queries.VMCreateParams{
-			ID:        uuidToPgtype(uuid.New()),
-			ServerID:  server.ID,
-			ImageID:   dep.ImageID,
-			Status:    "pending",
-			Vcpus:     1,
-			Memory:    512,
-			IpAddress: ip,
-			Port:      pgtype.Int4{Int32: 3000, Valid: true},
-		})
-		if err != nil {
-			return fmt.Errorf("create VM: %w", err)
-		}
-
-		dep, err = d.q.DeploymentUpdateVM(ctx, queries.DeploymentUpdateVMParams{
-			ID:   dep.ID,
-			VmID: vm.ID,
-		})
-		if err != nil {
-			return fmt.Errorf("update deployment VM: %w", err)
-		}
-
-		logger.Info("VM created", "vm_id", vm.ID)
-		d.scheduleRetry(deploymentID, 5*time.Second)
-		return nil // VM reconciler will boot it
+	// Step 4: Start the instance via runtime.
+	if d.rt == nil {
+		return fmt.Errorf("no runtime configured")
 	}
 
-	// Step 5: Check VM status + health check.
-	vm, err := d.q.VMFirstByID(ctx, dep.VmID)
+	// Get image ref for the runtime.
+	image, err := d.q.ImageFindByID(ctx, dep.ImageID)
 	if err != nil {
-		return fmt.Errorf("fetch VM: %w", err)
+		return fmt.Errorf("fetch image: %w", err)
+	}
+	imageRef := fmt.Sprintf("%s/%s:%s", image.Registry, image.Repository, image.Tag)
+
+	// Fetch env vars for this project.
+	envVars, err := d.q.EnvironmentVariableFindByProjectID(ctx, dep.ProjectID)
+	if err != nil {
+		return fmt.Errorf("fetch env vars: %w", err)
+	}
+	var env []string
+	for _, ev := range envVars {
+		env = append(env, fmt.Sprintf("%s=%s", ev.Name, ev.Value))
 	}
 
-	if vm.DeletedAt.Valid {
-		// VM was deleted, reset and retry.
-		dep, err = d.q.DeploymentUpdateVM(ctx, queries.DeploymentUpdateVMParams{
-			ID:   dep.ID,
-			VmID: pgtype.UUID{},
-		})
-		if err != nil {
-			return fmt.Errorf("reset deployment VM: %w", err)
-		}
-		d.scheduleRetry(deploymentID, 0)
-		return nil
+	logger.Info("starting instance", "image", imageRef, "runtime", d.rt.Name())
+
+	ip, err := d.rt.Start(ctx, runtime.Instance{
+		ID:       deploymentID,
+		ImageRef: imageRef,
+		VCPUs:    1,
+		MemoryMB: 512,
+		Port:     3000,
+		Env:      env,
+	})
+	if err != nil {
+		logger.Error("failed to start instance", "error", err)
+		return fmt.Errorf("start instance: %w", err)
 	}
 
-	if vm.Status != "running" {
-		logger.Info("VM not running yet", "status", vm.Status)
-		d.scheduleRetry(deploymentID, 5*time.Second)
-		return nil
-	}
+	logger.Info("instance started", "ip", ip)
 
-	// Health check.
-	if !d.healthCheck(vm.IpAddress.String(), vm.Port.Int32) {
+	// Step 5: Health check.
+	if !d.healthCheck(ip, 3000) {
 		logger.Info("health check failed, retrying")
 		return fmt.Errorf("health check failed")
 	}
@@ -194,15 +170,13 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 	if err := d.q.DeploymentMarkRunning(ctx, dep.ID); err != nil {
 		return fmt.Errorf("mark running: %w", err)
 	}
-	logger.Info("deployment is running")
+	logger.Info("deployment is running", "ip", ip)
 
 	// Step 7: Update domain routing.
-	if err := d.q.DomainUpdateDeploymentForProject(ctx, queries.DomainUpdateDeploymentForProjectParams{
+	d.q.DomainUpdateDeploymentForProject(ctx, queries.DomainUpdateDeploymentForProjectParams{
 		DeploymentID: dep.ID,
 		ProjectID:    dep.ProjectID,
-	}); err != nil {
-		logger.Warn("failed to update domain routing", "error", err)
-	}
+	})
 
 	// Step 8: Stop old deployments.
 	d.stopOldDeployments(ctx, dep)
@@ -210,9 +184,17 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 	return nil
 }
 
-func (d *Deployer) healthCheck(ip string, port int32) bool {
+func (d *Deployer) healthCheck(addr string, port int) bool {
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("http://%s:%d/", ip, port))
+	// addr might already include port (e.g. "0.0.0.0:32768").
+	url := addr
+	if !strings.Contains(addr, ":") {
+		url = fmt.Sprintf("%s:%d", addr, port)
+	}
+	if !strings.HasPrefix(url, "http") {
+		url = "http://" + url
+	}
+	resp, err := client.Get(url)
 	if err != nil {
 		return false
 	}

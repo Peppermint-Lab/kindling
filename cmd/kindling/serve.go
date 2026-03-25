@@ -18,8 +18,8 @@ import (
 	"github.com/kindlingvm/kindling/internal/deploy"
 	"github.com/kindlingvm/kindling/internal/listener"
 	"github.com/kindlingvm/kindling/internal/reconciler"
+	crunrt "github.com/kindlingvm/kindling/internal/runtime"
 	"github.com/kindlingvm/kindling/internal/rpc"
-	"github.com/kindlingvm/kindling/internal/vmm"
 	"github.com/kindlingvm/kindling/internal/webhook"
 	"github.com/spf13/cobra"
 	"github.com/google/uuid"
@@ -87,14 +87,17 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 	}
 	slog.Info("server registered", "server_id", serverID)
 
-	vmmgr := vmm.NewManager(vmm.Defaults(), serverID, q)
-	defer vmmgr.Stop()
+	// Detect and create runtime (crun or cloud-hypervisor).
+	rt := crunrt.NewCrunRuntime()
+	defer rt.StopAll()
+	slog.Info("runtime detected", "runtime", rt.Name())
 
 	bldr := builder.New(builder.Config{
-		RegistryURL: "ghcr.io",
+		RegistryURL: "kindling",
 	}, q, serverID)
 
 	deployer := deploy.New(q, serverID)
+	deployer.SetRuntime(rt)
 
 	// Set up reconcilers
 	deploymentReconciler := reconciler.New(reconciler.Config{
@@ -108,9 +111,13 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 		Reconcile: bldr.ReconcileBuild,
 	})
 
+	// VM/instance reconciler — currently handled by deployment reconciler.
 	vmReconciler := reconciler.New(reconciler.Config{
-		Name: "vm",
-		Reconcile: vmmgr.ReconcileVM,
+		Name: "instance",
+		Reconcile: func(ctx context.Context, id uuid.UUID) error {
+			slog.Info("reconciling instance", "id", id)
+			return nil
+		},
 	})
 
 	// Route change channel — domain/server reconcilers signal the edge proxy.
