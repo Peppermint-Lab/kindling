@@ -75,8 +75,8 @@ remote-run: remote-build
 # Full dev setup: sync, build, run API + dashboard
 dev-up: remote-build
 	@echo "Stopping any existing kindling..."
-	@ssh $(REMOTE_HOST) 'pkill -f "bin/kindling" 2>/dev/null || true'
-	@pkill -f "ssh -f -N -L 8080:localhost:8080" 2>/dev/null || true
+	-@ssh $(REMOTE_HOST) 'pkill -f "bin/kindling" 2>/dev/null; true'
+	-@pkill -f "ssh -f -N -L 8080:localhost:8080" 2>/dev/null; true
 	@sleep 1
 	@echo "Starting SSH tunnel..."
 	@ssh -f -N -L 8080:localhost:8080 $(REMOTE_HOST)
