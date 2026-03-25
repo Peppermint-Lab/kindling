@@ -13,8 +13,15 @@ build:
 	go build -o bin/kindling ./cmd/kindling
 
 # Run locally (requires Postgres via `make db`)
-dev: build
+dev: build kernel
 	DATABASE_URL=$(DATABASE_URL) ./bin/kindling serve
+
+# Download kernel for Apple VZ / Cloud Hypervisor (one-time)
+kernel:
+	@mkdir -p /data 2>/dev/null || sudo mkdir -p /data && sudo chown $(USER) /data
+	@test -f /data/vmlinuz.bin || (echo "Downloading kernel..." && \
+		curl -fsSL "https://github.com/cloud-hypervisor/rust-hypervisor-firmware/releases/download/0.4.2/hypervisor-fw" -o /data/vmlinuz.bin && \
+		echo "Kernel downloaded to /data/vmlinuz.bin")
 
 # Start local Postgres
 db:
