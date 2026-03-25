@@ -10,8 +10,10 @@ import (
 	"syscall"
 
 	"github.com/kindlingvm/kindling/internal/database"
+	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/listener"
 	"github.com/kindlingvm/kindling/internal/reconciler"
+	"github.com/kindlingvm/kindling/internal/vmm"
 	"github.com/spf13/cobra"
 	"github.com/google/uuid"
 )
@@ -62,6 +64,11 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 	}
 	slog.Info("schema migrated")
 
+	// Set up VM manager
+	q := queries.New(db.Pool)
+	vmmgr := vmm.NewManager(vmm.Defaults(), uuid.New(), q) // TODO: use real server ID
+	defer vmmgr.Stop()
+
 	// Set up reconcilers
 	deploymentReconciler := reconciler.New(reconciler.Config{
 		Name: "deployment",
@@ -83,11 +90,7 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 
 	vmReconciler := reconciler.New(reconciler.Config{
 		Name: "vm",
-		Reconcile: func(ctx context.Context, id uuid.UUID) error {
-			slog.Info("reconciling VM", "id", id)
-			// TODO: implement VM reconciler
-			return nil
-		},
+		Reconcile: vmmgr.ReconcileVM,
 	})
 
 	domainReconciler := reconciler.New(reconciler.Config{
