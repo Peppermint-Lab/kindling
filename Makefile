@@ -8,9 +8,12 @@ REMOTE_DIR ?= /home/ubuntu/kindling
 
 # === Local ===
 
-# Build the binary
+# Build the binary (codesign with entitlements on macOS for Apple VZ)
 build:
 	go build -o bin/kindling ./cmd/kindling
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		codesign --entitlements contrib/kindling.entitlements --force -s - bin/kindling; \
+	fi
 
 # Run locally (requires Postgres via `make db`)
 dev: build kernel initramfs
