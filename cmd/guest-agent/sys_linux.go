@@ -1,11 +1,15 @@
 package main
 
 import (
+	"log"
 	"os"
 	"syscall"
 )
 
 func mountEssentialFS() {
+	// Set PATH first so ip/sh are found.
+	os.Setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin")
+
 	os.MkdirAll("/proc", 0o755)
 	os.MkdirAll("/sys", 0o755)
 	os.MkdirAll("/dev", 0o755)
@@ -17,11 +21,29 @@ func mountEssentialFS() {
 	syscall.Mount("devtmpfs", "/dev", "devtmpfs", 0, "")
 	syscall.Mount("tmpfs", "/tmp", "tmpfs", 0, "")
 
-	// Mount shared app directory (virtio-fs / 9p from host).
-	syscall.Mount("app", "/app", "virtiofs", 0, "")
+	// Try mounting shared app directory.
+	// Apple VZ uses virtiofs, Cloud Hypervisor also uses virtiofs.
+	// The tag "app" matches what the host configures.
+	err := syscall.Mount("app", "/app", "virtiofs", 0, "")
+	if err != nil {
+		log.Printf("virtiofs mount failed: %v, trying 9p", err)
+		// Fallback to 9p (some configurations use this).
+		err = syscall.Mount("app", "/app", "9p", 0, "trans=virtio,version=9p2000.L")
+		if err != nil {
+			log.Printf("9p mount also failed: %v", err)
+		}
+	}
 
-	// Ensure PATH includes busybox.
-	os.Setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin")
+	// Log what's in /app for debugging.
+	entries, err := os.ReadDir("/app")
+	if err != nil {
+		log.Printf("/app readdir: %v", err)
+	} else {
+		log.Printf("/app contains %d entries", len(entries))
+		for _, e := range entries {
+			log.Printf("  /app/%s", e.Name())
+		}
+	}
 }
 
 func setHostname(name string) {
