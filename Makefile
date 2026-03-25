@@ -72,19 +72,30 @@ remote-networking:
 remote-run: remote-build
 	ssh $(REMOTE_HOST) 'cd $(REMOTE_DIR) && DATABASE_URL=$(DATABASE_URL) ./bin/kindling serve'
 
-# Full dev setup: sync, build, run with SSH tunnel for dashboard
+# Full dev setup: sync, build, run API + dashboard
 dev-up: remote-build
-	@echo "Starting kindling on $(REMOTE_HOST)..."
-	ssh -f -N -L 8080:localhost:8080 $(REMOTE_HOST) || true
-	ssh $(REMOTE_HOST) 'cd $(REMOTE_DIR) && \
+	@echo "Stopping any existing kindling..."
+	@ssh $(REMOTE_HOST) 'pkill -f "bin/kindling" 2>/dev/null || true'
+	@pkill -f "ssh -f -N -L 8080:localhost:8080" 2>/dev/null || true
+	@sleep 1
+	@echo "Starting SSH tunnel..."
+	@ssh -f -N -L 8080:localhost:8080 $(REMOTE_HOST)
+	@echo "Starting kindling API on $(REMOTE_HOST)..."
+	@ssh $(REMOTE_HOST) 'cd $(REMOTE_DIR) && \
 		DATABASE_URL=$(DATABASE_URL) \
 		nohup ./bin/kindling serve > /tmp/kindling.log 2>&1 &'
+	@sleep 2
+	@echo "Starting dashboard..."
+	@cd web/dashboard && npm install --silent 2>/dev/null && npm run dev &
 	@echo ""
-	@echo "Kindling running on $(REMOTE_HOST)"
-	@echo "API: http://localhost:8080 (via SSH tunnel)"
-	@echo "Logs: ssh $(REMOTE_HOST) tail -f /tmp/kindling.log"
+	@echo "=== Kindling dev environment ==="
+	@echo "API:       http://localhost:8080"
+	@echo "Dashboard: http://localhost:5173"
+	@echo "Logs:      ssh $(REMOTE_HOST) tail -f /tmp/kindling.log"
 
-# Stop remote kindling
+# Stop everything
 dev-down:
-	ssh $(REMOTE_HOST) 'pkill -f "bin/kindling" || true'
-	@echo "Kindling stopped on $(REMOTE_HOST)"
+	@ssh $(REMOTE_HOST) 'pkill -f "bin/kindling" 2>/dev/null || true'
+	@pkill -f "ssh -f -N -L 8080:localhost:8080" 2>/dev/null || true
+	@pkill -f "vite" 2>/dev/null || true
+	@echo "Kindling stopped."
