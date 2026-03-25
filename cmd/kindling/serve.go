@@ -16,6 +16,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/listener"
 	"github.com/kindlingvm/kindling/internal/reconciler"
 	"github.com/kindlingvm/kindling/internal/vmm"
+	"github.com/kindlingvm/kindling/internal/webhook"
 	"github.com/spf13/cobra"
 	"github.com/google/uuid"
 )
@@ -149,12 +150,15 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 	}()
 	slog.Info("WAL listener started")
 
-	// API server (placeholder — serves health check)
+	// API server
+	webhookHandler := webhook.NewHandler(q)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
+	mux.Handle("POST /webhooks/github", webhookHandler)
 
 	srv := &http.Server{Addr: listenAddr, Handler: mux}
 
