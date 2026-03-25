@@ -10,3 +10,7 @@ import (
 func dialVsock(cid, port int) (net.Conn, error) {
 	return nil, fmt.Errorf("vsock requires Linux")
 }
+
+func listenVsock(port uint32) (net.Listener, error) {
+	return nil, fmt.Errorf("vsock requires Linux")
+}

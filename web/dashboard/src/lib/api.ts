@@ -63,6 +63,25 @@ export type Deployment = {
   updated_at?: string | null
   build_status?: string
   phase: string
+  reachable?: DeploymentReachability | null
+}
+
+export type DeploymentPublicEndpoint = {
+  domain: string
+  public_url: string
+  redirect_to?: string
+  redirect_status_code?: number
+  proxies_to_deployment?: boolean
+}
+
+export type DeploymentReachability = {
+  public_url?: string
+  runtime_url?: string
+  domain?: string
+  vm_ip?: string
+  port?: number
+  proxies_to_deployment?: boolean
+  public_endpoints?: DeploymentPublicEndpoint[]
 }
 
 export type DeploymentListItem = Deployment & {

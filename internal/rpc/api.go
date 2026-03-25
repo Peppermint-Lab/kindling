@@ -279,7 +279,7 @@ func (a *API) listAllDeployments(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]deploymentListItemOut, len(rows))
 	for i := range rows {
-		out[i] = listRowToOut(rows[i])
+		out[i] = a.listRowToOutCtx(r.Context(), rows[i])
 	}
 	writeJSON(w, http.StatusOK, out)
 }

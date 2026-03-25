@@ -26,7 +26,9 @@ import {
   LayoutListIcon,
   CloudDownloadIcon,
 } from "lucide-react"
+import { DeploymentReachability } from "@/components/deployment-reachability"
 import { phaseLabel, phaseVariant } from "@/lib/deploy-badge"
+import { selectLatestRunningDeployment } from "@/lib/deployment-reachability"
 
 async function copyText(label: string, text: string) {
   try {
@@ -200,6 +202,8 @@ export function ProjectDetailPage() {
 
   if (!project) return null
 
+  const latestRunningDeployment = selectLatestRunningDeployment(deployments)
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto w-full">
       {error && (
@@ -247,7 +251,7 @@ export function ProjectDetailPage() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="overview" className="mt-4">
+        <TabsContent value="overview" className="mt-4 space-y-4">
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Project</CardTitle>
@@ -277,6 +281,28 @@ export function ProjectDetailPage() {
               </div>
             </CardContent>
           </Card>
+          {latestRunningDeployment ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Current reachability</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Latest running deployment:{" "}
+                  <span className="font-mono">
+                    {latestRunningDeployment.github_commit ? latestRunningDeployment.github_commit.slice(0, 8) : "manual"}
+                  </span>
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <DeploymentReachability reachable={latestRunningDeployment.reachable} compact />
+                <Link
+                  to={`/deployments/${latestRunningDeployment.id}`}
+                  className="inline-flex text-sm text-primary underline-offset-4 hover:underline"
+                >
+                  View deployment details
+                </Link>
+              </CardContent>
+            </Card>
+          ) : null}
         </TabsContent>
 
         <TabsContent value="github" className="mt-4">

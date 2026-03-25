@@ -6,16 +6,27 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Code-Hex/vz/v3"
 	"github.com/google/uuid"
+)
+
+const (
+	// appleNATGuestHostIP is eth0's IPv4 inside the VM; must match the host part of appleGuestConfig.IPAddr.
+	appleNATGuestHostIP = "10.0.0.1"
+	appleNATGuestCIDR   = appleNATGuestHostIP + "/31"
+	// tcpBridgeVsockPort is the vsock port where the guest accepts host-initiated connections for a
+	// 127.0.0.1 TCP relay (see cmd/guest-agent); must match guest init.
+	tcpBridgeVsockPort uint32 = 1025
 )
 
 // AppleRuntime runs Linux microVMs via Apple Virtualization Framework.
@@ -29,13 +40,14 @@ type AppleRuntime struct {
 }
 
 type appleInstance struct {
-	vm     *vz.VirtualMachine
-	ip     string
-	logs   []string
-	logMu  sync.Mutex
-	cancel context.CancelFunc
-	ready  chan struct{}
-	once   sync.Once
+	vm      *vz.VirtualMachine
+	ip      string
+	hostFwd net.Listener
+	logs    []string
+	logMu   sync.Mutex
+	cancel  context.CancelFunc
+	ready   chan struct{}
+	once    sync.Once
 }
 
 type guestConfig struct {
@@ -179,16 +191,16 @@ func (r *AppleRuntime) startVM(ctx context.Context, inst Instance) (string, erro
 	runCtx, cancel := context.WithCancel(ctx)
 	ai := &appleInstance{
 		vm:     vm,
-		ip:     fmt.Sprintf("192.168.64.2:%d", port), // macOS NAT default range
 		cancel: cancel,
 		ready:  make(chan struct{}),
 	}
 
 	// Set up vsock listener BEFORE starting the VM.
 	// The guest agent connects immediately on boot.
+	var vsockDev *vz.VirtioSocketDevice
 	socketDevices := vm.SocketDevices()
 	if len(socketDevices) > 0 {
-		vsockDev := socketDevices[0]
+		vsockDev = socketDevices[0]
 		listener, err := vsockDev.Listen(1024)
 		if err != nil {
 			cancel()
@@ -221,6 +233,22 @@ func (r *AppleRuntime) startVM(ctx context.Context, inst Instance) (string, erro
 		return "", fmt.Errorf("wait for guest ready: %w", err)
 	}
 
+	if vsockDev == nil {
+		cancel()
+		return "", fmt.Errorf("vsock device required for apple runtime")
+	}
+
+	hostTCP, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		cancel()
+		return "", fmt.Errorf("host tcp forward listen: %w", err)
+	}
+	hostPort := hostTCP.Addr().(*net.TCPAddr).Port
+	ai.ip = net.JoinHostPort("127.0.0.1", strconv.Itoa(hostPort))
+	ai.hostFwd = hostTCP
+
+	go r.forwardHostTCP(runCtx, hostTCP, vsockDev, tcpBridgeVsockPort)
+
 	// Monitor VM state.
 	go func() {
 		<-runCtx.Done()
@@ -239,9 +267,56 @@ func (r *AppleRuntime) startVM(ctx context.Context, inst Instance) (string, erro
 		"runtime", "apple-vz",
 		"vcpus", inst.VCPUs,
 		"memory_mb", inst.MemoryMB,
+		"localhost_forward_port", hostPort,
 	)
 
 	return ai.ip, nil
+}
+
+// forwardHostTCP accepts connections on a localhost listener and relays each to the guest app over vsock.
+// Required because VZNATNetworkDeviceAttachment does not support inbound port forwarding from the host to guest eth0.
+func (r *AppleRuntime) forwardHostTCP(ctx context.Context, hostLn net.Listener, dev *vz.VirtioSocketDevice, guestVsockPort uint32) {
+	go func() {
+		<-ctx.Done()
+		_ = hostLn.Close()
+	}()
+
+	for {
+		tcpConn, err := hostLn.Accept()
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				slog.Debug("apple-vz host forward accept ended", "error", err)
+				return
+			}
+		}
+		go r.relayTCPOverVsock(tcpConn, dev, guestVsockPort)
+	}
+}
+
+func (r *AppleRuntime) relayTCPOverVsock(client net.Conn, dev *vz.VirtioSocketDevice, guestVsockPort uint32) {
+	defer client.Close()
+
+	guestConn, err := dev.Connect(guestVsockPort)
+	if err != nil {
+		slog.Debug("apple-vz vsock connect failed", "error", err)
+		return
+	}
+	defer guestConn.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(guestConn, client)
+	}()
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(client, guestConn)
+	}()
+	wg.Wait()
 }
 
 func (r *AppleRuntime) Stop(ctx context.Context, id uuid.UUID) error {
@@ -355,7 +430,7 @@ func appleGuestConfig(inst Instance) guestConfig {
 
 	return guestConfig{
 		Env:      envWithPort(inst.Env, port),
-		IPAddr:   "10.0.0.1/31",
+		IPAddr:   appleNATGuestCIDR,
 		IPGW:     "10.0.0.0",
 		Hostname: fmt.Sprintf("kindling-%s", inst.ID.String()[:8]),
 		Port:     port,

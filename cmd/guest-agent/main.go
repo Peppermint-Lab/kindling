@@ -31,6 +31,10 @@ const (
 
 	// configPort is the vsock port the host serves config on.
 	configPort = 1024
+
+	// tcpBridgeVsockPort is where this process listens for host-initiated vsock connections to relay to the app on loopback.
+	// Must match internal/runtime tcpBridgeVsockPort (Apple VZ localhost forward).
+	tcpBridgeVsockPort uint32 = 1025
 )
 
 // ConfigResponse is the JSON payload from the host's config endpoint.
@@ -92,6 +96,8 @@ func main() {
 	defer readyCancel()
 	if err := waitForTCPReady(readyCtx, fmt.Sprintf("127.0.0.1:%d", readyPort)); err != nil {
 		log.Printf("warning: readiness probe failed: %v", err)
+	} else if err := startHostTCPBridge(readyPort); err != nil {
+		log.Fatalf("host tcp vsock bridge: %v", err)
 	} else if err := notifyReady(); err != nil {
 		log.Printf("warning: ready notification failed: %v", err)
 	} else {
@@ -253,6 +259,47 @@ func notifyReady() error {
 	}
 
 	return nil
+}
+
+// startHostTCPBridge listens on a vsock port for connections from the hypervisor (Apple VZ host forward)
+// and relays each connection to the app on loopback. The host correlates its localhost listener to this port.
+func startHostTCPBridge(appPort int) error {
+	ln, err := listenVsock(tcpBridgeVsockPort)
+	if err != nil {
+		return err
+	}
+	go runHostTCPBridge(ln, appPort)
+	return nil
+}
+
+func runHostTCPBridge(ln net.Listener, appPort int) {
+	appAddr := fmt.Sprintf("127.0.0.1:%d", appPort)
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		go bridgeGuestConnToApp(c, appAddr)
+	}
+}
+
+func bridgeGuestConnToApp(guest net.Conn, appAddr string) {
+	defer guest.Close()
+	back, err := net.Dial("tcp", appAddr)
+	if err != nil {
+		return
+	}
+	defer back.Close()
+	done := make(chan struct{}, 2)
+	go func() {
+		_, _ = io.Copy(back, guest)
+		done <- struct{}{}
+	}()
+	go func() {
+		_, _ = io.Copy(guest, back)
+		done <- struct{}{}
+	}()
+	<-done
 }
 
 func startApp(env []string, logWriter io.Writer) *exec.Cmd {

@@ -166,19 +166,26 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 		return fmt.Errorf("health check failed")
 	}
 
-	// Step 6: Mark running.
+	// Step 6: Persist runtime metadata after startup succeeds and any
+	// runtime-specific readiness gate has passed.
+	dep, err = d.persistRuntimeVMMetadata(ctx, d.q, dep, ip, 1, 512, env)
+	if err != nil {
+		return fmt.Errorf("persist runtime vm metadata: %w", err)
+	}
+
+	// Step 7: Mark running.
 	if err := d.q.DeploymentMarkRunning(ctx, dep.ID); err != nil {
 		return fmt.Errorf("mark running: %w", err)
 	}
 	logger.Info("deployment is running", "ip", ip)
 
-	// Step 7: Update domain routing.
+	// Step 8: Update domain routing.
 	d.q.DomainUpdateDeploymentForProject(ctx, queries.DomainUpdateDeploymentForProjectParams{
 		DeploymentID: dep.ID,
 		ProjectID:    dep.ProjectID,
 	})
 
-	// Step 8: Stop old deployments.
+	// Step 9: Stop old deployments.
 	d.stopOldDeployments(ctx, dep)
 
 	return nil

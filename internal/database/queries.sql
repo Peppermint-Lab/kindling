@@ -281,6 +281,13 @@ SELECT verified_at FROM domains WHERE domain_name = $1;
 -- name: DomainUpdateDeploymentForProject :exec
 UPDATE domains SET deployment_id = $1, updated_at = NOW() WHERE project_id = $2;
 
+-- name: DomainFindVerifiedByDeploymentID :many
+SELECT *
+FROM domains
+WHERE deployment_id = $1
+  AND verified_at IS NOT NULL
+ORDER BY domain_name ASC;
+
 -- name: RouteFindActive :many
 SELECT d.domain_name,
        d.redirect_to,

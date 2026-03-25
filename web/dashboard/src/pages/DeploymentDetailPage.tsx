@@ -6,6 +6,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Separator } from "@/components/ui/separator"
+import { DeploymentReachability } from "@/components/deployment-reachability"
 import { ArrowLeftIcon, ScrollTextIcon, LoaderIcon, XCircleIcon, RotateCwIcon, RadioIcon, InfoIcon } from "lucide-react"
 import { isTerminalDeployment, phaseLabel, phaseVariant } from "@/lib/deploy-badge"
 
@@ -212,6 +214,11 @@ export function DeploymentDetailPage() {
                   </div>
                 )}
               </dl>
+              <Separator />
+              <div className="space-y-2">
+                <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Reachability</dt>
+                <DeploymentReachability reachable={deployment.reachable} />
+              </div>
               <div className="flex flex-wrap gap-2 pt-2">
                 {!terminal && (
                   <Button

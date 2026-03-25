@@ -2,6 +2,11 @@ package rpc
 
 import (
 	"context"
+	"net"
+	"net/netip"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -23,11 +28,30 @@ type deploymentOut struct {
 	UpdatedAt    *string `json:"updated_at"`
 	BuildStatus  string  `json:"build_status,omitempty"`
 	Phase        string  `json:"phase"`
+	Reachable    *deploymentReachabilityOut `json:"reachable,omitempty"`
 }
 
 type deploymentListItemOut struct {
 	deploymentOut
 	ProjectName string `json:"project_name"`
+}
+
+type deploymentReachabilityOut struct {
+	PublicURL           string                        `json:"public_url,omitempty"`
+	RuntimeURL          string                        `json:"runtime_url,omitempty"`
+	Domain              string                        `json:"domain,omitempty"`
+	VmIP                string                        `json:"vm_ip,omitempty"`
+	Port                *int                          `json:"port,omitempty"`
+	ProxiesToDeployment *bool                         `json:"proxies_to_deployment,omitempty"`
+	PublicEndpoints     []deploymentPublicEndpointOut `json:"public_endpoints,omitempty"`
+}
+
+type deploymentPublicEndpointOut struct {
+	Domain              string `json:"domain"`
+	PublicURL           string `json:"public_url"`
+	RedirectTo          string `json:"redirect_to,omitempty"`
+	RedirectStatusCode  *int   `json:"redirect_status_code,omitempty"`
+	ProxiesToDeployment *bool  `json:"proxies_to_deployment,omitempty"`
 }
 
 func formatTS(t pgtype.Timestamptz) *string {
@@ -46,7 +70,7 @@ func optionalUUIDString(u pgtype.UUID) *string {
 	return &s
 }
 
-func deploymentToOut(dep queries.Deployment, build *queries.Build) deploymentOut {
+func deploymentToOut(dep queries.Deployment, build *queries.Build, reachable *deploymentReachabilityOut) deploymentOut {
 	var bs string
 	if build != nil {
 		bs = build.Status
@@ -65,6 +89,7 @@ func deploymentToOut(dep queries.Deployment, build *queries.Build) deploymentOut
 		UpdatedAt:    formatTS(dep.UpdatedAt),
 		BuildStatus:  bs,
 		Phase:        deploymentPhase(dep, build),
+		Reachable:    reachable,
 	}
 }
 
@@ -76,10 +101,10 @@ func (a *API) deploymentToOutCtx(ctx context.Context, dep queries.Deployment) de
 			build = &b
 		}
 	}
-	return deploymentToOut(dep, build)
+	return deploymentToOut(dep, build, a.deploymentReachability(ctx, dep))
 }
 
-func listRowToOut(row queries.DeploymentFindRecentWithProjectRow) deploymentListItemOut {
+func (a *API) listRowToOutCtx(ctx context.Context, row queries.DeploymentFindRecentWithProjectRow) deploymentListItemOut {
 	st := pgTextString(row.BuildStatus)
 	if row.BuildID.Valid && st == "" {
 		st = "pending"
@@ -102,6 +127,80 @@ func listRowToOut(row queries.DeploymentFindRecentWithProjectRow) deploymentList
 		CreatedAt:    row.CreatedAt,
 		UpdatedAt:    row.UpdatedAt,
 	}
-	out := deploymentToOut(dep, buildPtr)
+	out := deploymentToOut(dep, buildPtr, a.deploymentReachability(ctx, dep))
 	return deploymentListItemOut{deploymentOut: out, ProjectName: row.ProjectName}
+}
+
+func (a *API) deploymentReachability(ctx context.Context, dep queries.Deployment) *deploymentReachabilityOut {
+	var vm *queries.Vm
+	if dep.VmID.Valid {
+		v, err := a.q.VMFirstByID(ctx, dep.VmID)
+		if err == nil && !v.DeletedAt.Valid {
+			vm = &v
+		}
+	}
+
+	var domains []queries.Domain
+	rows, err := a.q.DomainFindVerifiedByDeploymentID(ctx, dep.ID)
+	if err == nil {
+		domains = rows
+	}
+
+	return buildDeploymentReachability(vm, domains)
+}
+
+func buildDeploymentReachability(vm *queries.Vm, domains []queries.Domain) *deploymentReachabilityOut {
+	var out deploymentReachabilityOut
+
+	if vm != nil {
+		out.VmIP = vm.IpAddress.String()
+		if vm.Port.Valid {
+			port := int(vm.Port.Int32)
+			out.Port = &port
+			out.RuntimeURL = formatRuntimeURL(vm.IpAddress, port)
+		}
+	}
+
+	if len(domains) > 0 {
+		domains = append([]queries.Domain(nil), domains...)
+		slices.SortFunc(domains, func(a, b queries.Domain) int {
+			return strings.Compare(a.DomainName, b.DomainName)
+		})
+
+		out.PublicEndpoints = make([]deploymentPublicEndpointOut, 0, len(domains))
+		for _, domain := range domains {
+			proxies := domain.RedirectTo.String == ""
+			endpoint := deploymentPublicEndpointOut{
+				Domain:              domain.DomainName,
+				PublicURL:           "https://" + domain.DomainName,
+				ProxiesToDeployment: boolPtr(proxies),
+			}
+			if domain.RedirectTo.Valid {
+				endpoint.RedirectTo = domain.RedirectTo.String
+			}
+			if domain.RedirectStatusCode.Valid {
+				code := int(domain.RedirectStatusCode.Int32)
+				endpoint.RedirectStatusCode = &code
+			}
+			out.PublicEndpoints = append(out.PublicEndpoints, endpoint)
+		}
+
+		primary := out.PublicEndpoints[0]
+		out.PublicURL = primary.PublicURL
+		out.Domain = primary.Domain
+		out.ProxiesToDeployment = primary.ProxiesToDeployment
+	}
+
+	if out.PublicURL == "" && out.RuntimeURL == "" && len(out.PublicEndpoints) == 0 {
+		return nil
+	}
+	return &out
+}
+
+func formatRuntimeURL(addr netip.Addr, port int) string {
+	return "http://" + net.JoinHostPort(addr.String(), strconv.Itoa(port))
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }
