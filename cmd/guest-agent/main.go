@@ -64,12 +64,8 @@ func main() {
 	// Set hostname.
 	setHostname(cfg.Hostname)
 
-	// Add container rootfs binaries to PATH (node, ruby, etc. are in /app/usr/local/bin).
-	path := os.Getenv("PATH")
-	os.Setenv("PATH", "/app/usr/local/bin:/app/usr/bin:/app/bin:"+path)
-
-	// Also set library path for dynamically linked binaries.
-	os.Setenv("LD_LIBRARY_PATH", "/app/usr/local/lib:/app/usr/lib:/app/lib")
+	// Chroot into the container rootfs if available.
+	chrootIntoApp()
 
 	// Start log streaming to host.
 	logWriter := startLogStream()
@@ -187,16 +183,10 @@ func startLogStream() io.Writer {
 }
 
 func startApp(env []string, logWriter io.Writer) *exec.Cmd {
-	// Determine the app working directory.
-	// If /app contains a full rootfs (from docker cp /.), the app code is at /app/app/.
-	// Otherwise it's directly at /app/.
+	// After chroot, app code is at /app (the container's WORKDIR).
 	appDir := "/app"
-	if _, err := os.Stat("/app/app/package.json"); err == nil {
-		appDir = "/app/app"
-	} else if _, err := os.Stat("/app/app/Procfile"); err == nil {
-		appDir = "/app/app"
-	} else if _, err := os.Stat("/app/app/go.mod"); err == nil {
-		appDir = "/app/app"
+	if _, err := os.Stat(appDir); err != nil {
+		appDir = "/"
 	}
 	log.Printf("app directory: %s", appDir)
 
@@ -208,7 +198,7 @@ func startApp(env []string, logWriter io.Writer) *exec.Cmd {
 			if strings.HasPrefix(line, "web:") {
 				cmdStr := strings.TrimSpace(strings.TrimPrefix(line, "web:"))
 				log.Printf("starting from Procfile: %s", cmdStr)
-				cmd := exec.Command("/app/bin/sh", "-c", cmdStr)
+				cmd := exec.Command("sh", "-c", cmdStr)
 				cmd.Dir = appDir
 				cmd.Env = append(os.Environ(), env...)
 				cmd.Stdout = logWriter

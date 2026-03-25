@@ -51,3 +51,23 @@ func setHostname(name string) {
 		syscall.Sethostname([]byte(name))
 	}
 }
+
+func chrootIntoApp() {
+	if _, err := os.Stat("/app/bin/sh"); err != nil {
+		return
+	}
+	log.Println("chrooting into container rootfs at /app")
+	if err := syscall.Chroot("/app"); err != nil {
+		log.Printf("chroot failed: %v", err)
+		return
+	}
+	os.Chdir("/")
+	os.MkdirAll("/proc", 0o755)
+	os.MkdirAll("/sys", 0o755)
+	os.MkdirAll("/dev", 0o755)
+	os.MkdirAll("/tmp", 0o1777)
+	syscall.Mount("proc", "/proc", "proc", 0, "")
+	syscall.Mount("sysfs", "/sys", "sysfs", 0, "")
+	syscall.Mount("devtmpfs", "/dev", "devtmpfs", 0, "")
+	syscall.Mount("tmpfs", "/tmp", "tmpfs", 0, "")
+}
