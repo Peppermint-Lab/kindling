@@ -22,23 +22,11 @@ dev: build kernel initramfs
 # Data directory
 KINDLING_DATA ?= $(HOME)/.kindling
 
-# Download kernel (platform-specific)
+# Build custom Linux kernel with virtio + vsock (one-time, ~5 min)
 kernel:
 	@mkdir -p $(KINDLING_DATA)
 	@test -f $(KINDLING_DATA)/vmlinuz.bin && exit 0 || true
-	@if [ "$$(uname)" = "Darwin" ]; then \
-		echo "Downloading Linux kernel for Apple VZ..." && \
-		ARCH=$$(uname -m) && \
-		if [ "$$ARCH" = "arm64" ]; then ARCH="aarch64"; fi && \
-		curl -fsSL "https://github.com/Code-Hex/puipui-linux/releases/download/v1.0.3/puipui_linux_v1.0.3_$${ARCH}.tar.gz" | tar -xz -C $(KINDLING_DATA) && \
-		if [ -f $(KINDLING_DATA)/Image.gz ]; then gunzip -f $(KINDLING_DATA)/Image.gz && mv $(KINDLING_DATA)/Image $(KINDLING_DATA)/vmlinuz.bin; fi && \
-		if [ -f $(KINDLING_DATA)/vmlinux ]; then mv $(KINDLING_DATA)/vmlinux $(KINDLING_DATA)/vmlinuz.bin; fi && \
-		echo "Kernel downloaded to $(KINDLING_DATA)/vmlinuz.bin"; \
-	else \
-		echo "Downloading Cloud Hypervisor firmware..." && \
-		curl -fsSL "https://github.com/cloud-hypervisor/rust-hypervisor-firmware/releases/download/0.4.2/hypervisor-fw" -o $(KINDLING_DATA)/vmlinuz.bin && \
-		echo "Kernel downloaded to $(KINDLING_DATA)/vmlinuz.bin"; \
-	fi
+	@bash scripts/build-kernel.sh
 
 # Build initramfs with guest agent (cross-compile for Linux)
 initramfs:
