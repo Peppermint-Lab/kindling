@@ -14,6 +14,9 @@ func main() {
 	}
 
 	root.AddCommand(serveCmd())
+	root.AddCommand(projectCmd())
+	root.AddCommand(deployCmd())
+	root.AddCommand(logsCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
