@@ -95,7 +95,7 @@ dev-up: remote-build
 
 # Stop everything
 dev-down:
-	@ssh $(REMOTE_HOST) 'pkill -f "bin/kindling" 2>/dev/null || true'
-	@pkill -f "ssh -f -N -L 8080:localhost:8080" 2>/dev/null || true
-	@pkill -f "vite" 2>/dev/null || true
+	-@ssh $(REMOTE_HOST) 'pkill -f "bin/kindling" 2>/dev/null; true'
+	-@pkill -f "ssh -f -N -L 8080:localhost:8080" 2>/dev/null; true
+	-@pkill -f "vite" 2>/dev/null; true
 	@echo "Kindling stopped."
