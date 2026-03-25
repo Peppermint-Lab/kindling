@@ -172,6 +172,12 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 }
 
 func (b *Builder) downloadSource(ctx context.Context, repo, commit string) (io.ReadCloser, error) {
+	// Normalize repo: strip full URL to owner/repo.
+	repo = strings.TrimPrefix(repo, "https://github.com/")
+	repo = strings.TrimPrefix(repo, "http://github.com/")
+	repo = strings.TrimPrefix(repo, "github.com/")
+	repo = strings.TrimSuffix(repo, ".git")
+
 	url := fmt.Sprintf("https://api.github.com/repos/%s/tarball/%s", repo, commit)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)

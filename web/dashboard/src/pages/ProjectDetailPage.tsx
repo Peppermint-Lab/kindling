@@ -41,10 +41,10 @@ export function ProjectDetailPage() {
   }, [id])
 
   const handleDeploy = async () => {
-    if (!id || !commitSha.trim()) return
+    if (!id) return
     setDeploying(true)
     try {
-      const dep = await api.triggerDeploy(id, commitSha.trim())
+      const dep = await api.triggerDeploy(id, commitSha.trim() || "main")
       setDeployDialogOpen(false)
       setCommitSha("")
       navigate(`/deployments/${dep.id}`)
@@ -165,19 +165,20 @@ export function ProjectDetailPage() {
             <DialogDescription>Trigger a new deployment for {project.name}.</DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="commit">Commit SHA</Label>
+            <Label htmlFor="commit">Branch or commit SHA</Label>
             <Input
               id="commit"
-              placeholder="abc123..."
+              placeholder="main"
               value={commitSha}
               onChange={(e) => setCommitSha(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleDeploy()}
               className="font-mono"
             />
+            <p className="text-xs text-muted-foreground">Defaults to main if left empty.</p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeployDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleDeploy} disabled={!commitSha.trim() || deploying}>
+            <Button onClick={handleDeploy} disabled={deploying}>
               {deploying ? "Deploying..." : "Deploy"}
             </Button>
           </DialogFooter>

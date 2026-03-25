@@ -175,13 +175,9 @@ func (a *API) triggerDeploy(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Commit string `json:"commit"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
-		return
-	}
+	json.NewDecoder(r.Body).Decode(&req) // body is optional
 	if req.Commit == "" {
-		http.Error(w, `{"error":"commit is required"}`, http.StatusBadRequest)
-		return
+		req.Commit = "main"
 	}
 
 	// Verify project exists.
