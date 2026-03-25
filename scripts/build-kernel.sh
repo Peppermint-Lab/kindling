@@ -88,9 +88,13 @@ docker run --rm \
     make olddefconfig
 
     echo "Building kernel..."
-    make -j$(nproc) "$IMAGE_PATH"
-
-    cp "$IMAGE_PATH" /out/vmlinuz.bin
+    if [ "$TARGET_ARCH" = "arm64" ]; then
+      make -j$(nproc) Image
+      cp arch/arm64/boot/Image /out/vmlinuz.bin
+    else
+      make -j$(nproc) vmlinux
+      cp vmlinux /out/vmlinuz.bin
+    fi
     echo ""
     echo "Kernel built: /out/vmlinuz.bin ($(du -h /out/vmlinuz.bin | cut -f1))"
   '
