@@ -43,10 +43,12 @@ type AppleRuntimeConfig struct {
 // NewAppleRuntime creates a new Apple Virtualization Framework runtime.
 func NewAppleRuntime(cfg AppleRuntimeConfig) *AppleRuntime {
 	if cfg.KernelPath == "" {
-		cfg.KernelPath = "/data/vmlinuz.bin"
+		home, _ := os.UserHomeDir()
+		cfg.KernelPath = home + "/.kindling/vmlinuz.bin"
 	}
 	if cfg.InitramfsPath == "" {
-		cfg.InitramfsPath = "/data/initramfs.cpio.gz"
+		home, _ := os.UserHomeDir()
+		cfg.InitramfsPath = home + "/.kindling/initramfs.cpio.gz"
 	}
 	return &AppleRuntime{
 		instances:     make(map[uuid.UUID]*appleInstance),
