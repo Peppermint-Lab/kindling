@@ -1,2 +1,2 @@
-// Package rpc provides the Connect RPC API handlers for the control plane.
+// Package rpc provides REST API handlers and related helpers for the dashboard and control plane.
 package rpc
