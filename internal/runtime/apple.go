@@ -6,7 +6,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/Code-Hex/vz/v3"
@@ -146,6 +148,29 @@ func (r *AppleRuntime) startVM(ctx context.Context, inst Instance) (string, erro
 		cancel: cancel,
 	}
 
+	// Set up vsock listener BEFORE starting the VM.
+	// The guest agent connects immediately on boot.
+	socketDevices := vm.SocketDevices()
+	if len(socketDevices) > 0 {
+		vsockDev := socketDevices[0]
+		listener, err := vsockDev.Listen(1024)
+		if err != nil {
+			cancel()
+			return "", fmt.Errorf("vsock listen: %w", err)
+		}
+
+		// Serve config and log endpoints over vsock.
+		go func() {
+			for {
+				conn, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				go r.handleVsockConn(conn, inst)
+			}
+		}()
+	}
+
 	if err := vm.Start(); err != nil {
 		cancel()
 		return "", fmt.Errorf("start VM: %w", err)
@@ -212,6 +237,51 @@ func (r *AppleRuntime) Logs(ctx context.Context, id uuid.UUID) ([]string, error)
 	out := make([]string, len(ai.logs))
 	copy(out, ai.logs)
 	return out, nil
+}
+
+// handleVsockConn serves HTTP over a vsock connection from the guest agent.
+func (r *AppleRuntime) handleVsockConn(conn net.Conn, inst Instance) {
+	defer conn.Close()
+
+	// Read the HTTP request from the guest.
+	buf := make([]byte, 4096)
+	n, err := conn.Read(buf)
+	if err != nil {
+		slog.Debug("vsock read error", "error", err)
+		return
+	}
+
+	request := string(buf[:n])
+
+	if strings.Contains(request, "GET /config") {
+		// Serve config as JSON.
+		hostname := fmt.Sprintf("kindling-%s", inst.ID.String()[:8])
+		config := fmt.Sprintf(`{"env":[%s],"ip_addr":"10.0.0.1/31","ip_gw":"10.0.0.0","hostname":"%s"}`,
+			formatEnvJSON(inst.Env), hostname)
+
+		response := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s",
+			len(config), config)
+		conn.Write([]byte(response))
+		slog.Info("served config via vsock", "id", inst.ID)
+	} else if strings.Contains(request, "POST /logs") {
+		// Accept log stream.
+		response := "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"
+		conn.Write([]byte(response))
+	} else {
+		response := "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"
+		conn.Write([]byte(response))
+	}
+}
+
+func formatEnvJSON(env []string) string {
+	if len(env) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, e := range env {
+		parts = append(parts, fmt.Sprintf(`"%s"`, strings.ReplaceAll(e, `"`, `\"`)))
+	}
+	return strings.Join(parts, ",")
 }
 
 func (r *AppleRuntime) StopAll() {
