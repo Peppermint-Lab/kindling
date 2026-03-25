@@ -37,6 +37,9 @@ type Runtime interface {
 
 	// Logs returns recent stdout/stderr from the instance.
 	Logs(ctx context.Context, id uuid.UUID) ([]string, error)
+
+	// StopAll kills all running instances. Called during graceful shutdown.
+	StopAll()
 }
 
 // Detect returns the best available runtime for this host.

@@ -87,8 +87,8 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 	}
 	slog.Info("server registered", "server_id", serverID)
 
-	// Detect and create runtime (crun or cloud-hypervisor).
-	rt := crunrt.NewCrunRuntime()
+	// Detect and create runtime.
+	rt := crunrt.NewDetectedRuntime()
 	defer rt.StopAll()
 	slog.Info("runtime detected", "runtime", rt.Name())
 
