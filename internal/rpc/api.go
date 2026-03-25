@@ -31,6 +31,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/deployments/{id}", a.getDeployment)
 	mux.HandleFunc("GET /api/deployments/{id}/logs", a.getDeploymentLogs)
 	mux.HandleFunc("POST /api/projects/{id}/deploy", a.triggerDeploy)
+	mux.HandleFunc("POST /api/deployments/{id}/cancel", a.cancelDeployment)
 	mux.HandleFunc("GET /api/servers", a.listServers)
 }
 
@@ -197,6 +198,21 @@ func (a *API) triggerDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, dep)
+}
+
+func (a *API) cancelDeployment(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUID(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, `{"error":"invalid id"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := a.q.DeploymentUpdateFailedAt(r.Context(), id); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
 }
 
 func (a *API) listServers(w http.ResponseWriter, r *http.Request) {

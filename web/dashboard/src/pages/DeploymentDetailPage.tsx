@@ -1,10 +1,11 @@
 import { useEffect, useState, useRef } from "react"
-import { useParams, Link } from "react-router-dom"
+import { useParams, Link, useNavigate } from "react-router-dom"
 import { api, type Deployment, type BuildLog } from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ArrowLeftIcon, ScrollTextIcon, LoaderIcon } from "lucide-react"
+import { ArrowLeftIcon, ScrollTextIcon, LoaderIcon, XCircleIcon, RotateCwIcon } from "lucide-react"
 
 function deploymentStatus(dep: Deployment): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } {
   if (dep.failed_at) return { label: "Failed", variant: "destructive" }
@@ -19,6 +20,7 @@ function isTerminal(dep: Deployment): boolean {
 
 export function DeploymentDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const [deployment, setDeployment] = useState<Deployment | null>(null)
   const [logs, setLogs] = useState<BuildLog[]>([])
   const [loading, setLoading] = useState(true)
@@ -82,12 +84,36 @@ export function DeploymentDetailPage() {
         <Link to={`/projects/${deployment.project_id}`} className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-1">
           <ArrowLeftIcon className="size-3" /> Back to project
         </Link>
-        <div className="flex items-center gap-3 mt-2">
-          <h1 className="text-2xl font-semibold tracking-tight">Deployment</h1>
-          <Badge variant={status.variant}>{status.label}</Badge>
-          {!isTerminal(deployment) && (
-            <LoaderIcon className="size-4 text-muted-foreground animate-spin" />
-          )}
+        <div className="flex items-center justify-between mt-2">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight">Deployment</h1>
+            <Badge variant={status.variant}>{status.label}</Badge>
+            {!isTerminal(deployment) && (
+              <LoaderIcon className="size-4 text-muted-foreground animate-spin" />
+            )}
+          </div>
+          <div className="flex gap-2">
+            {!isTerminal(deployment) && (
+              <Button size="sm" variant="outline" onClick={async () => {
+                if (!id) return
+                await api.cancelDeployment(id)
+                const d = await api.getDeployment(id)
+                setDeployment(d)
+              }}>
+                <XCircleIcon className="mr-2 size-4" />
+                Cancel
+              </Button>
+            )}
+            {isTerminal(deployment) && (
+              <Button size="sm" onClick={async () => {
+                const dep = await api.triggerDeploy(deployment.project_id, deployment.github_commit || "main")
+                navigate(`/deployments/${dep.id}`)
+              }}>
+                <RotateCwIcon className="mr-2 size-4" />
+                Redeploy
+              </Button>
+            )}
+          </div>
         </div>
         <p className="text-sm text-muted-foreground mt-1 font-mono">
           {deployment.github_commit ? deployment.github_commit.slice(0, 8) : "manual"}

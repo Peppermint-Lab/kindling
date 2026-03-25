@@ -80,6 +80,15 @@ COPY --from=build /app/main .
 EXPOSE 3000
 CMD ["/app/main"]
 `,
+
+	"node": `FROM node:22-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --production
+COPY . .
+EXPOSE 3000
+CMD ["npm", "start"]
+`,
 }
 
 // GetDockerfile returns the Dockerfile template for a framework, or empty string.

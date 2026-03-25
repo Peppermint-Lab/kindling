@@ -63,5 +63,6 @@ export const api = {
   getDeploymentLogs: (id: string) => request<BuildLog[]>(`/api/deployments/${id}/logs`),
   triggerDeploy: (projectId: string, commit: string) =>
     request<Deployment>(`/api/projects/${projectId}/deploy`, { method: "POST", body: JSON.stringify({ commit }) }),
+  cancelDeployment: (id: string) => request<void>(`/api/deployments/${id}/cancel`, { method: "POST" }),
   listServers: () => request<Server[]>("/api/servers"),
 }

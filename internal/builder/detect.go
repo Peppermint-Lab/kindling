@@ -82,5 +82,10 @@ func DetectFramework(s frameworkSignals) string {
 		}
 	}
 
+	// Generic Node.js: package.json exists but no specific framework detected.
+	if s.packageJSON != nil {
+		return "node"
+	}
+
 	return ""
 }
