@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react"
 import { useParams, Link } from "react-router-dom"
-import { api, type Project, type Deployment, uuidToString } from "@/lib/api"
+import { api, type Project, type Deployment } from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ArrowLeftIcon, RocketIcon } from "lucide-react"
 
 function deploymentStatus(dep: Deployment): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } {
-  if (dep.failed_at?.Valid) return { label: "Failed", variant: "destructive" }
-  if (dep.stopped_at?.Valid) return { label: "Stopped", variant: "secondary" }
-  if (dep.running_at?.Valid) return { label: "Running", variant: "default" }
+  if (dep.failed_at) return { label: "Failed", variant: "destructive" }
+  if (dep.stopped_at) return { label: "Stopped", variant: "secondary" }
+  if (dep.running_at) return { label: "Running", variant: "default" }
   return { label: "Pending", variant: "outline" }
 }
 
@@ -71,10 +71,9 @@ export function ProjectDetailPage() {
           ) : (
             <div className="space-y-3">
               {deployments.map((dep) => {
-                const depId = uuidToString(dep.id)
                 const status = deploymentStatus(dep)
                 return (
-                  <Link key={depId} to={`/deployments/${depId}`}>
+                  <Link key={dep.id} to={`/deployments/${dep.id}`}>
                     <div className="flex items-center justify-between rounded-lg border p-3 hover:bg-accent/50 transition-colors cursor-pointer">
                       <div className="flex items-center gap-3">
                         <Badge variant={status.variant}>{status.label}</Badge>
@@ -83,9 +82,7 @@ export function ProjectDetailPage() {
                         </span>
                       </div>
                       <span className="text-xs text-muted-foreground">
-                        {dep.created_at?.Valid
-                          ? new Date(dep.created_at.Time).toLocaleString()
-                          : ""}
+                        {new Date(dep.created_at).toLocaleString()}
                       </span>
                     </div>
                   </Link>

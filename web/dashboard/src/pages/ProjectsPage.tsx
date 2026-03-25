@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
-import { api, type Project, uuidToString } from "@/lib/api"
+import { api, type Project } from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -62,27 +62,24 @@ export function ProjectsPage() {
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {projects.map((project) => {
-            const id = uuidToString(project.id)
-            return (
-              <Link key={id} to={`/projects/${id}`}>
-                <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-base">{project.name}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {project.github_repository ? (
-                      <Badge variant="secondary" className="font-mono text-xs">
-                        {project.github_repository}
-                      </Badge>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">No repository linked</span>
-                    )}
-                  </CardContent>
-                </Card>
-              </Link>
-            )
-          })}
+          {projects.map((project) => (
+            <Link key={project.id} to={`/projects/${project.id}`}>
+              <Card className="hover:bg-accent/50 transition-colors cursor-pointer">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">{project.name}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {project.github_repository ? (
+                    <Badge variant="secondary" className="font-mono text-xs">
+                      {project.github_repository}
+                    </Badge>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">No repository linked</span>
+                  )}
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
         </div>
       )}
     </div>

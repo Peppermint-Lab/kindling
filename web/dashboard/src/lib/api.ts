@@ -17,36 +17,30 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export type Project = {
-  id: { Bytes: string; Valid: boolean }
+  id: string
   name: string
   github_repository: string
   dockerfile_path: string
   root_directory: string
-  created_at: { Time: string; Valid: boolean }
+  created_at: string
+  updated_at: string
 }
 
 export type Deployment = {
-  id: { Bytes: string; Valid: boolean }
-  project_id: { Bytes: string; Valid: boolean }
+  id: string
+  project_id: string
   github_commit: string
-  running_at: { Time: string; Valid: boolean }
-  stopped_at: { Time: string; Valid: boolean }
-  failed_at: { Time: string; Valid: boolean }
-  created_at: { Time: string; Valid: boolean }
+  running_at: string | null
+  stopped_at: string | null
+  failed_at: string | null
+  created_at: string
 }
 
 export type BuildLog = {
-  id: { Bytes: string; Valid: boolean }
+  id: string
   message: string
   level: string
-  created_at: { Time: string; Valid: boolean }
-}
-
-export function uuidToString(id: { Bytes: string }): string {
-  // pgtype.UUID serializes Bytes as base64 — decode and format
-  const bytes = atob(id.Bytes)
-  const hex = Array.from(bytes, (c) => c.charCodeAt(0).toString(16).padStart(2, "0")).join("")
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+  created_at: string
 }
 
 export const api = {

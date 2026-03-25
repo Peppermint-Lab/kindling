@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react"
 import { useParams, Link } from "react-router-dom"
-import { api, type Deployment, type BuildLog, uuidToString } from "@/lib/api"
+import { api, type Deployment, type BuildLog } from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ArrowLeftIcon, ScrollTextIcon } from "lucide-react"
 
 function deploymentStatus(dep: Deployment): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } {
-  if (dep.failed_at?.Valid) return { label: "Failed", variant: "destructive" }
-  if (dep.stopped_at?.Valid) return { label: "Stopped", variant: "secondary" }
-  if (dep.running_at?.Valid) return { label: "Running", variant: "default" }
+  if (dep.failed_at) return { label: "Failed", variant: "destructive" }
+  if (dep.stopped_at) return { label: "Stopped", variant: "secondary" }
+  if (dep.running_at) return { label: "Running", variant: "default" }
   return { label: "Pending", variant: "outline" }
 }
 
@@ -47,12 +47,11 @@ export function DeploymentDetailPage() {
   }
 
   const status = deploymentStatus(deployment)
-  const projectId = uuidToString(deployment.project_id)
 
   return (
     <div className="space-y-6">
       <div>
-        <Link to={`/projects/${projectId}`} className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-1">
+        <Link to={`/projects/${deployment.project_id}`} className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-1">
           <ArrowLeftIcon className="size-3" /> Back to project
         </Link>
         <div className="flex items-center gap-3 mt-2">
@@ -77,11 +76,9 @@ export function DeploymentDetailPage() {
           ) : (
             <div className="rounded-lg bg-muted/50 p-4 font-mono text-xs leading-relaxed max-h-[600px] overflow-y-auto space-y-0.5">
               {logs.map((log, i) => (
-                <div key={i} className={`${log.level === "error" ? "text-destructive" : "text-foreground"}`}>
+                <div key={i} className={log.level === "error" ? "text-destructive" : "text-foreground"}>
                   <span className="text-muted-foreground mr-2">
-                    {log.created_at?.Valid
-                      ? new Date(log.created_at.Time).toLocaleTimeString()
-                      : ""}
+                    {new Date(log.created_at).toLocaleTimeString()}
                   </span>
                   {log.message}
                 </div>
