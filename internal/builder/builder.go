@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -399,16 +400,20 @@ func (b *Builder) runDockerBuild(ctx context.Context, build queries.Build, build
 		return fmt.Errorf("start docker build: %w", err)
 	}
 
-	// Stream output to build logs in background.
-	done := make(chan struct{})
+	// Read stdout and stderr concurrently to avoid deadlock.
+	var wg sync.WaitGroup
+	wg.Add(2)
 	go func() {
-		defer close(done)
+		defer wg.Done()
 		b.streamOutput(ctx, build.ID, stdout, "info")
-		b.streamOutput(ctx, build.ID, stderr, "error")
+	}()
+	go func() {
+		defer wg.Done()
+		b.streamOutput(ctx, build.ID, stderr, "info")
 	}()
 
 	err := cmd.Wait()
-	<-done
+	wg.Wait()
 
 	if err != nil {
 		return fmt.Errorf("docker build: %w", err)
