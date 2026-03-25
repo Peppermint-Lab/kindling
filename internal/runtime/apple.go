@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 
@@ -74,6 +75,12 @@ func (r *AppleRuntime) startVM(ctx context.Context, inst Instance) (string, erro
 		port = 3000
 	}
 
+	// Export Docker image to a directory for sharing into the VM.
+	appDir, err := r.exportImage(ctx, inst.ImageRef, inst.ID)
+	if err != nil {
+		return "", fmt.Errorf("export image: %w", err)
+	}
+
 	// Boot Linux kernel with initramfs.
 	bootLoader, err := vz.NewLinuxBootLoader(
 		r.kernelPath,
@@ -122,6 +129,22 @@ func (r *AppleRuntime) startVM(ctx context.Context, inst Instance) (string, erro
 		return "", fmt.Errorf("create vsock config: %w", err)
 	}
 	vmCfg.SetSocketDevicesVirtualMachineConfiguration([]vz.SocketDeviceConfiguration{vsockCfg})
+
+	// Shared directory: mount the app's rootfs into the VM at /app.
+	sharedDir, err := vz.NewSharedDirectory(appDir, false)
+	if err != nil {
+		return "", fmt.Errorf("create shared dir: %w", err)
+	}
+	singleDirShare, err := vz.NewSingleDirectoryShare(sharedDir)
+	if err != nil {
+		return "", fmt.Errorf("create single dir share: %w", err)
+	}
+	fsCfg, err := vz.NewVirtioFileSystemDeviceConfiguration("app")
+	if err != nil {
+		return "", fmt.Errorf("create fs config: %w", err)
+	}
+	fsCfg.SetDirectoryShare(singleDirShare)
+	vmCfg.SetDirectorySharingDevicesVirtualMachineConfiguration([]vz.DirectorySharingDeviceConfiguration{fsCfg})
 
 	// Entropy device (for /dev/random in guest).
 	entropyCfg, err := vz.NewVirtioEntropyDeviceConfiguration()
@@ -237,6 +260,34 @@ func (r *AppleRuntime) Logs(ctx context.Context, id uuid.UUID) ([]string, error)
 	out := make([]string, len(ai.logs))
 	copy(out, ai.logs)
 	return out, nil
+}
+
+// exportImage exports a Docker image to a directory so it can be shared into the VM.
+func (r *AppleRuntime) exportImage(ctx context.Context, imageRef string, id uuid.UUID) (string, error) {
+	home, _ := os.UserHomeDir()
+	appDir := fmt.Sprintf("%s/.kindling/apps/%s", home, id)
+	os.MkdirAll(appDir, 0o755)
+
+	// Create a container from the image and copy its filesystem out.
+	containerName := fmt.Sprintf("kindling-export-%s", id.String()[:8])
+
+	// Create container (don't start it).
+	if out, err := exec.CommandContext(ctx, "docker", "create", "--name", containerName, imageRef).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("docker create: %s: %w", string(out), err)
+	}
+
+	// Copy the /app directory (or entire rootfs) from the container.
+	// Try /app first (most Dockerfiles use WORKDIR /app), fall back to /.
+	if out, err := exec.CommandContext(ctx, "docker", "cp", containerName+":/app/.", appDir).CombinedOutput(); err != nil {
+		slog.Debug("no /app in container, copying root", "output", string(out))
+		exec.CommandContext(ctx, "docker", "cp", containerName+":/.", appDir).Run()
+	}
+
+	// Remove the temporary container.
+	exec.CommandContext(ctx, "docker", "rm", containerName).Run()
+
+	slog.Info("exported image to directory", "image", imageRef, "dir", appDir)
+	return appDir, nil
 }
 
 // handleVsockConn serves HTTP over a vsock connection from the guest agent.
