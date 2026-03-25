@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/rpc"
 	"github.com/spf13/cobra"
 )
 
@@ -44,13 +45,21 @@ func projectCreateCmd() *cobra.Command {
 			defer pool.Close()
 
 			q := queries.New(pool)
+			webhookSecret := ""
+			if repo != "" {
+				var err error
+				webhookSecret, err = rpc.GenerateWebhookSecret()
+				if err != nil {
+					return err
+				}
+			}
 			project, err := q.ProjectCreate(cmd.Context(), queries.ProjectCreateParams{
 				ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
 				Name:                 name,
 				GithubRepository:     repo,
 				GithubInstallationID: 0,
-				GithubWebhookSecret:  "",
-				RootDirectory:        "",
+				GithubWebhookSecret:  webhookSecret,
+				RootDirectory:        "/",
 				DockerfilePath:       "Dockerfile",
 			})
 			if err != nil {

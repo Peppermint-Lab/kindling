@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/builder"
 	"github.com/kindlingvm/kindling/internal/database"
@@ -27,8 +29,9 @@ import (
 
 func serveCmd() *cobra.Command {
 	var (
-		listenAddr  string
-		databaseURL string
+		listenAddr   string
+		databaseURL  string
+		publicBaseURL string
 	)
 
 	cmd := &cobra.Command{
@@ -41,17 +44,21 @@ func serveCmd() *cobra.Command {
 			if databaseURL == "" {
 				return fmt.Errorf("--database-url or DATABASE_URL is required")
 			}
-			return runServe(cmd.Context(), listenAddr, databaseURL)
+			if publicBaseURL == "" {
+				publicBaseURL = os.Getenv("KINDLING_PUBLIC_URL")
+			}
+			return runServe(cmd.Context(), listenAddr, databaseURL, publicBaseURL)
 		},
 	}
 
 	cmd.Flags().StringVar(&listenAddr, "listen", ":8080", "API listen address")
 	cmd.Flags().StringVar(&databaseURL, "database-url", "", "PostgreSQL connection string")
+	cmd.Flags().StringVar(&publicBaseURL, "public-url", "", "Optional seed for cluster_settings.public_base_url when that row is missing (e.g. first boot). Also KINDLING_PUBLIC_URL.")
 
 	return cmd
 }
 
-func runServe(ctx context.Context, listenAddr, databaseURL string) error {
+func runServe(ctx context.Context, listenAddr, databaseURL, publicBaseURL string) error {
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -86,6 +93,10 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 		return fmt.Errorf("register server: %w", err)
 	}
 	slog.Info("server registered", "server_id", serverID)
+
+	if err := seedPublicBaseURLIfUnset(ctx, q, publicBaseURL); err != nil {
+		return fmt.Errorf("seed public base url: %w", err)
+	}
 
 	// Detect and create runtime.
 	rt := crunrt.NewDetectedRuntime()
@@ -211,6 +222,24 @@ func runServe(ctx context.Context, listenAddr, databaseURL string) error {
 	}
 
 	return nil
+}
+
+func seedPublicBaseURLIfUnset(ctx context.Context, q *queries.Queries, fromFlag string) error {
+	fromFlag = rpc.NormalizePublicBaseURL(fromFlag)
+	if fromFlag == "" {
+		return nil
+	}
+	_, err := q.ClusterSettingGet(ctx, rpc.ClusterSettingKeyPublicBaseURL)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	return q.ClusterSettingUpsert(ctx, queries.ClusterSettingUpsertParams{
+		Key:   rpc.ClusterSettingKeyPublicBaseURL,
+		Value: fromFlag,
+	})
 }
 
 func hostname() string {
