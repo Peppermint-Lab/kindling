@@ -276,11 +276,10 @@ func (r *AppleRuntime) exportImage(ctx context.Context, imageRef string, id uuid
 		return "", fmt.Errorf("docker create: %s: %w", string(out), err)
 	}
 
-	// Copy the /app directory (or entire rootfs) from the container.
-	// Try /app first (most Dockerfiles use WORKDIR /app), fall back to /.
-	if out, err := exec.CommandContext(ctx, "docker", "cp", containerName+":/app/.", appDir).CombinedOutput(); err != nil {
-		slog.Debug("no /app in container, copying root", "output", string(out))
-		exec.CommandContext(ctx, "docker", "cp", containerName+":/.", appDir).Run()
+	// Copy the entire container rootfs — includes the runtime (node, ruby, etc.)
+	// plus the app code at /app.
+	if out, err := exec.CommandContext(ctx, "docker", "cp", containerName+":/.", appDir).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("docker cp: %s: %w", string(out), err)
 	}
 
 	// Remove the temporary container.
