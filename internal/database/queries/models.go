@@ -39,6 +39,12 @@ type CertmagicDatum struct {
 	Modified pgtype.Timestamptz `json:"modified"`
 }
 
+type ClusterSetting struct {
+	Key       string             `json:"key"`
+	Value     string             `json:"value"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Deployment struct {
 	ID           pgtype.UUID        `json:"id"`
 	ProjectID    pgtype.UUID        `json:"project_id"`

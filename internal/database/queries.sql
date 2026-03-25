@@ -50,6 +50,18 @@ SELECT pg_try_advisory_lock(hashtext($1));
 -- name: AdvisoryLock :exec
 SELECT pg_advisory_xact_lock(hashtext($1));
 
+-- Cluster settings --
+
+-- name: ClusterSettingGet :one
+SELECT value FROM cluster_settings WHERE key = $1;
+
+-- name: ClusterSettingUpsert :exec
+INSERT INTO cluster_settings (key, value, updated_at)
+VALUES ($1, $2, NOW())
+ON CONFLICT (key) DO UPDATE SET
+    value = EXCLUDED.value,
+    updated_at = NOW();
+
 -- Images --
 
 -- name: ImageFindOrCreate :one
@@ -79,6 +91,12 @@ SELECT * FROM projects WHERE github_repository = $1;
 
 -- name: ProjectDelete :exec
 DELETE FROM projects WHERE id = $1;
+
+-- name: ProjectUpdateWebhookSecret :one
+UPDATE projects
+SET github_webhook_secret = $2, updated_at = NOW()
+WHERE id = $1
+RETURNING *;
 
 -- Environment Variables --
 
@@ -211,6 +229,34 @@ WHERE v.server_id = $1
 
 -- name: DeploymentFindByProjectID :many
 SELECT * FROM deployments WHERE project_id = $1 ORDER BY created_at DESC;
+
+-- name: DeploymentFindRecentWithProject :many
+SELECT
+    d.id,
+    d.project_id,
+    d.build_id,
+    d.image_id,
+    d.vm_id,
+    d.github_commit,
+    d.running_at,
+    d.stopped_at,
+    d.failed_at,
+    d.deleted_at,
+    d.created_at,
+    d.updated_at,
+    p.name AS project_name,
+    b.status AS build_status
+FROM deployments d
+JOIN projects p ON p.id = d.project_id
+LEFT JOIN builds b ON d.build_id = b.id
+WHERE d.deleted_at IS NULL
+ORDER BY d.created_at DESC
+LIMIT $1;
+
+-- name: BuildLogsAfterCreatedAt :many
+SELECT * FROM build_logs
+WHERE build_id = $1 AND created_at > $2
+ORDER BY created_at;
 
 -- Domains --
 

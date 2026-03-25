@@ -140,6 +140,43 @@ func (q *Queries) BuildLogCreate(ctx context.Context, arg BuildLogCreateParams) 
 	return err
 }
 
+const buildLogsAfterCreatedAt = `-- name: BuildLogsAfterCreatedAt :many
+SELECT id, build_id, message, level, created_at FROM build_logs
+WHERE build_id = $1 AND created_at > $2
+ORDER BY created_at
+`
+
+type BuildLogsAfterCreatedAtParams struct {
+	BuildID   pgtype.UUID        `json:"build_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) BuildLogsAfterCreatedAt(ctx context.Context, arg BuildLogsAfterCreatedAtParams) ([]BuildLog, error) {
+	rows, err := q.db.Query(ctx, buildLogsAfterCreatedAt, arg.BuildID, arg.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []BuildLog{}
+	for rows.Next() {
+		var i BuildLog
+		if err := rows.Scan(
+			&i.ID,
+			&i.BuildID,
+			&i.Message,
+			&i.Level,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const buildLogsByBuildID = `-- name: BuildLogsByBuildID :many
 SELECT id, build_id, message, level, created_at FROM build_logs WHERE build_id = $1 ORDER BY created_at
 `
@@ -303,6 +340,37 @@ func (q *Queries) CertMagicStore(ctx context.Context, arg CertMagicStoreParams) 
 	return err
 }
 
+const clusterSettingGet = `-- name: ClusterSettingGet :one
+
+SELECT value FROM cluster_settings WHERE key = $1
+`
+
+// Cluster settings --
+func (q *Queries) ClusterSettingGet(ctx context.Context, key string) (string, error) {
+	row := q.db.QueryRow(ctx, clusterSettingGet, key)
+	var value string
+	err := row.Scan(&value)
+	return value, err
+}
+
+const clusterSettingUpsert = `-- name: ClusterSettingUpsert :exec
+INSERT INTO cluster_settings (key, value, updated_at)
+VALUES ($1, $2, NOW())
+ON CONFLICT (key) DO UPDATE SET
+    value = EXCLUDED.value,
+    updated_at = NOW()
+`
+
+type ClusterSettingUpsertParams struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+func (q *Queries) ClusterSettingUpsert(ctx context.Context, arg ClusterSettingUpsertParams) error {
+	_, err := q.db.Exec(ctx, clusterSettingUpsert, arg.Key, arg.Value)
+	return err
+}
+
 const deploymentCreate = `-- name: DeploymentCreate :one
 
 INSERT INTO deployments (id, project_id, github_commit)
@@ -396,6 +464,82 @@ func (q *Queries) DeploymentFindByVMID(ctx context.Context, vmID pgtype.UUID) (D
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const deploymentFindRecentWithProject = `-- name: DeploymentFindRecentWithProject :many
+SELECT
+    d.id,
+    d.project_id,
+    d.build_id,
+    d.image_id,
+    d.vm_id,
+    d.github_commit,
+    d.running_at,
+    d.stopped_at,
+    d.failed_at,
+    d.deleted_at,
+    d.created_at,
+    d.updated_at,
+    p.name AS project_name,
+    b.status AS build_status
+FROM deployments d
+JOIN projects p ON p.id = d.project_id
+LEFT JOIN builds b ON d.build_id = b.id
+WHERE d.deleted_at IS NULL
+ORDER BY d.created_at DESC
+LIMIT $1
+`
+
+type DeploymentFindRecentWithProjectRow struct {
+	ID           pgtype.UUID        `json:"id"`
+	ProjectID    pgtype.UUID        `json:"project_id"`
+	BuildID      pgtype.UUID        `json:"build_id"`
+	ImageID      pgtype.UUID        `json:"image_id"`
+	VmID         pgtype.UUID        `json:"vm_id"`
+	GithubCommit string             `json:"github_commit"`
+	RunningAt    pgtype.Timestamptz `json:"running_at"`
+	StoppedAt    pgtype.Timestamptz `json:"stopped_at"`
+	FailedAt     pgtype.Timestamptz `json:"failed_at"`
+	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	ProjectName  string             `json:"project_name"`
+	BuildStatus  pgtype.Text        `json:"build_status"`
+}
+
+func (q *Queries) DeploymentFindRecentWithProject(ctx context.Context, limit int32) ([]DeploymentFindRecentWithProjectRow, error) {
+	rows, err := q.db.Query(ctx, deploymentFindRecentWithProject, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DeploymentFindRecentWithProjectRow{}
+	for rows.Next() {
+		var i DeploymentFindRecentWithProjectRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.BuildID,
+			&i.ImageID,
+			&i.VmID,
+			&i.GithubCommit,
+			&i.RunningAt,
+			&i.StoppedAt,
+			&i.FailedAt,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ProjectName,
+			&i.BuildStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const deploymentFindRunningAndOlder = `-- name: DeploymentFindRunningAndOlder :many
@@ -923,6 +1067,35 @@ SELECT id, name, github_repository, github_installation_id, github_webhook_secre
 
 func (q *Queries) ProjectFirstByID(ctx context.Context, id pgtype.UUID) (Project, error) {
 	row := q.db.QueryRow(ctx, projectFirstByID, id)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.GithubRepository,
+		&i.GithubInstallationID,
+		&i.GithubWebhookSecret,
+		&i.RootDirectory,
+		&i.DockerfilePath,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const projectUpdateWebhookSecret = `-- name: ProjectUpdateWebhookSecret :one
+UPDATE projects
+SET github_webhook_secret = $2, updated_at = NOW()
+WHERE id = $1
+RETURNING id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, created_at, updated_at
+`
+
+type ProjectUpdateWebhookSecretParams struct {
+	ID                  pgtype.UUID `json:"id"`
+	GithubWebhookSecret string      `json:"github_webhook_secret"`
+}
+
+func (q *Queries) ProjectUpdateWebhookSecret(ctx context.Context, arg ProjectUpdateWebhookSecretParams) (Project, error) {
+	row := q.db.QueryRow(ctx, projectUpdateWebhookSecret, arg.ID, arg.GithubWebhookSecret)
 	var i Project
 	err := row.Scan(
 		&i.ID,

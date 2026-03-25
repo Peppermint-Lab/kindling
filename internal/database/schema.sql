@@ -139,6 +139,13 @@ CREATE TABLE IF NOT EXISTS certmagic_data (
     modified    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Cluster-wide settings (key/value). Keys include: public_base_url
+CREATE TABLE IF NOT EXISTS cluster_settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL DEFAULT '',
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_vms_server_id ON vms(server_id);
 CREATE INDEX IF NOT EXISTS idx_vms_status ON vms(status) WHERE deleted_at IS NULL;
