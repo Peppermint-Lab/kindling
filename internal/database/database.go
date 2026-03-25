@@ -4,10 +4,14 @@ package database
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+//go:embed schema.sql
+var schemaSQL string
 
 // DB wraps a pgx connection pool.
 type DB struct {
@@ -32,4 +36,14 @@ func New(ctx context.Context, databaseURL string) (*DB, error) {
 // Close closes the connection pool.
 func (db *DB) Close() {
 	db.Pool.Close()
+}
+
+// Migrate runs the embedded schema SQL against the database.
+// Uses IF NOT EXISTS / ON CONFLICT so it's safe to run repeatedly.
+func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
+	_, err := pool.Exec(ctx, schemaSQL)
+	if err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	return nil
 }

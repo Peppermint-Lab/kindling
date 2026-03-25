@@ -3,16 +3,20 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/spf13/cobra"
 )
 
 func main() {
-	if err := run(); err != nil {
+	root := &cobra.Command{
+		Use:   "kindling",
+		Short: "Self-hosted PaaS on Cloud Hypervisor microVMs",
+	}
+
+	root.AddCommand(serveCmd())
+
+	if err := root.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-}
-
-func run() error {
-	fmt.Println("kindling")
-	return nil
 }

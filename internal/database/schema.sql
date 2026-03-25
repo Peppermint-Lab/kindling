@@ -1,7 +1,8 @@
 -- Kindling v0.1.0 schema
+-- Idempotent: safe to run repeatedly.
 
 -- Servers: each host running the kindling binary
-CREATE TABLE servers (
+CREATE TABLE IF NOT EXISTS servers (
     id              UUID PRIMARY KEY,
     hostname        TEXT NOT NULL DEFAULT '',
     internal_ip     TEXT NOT NULL DEFAULT '',
@@ -13,7 +14,7 @@ CREATE TABLE servers (
 );
 
 -- Images: OCI image references (registry/repo:tag)
-CREATE TABLE images (
+CREATE TABLE IF NOT EXISTS images (
     id          UUID PRIMARY KEY,
     registry    TEXT NOT NULL,
     repository  TEXT NOT NULL,
@@ -23,7 +24,7 @@ CREATE TABLE images (
 );
 
 -- Projects: a git-connected application
-CREATE TABLE projects (
+CREATE TABLE IF NOT EXISTS projects (
     id                      UUID PRIMARY KEY,
     name                    TEXT NOT NULL,
     github_repository       TEXT NOT NULL DEFAULT '',
@@ -36,7 +37,7 @@ CREATE TABLE projects (
 );
 
 -- Environment variables per project (values are encrypted)
-CREATE TABLE environment_variables (
+CREATE TABLE IF NOT EXISTS environment_variables (
     id          UUID PRIMARY KEY,
     project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     name        TEXT NOT NULL,
@@ -47,7 +48,7 @@ CREATE TABLE environment_variables (
 );
 
 -- Builds: a single build attempt for a commit
-CREATE TABLE builds (
+CREATE TABLE IF NOT EXISTS builds (
     id              UUID PRIMARY KEY,
     project_id      UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'building', 'successful', 'failed')),
@@ -63,7 +64,7 @@ CREATE TABLE builds (
 );
 
 -- VMs: a running or pending Cloud Hypervisor microVM
-CREATE TABLE vms (
+CREATE TABLE IF NOT EXISTS vms (
     id              UUID PRIMARY KEY,
     server_id       UUID NOT NULL REFERENCES servers(id),
     image_id        UUID NOT NULL REFERENCES images(id),
@@ -78,11 +79,14 @@ CREATE TABLE vms (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Add forward reference from builds to vms
-ALTER TABLE builds ADD CONSTRAINT builds_vm_id_fkey FOREIGN KEY (vm_id) REFERENCES vms(id);
+-- Forward reference from builds to vms
+DO $$ BEGIN
+    ALTER TABLE builds ADD CONSTRAINT builds_vm_id_fkey FOREIGN KEY (vm_id) REFERENCES vms(id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- Deployments: a specific version of a project deployed to an environment
-CREATE TABLE deployments (
+CREATE TABLE IF NOT EXISTS deployments (
     id              UUID PRIMARY KEY,
     project_id      UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     build_id        UUID REFERENCES builds(id),
@@ -98,7 +102,7 @@ CREATE TABLE deployments (
 );
 
 -- Domains: hostname routing
-CREATE TABLE domains (
+CREATE TABLE IF NOT EXISTS domains (
     id                  UUID PRIMARY KEY,
     project_id          UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     deployment_id       UUID REFERENCES deployments(id),
@@ -111,7 +115,7 @@ CREATE TABLE domains (
 );
 
 -- Build logs
-CREATE TABLE build_logs (
+CREATE TABLE IF NOT EXISTS build_logs (
     id          UUID PRIMARY KEY,
     build_id    UUID NOT NULL REFERENCES builds(id) ON DELETE CASCADE,
     message     TEXT NOT NULL,
@@ -120,7 +124,7 @@ CREATE TABLE build_logs (
 );
 
 -- VM logs
-CREATE TABLE vm_logs (
+CREATE TABLE IF NOT EXISTS vm_logs (
     id          UUID PRIMARY KEY,
     vm_id       UUID NOT NULL REFERENCES vms(id) ON DELETE CASCADE,
     message     TEXT NOT NULL,
@@ -129,20 +133,20 @@ CREATE TABLE vm_logs (
 );
 
 -- CertMagic TLS certificate storage
-CREATE TABLE certmagic_data (
+CREATE TABLE IF NOT EXISTS certmagic_data (
     key         TEXT PRIMARY KEY,
     value       BYTEA NOT NULL,
     modified    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Indexes
-CREATE INDEX idx_vms_server_id ON vms(server_id);
-CREATE INDEX idx_vms_status ON vms(status) WHERE deleted_at IS NULL;
-CREATE INDEX idx_builds_project_id ON builds(project_id);
-CREATE INDEX idx_builds_status ON builds(status);
-CREATE INDEX idx_deployments_project_id ON deployments(project_id);
-CREATE INDEX idx_build_logs_build_id ON build_logs(build_id);
-CREATE INDEX idx_vm_logs_vm_id ON vm_logs(vm_id);
-CREATE INDEX idx_domains_project_id ON domains(project_id);
-CREATE INDEX idx_domains_deployment_id ON domains(deployment_id);
-CREATE INDEX idx_environment_variables_project_id ON environment_variables(project_id);
+CREATE INDEX IF NOT EXISTS idx_vms_server_id ON vms(server_id);
+CREATE INDEX IF NOT EXISTS idx_vms_status ON vms(status) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_builds_project_id ON builds(project_id);
+CREATE INDEX IF NOT EXISTS idx_builds_status ON builds(status);
+CREATE INDEX IF NOT EXISTS idx_deployments_project_id ON deployments(project_id);
+CREATE INDEX IF NOT EXISTS idx_build_logs_build_id ON build_logs(build_id);
+CREATE INDEX IF NOT EXISTS idx_vm_logs_vm_id ON vm_logs(vm_id);
+CREATE INDEX IF NOT EXISTS idx_domains_project_id ON domains(project_id);
+CREATE INDEX IF NOT EXISTS idx_domains_deployment_id ON domains(deployment_id);
+CREATE INDEX IF NOT EXISTS idx_environment_variables_project_id ON environment_variables(project_id);
