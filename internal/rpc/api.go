@@ -29,6 +29,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/projects/{id}/deployments", a.listDeployments)
 	mux.HandleFunc("GET /api/deployments/{id}", a.getDeployment)
 	mux.HandleFunc("GET /api/deployments/{id}/logs", a.getDeploymentLogs)
+	mux.HandleFunc("POST /api/projects/{id}/deploy", a.triggerDeploy)
+	mux.HandleFunc("GET /api/servers", a.listServers)
 }
 
 func (a *API) listProjects(w http.ResponseWriter, r *http.Request) {
@@ -154,6 +156,53 @@ func (a *API) getDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, logs)
+}
+
+func (a *API) triggerDeploy(w http.ResponseWriter, r *http.Request) {
+	projectID, err := parseUUID(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, `{"error":"invalid id"}`, http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Commit string `json:"commit"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.Commit == "" {
+		http.Error(w, `{"error":"commit is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Verify project exists.
+	if _, err := a.q.ProjectFirstByID(r.Context(), projectID); err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+
+	dep, err := a.q.DeploymentCreate(r.Context(), queries.DeploymentCreateParams{
+		ID:           pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		ProjectID:    projectID,
+		GithubCommit: req.Commit,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, dep)
+}
+
+func (a *API) listServers(w http.ResponseWriter, r *http.Request) {
+	servers, err := a.q.ServerFindAll(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, servers)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {

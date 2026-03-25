@@ -16,6 +16,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { ProjectsPage } from "@/pages/ProjectsPage"
 import { ProjectDetailPage } from "@/pages/ProjectDetailPage"
 import { DeploymentDetailPage } from "@/pages/DeploymentDetailPage"
+import { SettingsPage } from "@/pages/SettingsPage"
 
 function pageName(pathname: string): string {
   if (pathname.startsWith("/deployments/")) return "Deployment"
@@ -50,6 +51,7 @@ function Layout() {
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/projects/:id" element={<ProjectDetailPage />} />
             <Route path="/deployments/:id" element={<DeploymentDetailPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </div>
       </SidebarInset>

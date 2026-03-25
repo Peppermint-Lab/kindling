@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { useParams, Link } from "react-router-dom"
 import { api, type Deployment, type BuildLog } from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ArrowLeftIcon, ScrollTextIcon } from "lucide-react"
+import { ArrowLeftIcon, ScrollTextIcon, LoaderIcon } from "lucide-react"
 
 function deploymentStatus(dep: Deployment): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } {
   if (dep.failed_at) return { label: "Failed", variant: "destructive" }
@@ -13,13 +13,19 @@ function deploymentStatus(dep: Deployment): { label: string; variant: "default" 
   return { label: "Pending", variant: "outline" }
 }
 
+function isTerminal(dep: Deployment): boolean {
+  return !!(dep.running_at || dep.failed_at || dep.stopped_at)
+}
+
 export function DeploymentDetailPage() {
   const { id } = useParams<{ id: string }>()
   const [deployment, setDeployment] = useState<Deployment | null>(null)
   const [logs, setLogs] = useState<BuildLog[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const logEndRef = useRef<HTMLDivElement>(null)
 
+  // Initial load.
   useEffect(() => {
     if (!id) return
     Promise.all([api.getDeployment(id), api.getDeploymentLogs(id)])
@@ -27,6 +33,28 @@ export function DeploymentDetailPage() {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false))
   }, [id])
+
+  // Auto-refresh while not terminal.
+  useEffect(() => {
+    if (!id || !deployment || isTerminal(deployment)) return
+
+    const interval = setInterval(async () => {
+      try {
+        const [d, l] = await Promise.all([api.getDeployment(id), api.getDeploymentLogs(id)])
+        setDeployment(d)
+        setLogs(l)
+      } catch {
+        // ignore refresh errors
+      }
+    }, 3000)
+
+    return () => clearInterval(interval)
+  }, [id, deployment])
+
+  // Auto-scroll logs.
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [logs])
 
   if (loading) {
     return (
@@ -57,9 +85,15 @@ export function DeploymentDetailPage() {
         <div className="flex items-center gap-3 mt-2">
           <h1 className="text-2xl font-semibold tracking-tight">Deployment</h1>
           <Badge variant={status.variant}>{status.label}</Badge>
+          {!isTerminal(deployment) && (
+            <LoaderIcon className="size-4 text-muted-foreground animate-spin" />
+          )}
         </div>
         <p className="text-sm text-muted-foreground mt-1 font-mono">
           {deployment.github_commit ? deployment.github_commit.slice(0, 8) : "manual"}
+        </p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Created {new Date(deployment.created_at).toLocaleString()}
         </p>
       </div>
 
@@ -72,7 +106,16 @@ export function DeploymentDetailPage() {
         </CardHeader>
         <CardContent>
           {logs.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4 text-center">No build logs yet.</p>
+            <div className="py-4 text-center">
+              {!isTerminal(deployment) ? (
+                <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                  <LoaderIcon className="size-4 animate-spin" />
+                  Waiting for build to start...
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No build logs.</p>
+              )}
+            </div>
           ) : (
             <div className="rounded-lg bg-muted/50 p-4 font-mono text-xs leading-relaxed max-h-[600px] overflow-y-auto space-y-0.5">
               {logs.map((log, i) => (
@@ -83,6 +126,7 @@ export function DeploymentDetailPage() {
                   {log.message}
                 </div>
               ))}
+              <div ref={logEndRef} />
             </div>
           )}
         </CardContent>

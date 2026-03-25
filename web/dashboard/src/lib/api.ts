@@ -43,6 +43,15 @@ export type BuildLog = {
   created_at: string
 }
 
+export type Server = {
+  id: string
+  hostname: string
+  internal_ip: string
+  status: string
+  last_heartbeat_at: string
+  created_at: string
+}
+
 export const api = {
   listProjects: () => request<Project[]>("/api/projects"),
   createProject: (data: { name: string; github_repository?: string }) =>
@@ -52,4 +61,7 @@ export const api = {
   listDeployments: (projectId: string) => request<Deployment[]>(`/api/projects/${projectId}/deployments`),
   getDeployment: (id: string) => request<Deployment>(`/api/deployments/${id}`),
   getDeploymentLogs: (id: string) => request<BuildLog[]>(`/api/deployments/${id}/logs`),
+  triggerDeploy: (projectId: string, commit: string) =>
+    request<Deployment>(`/api/projects/${projectId}/deploy`, { method: "POST", body: JSON.stringify({ commit }) }),
+  listServers: () => request<Server[]>("/api/servers"),
 }
