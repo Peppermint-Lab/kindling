@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/githubapi"
 	"github.com/kindlingvm/kindling/internal/oci"
 )
 
@@ -144,7 +145,12 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 	if len(imageTag) > 12 {
 		imageTag = imageTag[:12]
 	}
-	imageRef := fmt.Sprintf("%s/%s:%s", cfg.RegistryURL, project.GithubRepository, imageTag)
+	// OCI image names must be lowercase; GitHub owner/repo may contain uppercase.
+	ociRepo := strings.ToLower(githubapi.NormalizeRepo(project.GithubRepository))
+	if ociRepo == "" {
+		ociRepo = strings.ToLower(strings.TrimSpace(project.GithubRepository))
+	}
+	imageRef := fmt.Sprintf("%s/%s:%s", cfg.RegistryURL, ociRepo, imageTag)
 
 	engine, err := oci.DetectBuildEngine()
 	if err != nil {
@@ -182,7 +188,7 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 	image, err := b.q.ImageFindOrCreate(ctx, queries.ImageFindOrCreateParams{
 		ID:         uuidToPgtype(uuid.New()),
 		Registry:   cfg.RegistryURL,
-		Repository: project.GithubRepository,
+		Repository: ociRepo,
 		Tag:        imageTag,
 	})
 	if err != nil {
