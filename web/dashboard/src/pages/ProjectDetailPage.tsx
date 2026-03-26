@@ -925,7 +925,7 @@ export function ProjectDetailPage() {
                   </CardHeader>
                   <CardContent>
                     <p className="text-2xl font-semibold tabular-nums">
-                      {usageCurrent.summary.cpu_percent_avg != null
+                      {usageCurrent.summary?.cpu_percent_avg != null
                         ? `${usageCurrent.summary.cpu_percent_avg.toFixed(1)}%`
                         : "—"}
                     </p>
@@ -937,7 +937,7 @@ export function ProjectDetailPage() {
                   </CardHeader>
                   <CardContent>
                     <p className="text-2xl font-semibold tabular-nums">
-                      {formatBytes(usageCurrent.summary.memory_rss_bytes_total)}
+                      {formatBytes(usageCurrent.summary?.memory_rss_bytes_total ?? 0)}
                     </p>
                   </CardContent>
                 </Card>
@@ -948,22 +948,23 @@ export function ProjectDetailPage() {
                   <CardContent className="space-y-1 text-sm">
                     <p>
                       <span className="text-muted-foreground">Requests:</span>{" "}
-                      <span className="font-mono">{usageCurrent.summary.http_requests_15m}</span>
+                      <span className="font-mono">{usageCurrent.summary?.http_requests_15m ?? 0}</span>
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      2xx/3xx: <span className="font-mono text-foreground">{usageCurrent.summary.http_status_2xx_15m}</span>{" "}
-                      · 4xx: <span className="font-mono text-foreground">{usageCurrent.summary.http_status_4xx_15m}</span>{" "}
-                      · 5xx: <span className="font-mono text-foreground">{usageCurrent.summary.http_status_5xx_15m}</span>
+                      2xx/3xx:{" "}
+                      <span className="font-mono text-foreground">{usageCurrent.summary?.http_status_2xx_15m ?? 0}</span>{" "}
+                      · 4xx: <span className="font-mono text-foreground">{usageCurrent.summary?.http_status_4xx_15m ?? 0}</span>{" "}
+                      · 5xx: <span className="font-mono text-foreground">{usageCurrent.summary?.http_status_5xx_15m ?? 0}</span>
                     </p>
                     <p className="text-xs">
-                      In: {formatBytes(usageCurrent.summary.http_bytes_in_15m)} · Out:{" "}
-                      {formatBytes(usageCurrent.summary.http_bytes_out_15m)}
+                      In: {formatBytes(usageCurrent.summary?.http_bytes_in_15m ?? 0)} · Out:{" "}
+                      {formatBytes(usageCurrent.summary?.http_bytes_out_15m ?? 0)}
                     </p>
                   </CardContent>
                 </Card>
               </div>
 
-              {usageCurrent.instances.length > 0 ? (
+              {(usageCurrent.instances ?? []).length > 0 ? (
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-base">Instances</CardTitle>
@@ -981,7 +982,7 @@ export function ProjectDetailPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {usageCurrent.instances.map((row) => (
+                        {(usageCurrent.instances ?? []).map((row) => (
                           <tr key={row.deployment_instance_id} className="border-b border-border/60">
                             <td className="py-2 pr-4 font-mono text-xs">{row.deployment_instance_id.slice(0, 8)}…</td>
                             <td className="py-2 pr-4">{row.source}</td>
@@ -1012,7 +1013,7 @@ export function ProjectDetailPage() {
                     <CardContent>
                       <MiniBars
                         label="RSS peak per bucket"
-                        values={usageHistory.resource.map((x) => x.memory_rss_bytes_max)}
+                        values={(usageHistory.resource ?? []).map((x) => x.memory_rss_bytes_max)}
                       />
                     </CardContent>
                   </Card>
@@ -1022,7 +1023,10 @@ export function ProjectDetailPage() {
                       <CardDescription>Aggregated across Kindling edge servers</CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <MiniBars label="Requests" values={usageHistory.http.map((h) => h.request_count)} />
+                      <MiniBars
+                        label="Requests"
+                        values={(usageHistory.http ?? []).map((h) => h.request_count)}
+                      />
                     </CardContent>
                   </Card>
                 </div>

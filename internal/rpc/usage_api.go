@@ -61,14 +61,15 @@ func (a *API) getProjectUsageCurrent(w http.ResponseWriter, r *http.Request) {
 
 	type instOut struct {
 		DeploymentInstanceID string   `json:"deployment_instance_id"`
-		SampledAt              string   `json:"sampled_at,omitempty"`
-		CPUPercent             *float64 `json:"cpu_percent,omitempty"`
-		MemoryRssBytes         int64    `json:"memory_rss_bytes"`
-		DiskReadBytes          int64    `json:"disk_read_bytes"`
-		DiskWriteBytes         int64    `json:"disk_write_bytes"`
-		Source                 string   `json:"source"`
+		SampledAt            string   `json:"sampled_at,omitempty"`
+		CPUPercent           *float64 `json:"cpu_percent,omitempty"`
+		MemoryRssBytes       int64    `json:"memory_rss_bytes"`
+		DiskReadBytes        int64    `json:"disk_read_bytes"`
+		DiskWriteBytes       int64    `json:"disk_write_bytes"`
+		Source               string   `json:"source"`
 	}
-	var instances []instOut
+	// Non-nil slice so JSON is [] not null (dashboard expects an array).
+	instances := make([]instOut, 0)
 	var memTotal int64
 	var cpuSum float64
 	var cpuN int
@@ -189,7 +190,7 @@ func (a *API) getProjectUsageHistory(w http.ResponseWriter, r *http.Request) {
 		MemoryRssBytesMax int64   `json:"memory_rss_bytes_max"`
 		CpuPercentAvg     float64 `json:"cpu_percent_avg"`
 	}
-	var resource []resPt
+	resource := make([]resPt, 0)
 	for _, row := range resRows {
 		var bs string
 		if row.BucketStart.Valid {
@@ -211,7 +212,7 @@ func (a *API) getProjectUsageHistory(w http.ResponseWriter, r *http.Request) {
 		BytesIn      int64  `json:"bytes_in"`
 		BytesOut     int64  `json:"bytes_out"`
 	}
-	var httpSeries []httpPt
+	httpSeries := make([]httpPt, 0)
 	for _, row := range httpRows {
 		var bs string
 		if row.BucketStart.Valid {
@@ -220,11 +221,11 @@ func (a *API) getProjectUsageHistory(w http.ResponseWriter, r *http.Request) {
 		httpSeries = append(httpSeries, httpPt{
 			BucketStart:  bs,
 			RequestCount: row.RequestCount,
-			Status2xx:      row.Status2xx,
-			Status4xx:      row.Status4xx,
-			Status5xx:      row.Status5xx,
-			BytesIn:        row.BytesIn,
-			BytesOut:       row.BytesOut,
+			Status2xx:    row.Status2xx,
+			Status4xx:    row.Status4xx,
+			Status5xx:    row.Status5xx,
+			BytesIn:      row.BytesIn,
+			BytesOut:     row.BytesOut,
 		})
 	}
 

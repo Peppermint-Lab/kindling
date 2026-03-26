@@ -178,6 +178,54 @@ export type UsageHistory = {
   }>
 }
 
+/** Go json.Marshal encodes nil slices as null; normalize so UI never calls .map on null. */
+function parseUsageCurrent(raw: unknown): UsageCurrent {
+  const summaryDefaults: UsageCurrent["summary"] = {
+    memory_rss_bytes_total: 0,
+    cpu_percent_avg: null,
+    http_requests_15m: 0,
+    http_status_2xx_15m: 0,
+    http_status_4xx_15m: 0,
+    http_status_5xx_15m: 0,
+    http_bytes_in_15m: 0,
+    http_bytes_out_15m: 0,
+  }
+  if (!raw || typeof raw !== "object") {
+    return { instances: [], summary: summaryDefaults }
+  }
+  const o = raw as Record<string, unknown>
+  const instances = Array.isArray(o.instances) ? (o.instances as UsageCurrent["instances"]) : []
+  let summary = summaryDefaults
+  if (o.summary && typeof o.summary === "object") {
+    const s = o.summary as Record<string, unknown>
+    const cpu = s.cpu_percent_avg
+    summary = {
+      memory_rss_bytes_total:
+        typeof s.memory_rss_bytes_total === "number" ? s.memory_rss_bytes_total : 0,
+      cpu_percent_avg: typeof cpu === "number" && !Number.isNaN(cpu) ? cpu : null,
+      http_requests_15m: typeof s.http_requests_15m === "number" ? s.http_requests_15m : 0,
+      http_status_2xx_15m: typeof s.http_status_2xx_15m === "number" ? s.http_status_2xx_15m : 0,
+      http_status_4xx_15m: typeof s.http_status_4xx_15m === "number" ? s.http_status_4xx_15m : 0,
+      http_status_5xx_15m: typeof s.http_status_5xx_15m === "number" ? s.http_status_5xx_15m : 0,
+      http_bytes_in_15m: typeof s.http_bytes_in_15m === "number" ? s.http_bytes_in_15m : 0,
+      http_bytes_out_15m: typeof s.http_bytes_out_15m === "number" ? s.http_bytes_out_15m : 0,
+    }
+  }
+  return { instances, summary }
+}
+
+function parseUsageHistory(raw: unknown): UsageHistory {
+  if (!raw || typeof raw !== "object") {
+    return { window: "", resource: [], http: [] }
+  }
+  const o = raw as Record<string, unknown>
+  return {
+    window: typeof o.window === "string" ? o.window : "",
+    resource: Array.isArray(o.resource) ? (o.resource as UsageHistory["resource"]) : [],
+    http: Array.isArray(o.http) ? (o.http as UsageHistory["http"]) : [],
+  }
+}
+
 export type APIMeta = {
   public_base_url: string
   public_base_url_configured: boolean
@@ -347,12 +395,12 @@ export const api = {
   listServers: () => request<Server[]>("/api/servers"),
 
   getProjectUsageCurrent: (projectId: string) =>
-    request<UsageCurrent>(`/api/projects/${projectId}/usage/current`),
+    request<unknown>(`/api/projects/${projectId}/usage/current`).then(parseUsageCurrent),
 
   getProjectUsageHistory: (projectId: string, window?: string) =>
-    request<UsageHistory>(
+    request<unknown>(
       `/api/projects/${projectId}/usage/history${window != null && window !== "" ? `?window=${encodeURIComponent(window)}` : ""}`,
-    ),
+    ).then(parseUsageHistory),
 }
 
 /** SSE url for live deployment updates (use with EventSource). */
