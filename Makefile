@@ -117,7 +117,7 @@ remote-sync:
 # Build on remote
 remote-build: remote-sync
 	ssh $(REMOTE_HOST) 'cd $(REMOTE_DIR) && go build -o bin/kindling ./cmd/kindling && \
-		sudo setcap cap_net_admin+ep "$(REMOTE_DIR)/bin/kindling" && \
+		sudo setcap cap_net_admin,cap_net_bind_service+ep "$(REMOTE_DIR)/bin/kindling" && \
 		(if [ -f /usr/local/bin/cloud-hypervisor ]; then sudo setcap cap_net_admin+ep /usr/local/bin/cloud-hypervisor; fi)'
 
 # Build initramfs on remote
@@ -136,6 +136,10 @@ remote-run: remote-build
 		else \
 			./bin/kindling serve; \
 		fi'
+
+# Install systemd + /etc/kindling on REMOTE_HOST (run once per server; needs sudo)
+remote-prod-install: remote-build
+	ssh $(REMOTE_HOST) 'sudo bash $(REMOTE_DIR)/contrib/setup-kindling-prod.sh'
 
 # Full dev setup: sync, build, run API + dashboard
 dev-up: remote-build

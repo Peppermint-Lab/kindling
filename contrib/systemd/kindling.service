@@ -1,0 +1,20 @@
+[Unit]
+Description=Kindling control plane, builds, and edge proxy
+Documentation=https://github.com/Peppermint-Lab/kindling
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+Environment=HOME=/home/ubuntu
+WorkingDirectory=/home/ubuntu/kindling
+ExecStart=/usr/local/lib/kindling/serve.sh
+Restart=always
+RestartSec=5
+# Cloud Hypervisor TAP + workloads can need many fds.
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
