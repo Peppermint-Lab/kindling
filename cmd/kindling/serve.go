@@ -352,6 +352,10 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
+	// Browsers hit / on the control plane host; the mux would otherwise 404.
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/api/meta", http.StatusFound)
+	})
 	api.Register(mux)
 	mux.Handle("POST /webhooks/github", webhookHandler)
 
