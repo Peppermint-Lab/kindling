@@ -32,9 +32,11 @@ func projectCmd() *cobra.Command {
 
 func projectCreateCmd() *cobra.Command {
 	var (
-		name  string
-		repo  string
-		dbURL string
+		name           string
+		repo           string
+		rootDirectory  string
+		dockerfilePath string
+		dbURL          string
 	)
 
 	cmd := &cobra.Command{
@@ -61,14 +63,24 @@ func projectCreateCmd() *cobra.Command {
 					return genErr
 				}
 			}
+			rd := strings.TrimSpace(rootDirectory)
+			if rd == "" {
+				rd = "/"
+			} else if !strings.HasPrefix(rd, "/") {
+				rd = "/" + rd
+			}
+			dfp := strings.TrimSpace(dockerfilePath)
+			if dfp == "" {
+				dfp = "Dockerfile"
+			}
 			project, err := q.ProjectCreate(cmd.Context(), queries.ProjectCreateParams{
 				ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
 				Name:                 name,
 				GithubRepository:     repo,
 				GithubInstallationID: 0,
 				GithubWebhookSecret:  webhookSecret,
-				RootDirectory:        "/",
-				DockerfilePath:       "Dockerfile",
+				RootDirectory:        rd,
+				DockerfilePath:       dfp,
 				DesiredInstanceCount: 1,
 			})
 			if err != nil {
@@ -82,6 +94,8 @@ func projectCreateCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&name, "name", "", "Project name (required)")
 	cmd.Flags().StringVar(&repo, "repo", "", "GitHub repository (owner/repo)")
+	cmd.Flags().StringVar(&rootDirectory, "root-directory", "/", "Subdirectory in the repo used as build context (e.g. /web/landing)")
+	cmd.Flags().StringVar(&dockerfilePath, "dockerfile", "Dockerfile", "Path to Dockerfile relative to the build context root")
 	cmd.Flags().StringVar(&dbURL, "database-url", "", "PostgreSQL connection string")
 	cmd.MarkFlagRequired("name")
 

@@ -72,6 +72,12 @@ INSERT INTO server_settings (server_id) VALUES ($1) ON CONFLICT (server_id) DO N
 -- name: ServerSettingGet :one
 SELECT * FROM server_settings WHERE server_id = $1;
 
+-- name: ServerSettingSeedAdvertiseHostIfUnset :exec
+UPDATE server_settings
+SET advertise_host = $2, updated_at = NOW()
+WHERE server_id = $1
+  AND (advertise_host = '' OR BTRIM(advertise_host) = '');
+
 -- name: ClusterSecretGet :one
 SELECT ciphertext FROM cluster_secrets WHERE key = $1;
 

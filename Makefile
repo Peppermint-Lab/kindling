@@ -6,6 +6,8 @@
 DATABASE_URL ?= postgres://kindling:kindling@localhost:5432/kindling?sslmode=disable
 REMOTE_HOST ?= kindling-dev
 REMOTE_DIR ?= /home/ubuntu/kindling
+# Optional: OVH public IPv4 so runtime_url uses it (passed to kindling serve --advertise-host)
+REMOTE_PUBLIC_IP ?=
 # Optional: public IP or DNS of the host so API/dashboard show a browser-openable runtime_url (crun/cloud-hypervisor publish 0.0.0.0:port).
 KINDLING_RUNTIME_ADVERTISE_HOST ?=
 
@@ -128,7 +130,12 @@ remote-networking:
 
 # Run kindling on remote
 remote-run: remote-build
-	ssh $(REMOTE_HOST) 'cd $(REMOTE_DIR) && ./bin/kindling serve'
+	ssh $(REMOTE_HOST) 'cd $(REMOTE_DIR) && \
+		if [ -n "$(REMOTE_PUBLIC_IP)" ]; then \
+			./bin/kindling serve --advertise-host "$(REMOTE_PUBLIC_IP)"; \
+		else \
+			./bin/kindling serve; \
+		fi'
 
 # Full dev setup: sync, build, run API + dashboard
 dev-up: remote-build

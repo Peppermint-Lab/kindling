@@ -34,12 +34,13 @@ import (
 
 func serveCmd() *cobra.Command {
 	var (
-		listenAddr    string
-		publicBaseURL string
-		edgeHTTPSAddr string
-		edgeHTTPAddr  string
-		acmeEmail     string
-		acmeStaging   bool
+		listenAddr      string
+		publicBaseURL   string
+		advertiseHost   string
+		edgeHTTPSAddr   string
+		edgeHTTPAddr    string
+		acmeEmail       string
+		acmeStaging     bool
 	)
 
 	cmd := &cobra.Command{
@@ -51,18 +52,20 @@ func serveCmd() *cobra.Command {
 				return err
 			}
 			return runServe(cmd.Context(), databaseURL, serveOptions{
-				listenAddr:    listenAddr,
-				publicBaseURL: publicBaseURL,
-				edgeHTTPSAddr: edgeHTTPSAddr,
-				edgeHTTPAddr:  edgeHTTPAddr,
-				acmeEmail:     acmeEmail,
-				acmeStaging:   acmeStaging,
+				listenAddr:      listenAddr,
+				publicBaseURL:   publicBaseURL,
+				advertiseHost:   advertiseHost,
+				edgeHTTPSAddr:   edgeHTTPSAddr,
+				edgeHTTPAddr:    edgeHTTPAddr,
+				acmeEmail:       acmeEmail,
+				acmeStaging:     acmeStaging,
 			})
 		},
 	}
 
 	cmd.Flags().StringVar(&listenAddr, "listen", ":8080", "API listen address")
 	cmd.Flags().StringVar(&publicBaseURL, "public-url", "", "Optional seed for cluster_settings.public_base_url when that row is missing (e.g. first boot)")
+	cmd.Flags().StringVar(&advertiseHost, "advertise-host", "", "Optional seed for server_settings.advertise_host when empty (public IP or DNS for browser-openable runtime URLs); KINDLING_RUNTIME_ADVERTISE_HOST if unset")
 	cmd.Flags().StringVar(&edgeHTTPSAddr, "edge-https", "", "HTTPS listen for TLS edge proxy (e.g. :443); stored in cluster_settings when missing")
 	cmd.Flags().StringVar(&edgeHTTPAddr, "edge-http", ":80", "HTTP listen for edge proxy; stored in cluster_settings.edge_http_addr when missing")
 	cmd.Flags().StringVar(&acmeEmail, "acme-email", "", "Let's Encrypt email; stored in cluster_settings when missing")
@@ -72,12 +75,13 @@ func serveCmd() *cobra.Command {
 }
 
 type serveOptions struct {
-	listenAddr    string
-	publicBaseURL string
-	edgeHTTPSAddr string
-	edgeHTTPAddr  string
-	acmeEmail     string
-	acmeStaging   bool
+	listenAddr      string
+	publicBaseURL   string
+	advertiseHost   string
+	edgeHTTPSAddr   string
+	edgeHTTPAddr    string
+	acmeEmail       string
+	acmeStaging     bool
 }
 
 func runServe(ctx context.Context, databaseURL string, opts serveOptions) error {
@@ -142,6 +146,9 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	}
 	if err := seedClusterSettingsFromServeFlags(ctx, q, opts); err != nil {
 		return fmt.Errorf("seed cluster settings: %w", err)
+	}
+	if err := seedAdvertiseHostIfUnset(ctx, q, serverID, opts); err != nil {
+		return fmt.Errorf("seed advertise host: %w", err)
 	}
 
 	masterKey, err := bootstrap.LoadOrCreateMasterKey()
@@ -429,6 +436,20 @@ func seedClusterSettingsFromServeFlags(ctx context.Context, q *queries.Queries, 
 		}
 	}
 	return nil
+}
+
+func seedAdvertiseHostIfUnset(ctx context.Context, q *queries.Queries, serverID uuid.UUID, opts serveOptions) error {
+	host := strings.TrimSpace(opts.advertiseHost)
+	if host == "" {
+		host = strings.TrimSpace(os.Getenv("KINDLING_RUNTIME_ADVERTISE_HOST"))
+	}
+	if host == "" {
+		return nil
+	}
+	return q.ServerSettingSeedAdvertiseHostIfUnset(ctx, queries.ServerSettingSeedAdvertiseHostIfUnsetParams{
+		ServerID:      pgtype.UUID{Bytes: serverID, Valid: true},
+		AdvertiseHost: host,
+	})
 }
 
 func seedClusterSettingIfUnset(ctx context.Context, q *queries.Queries, key, value string) error {

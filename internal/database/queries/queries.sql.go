@@ -428,6 +428,23 @@ func (q *Queries) ServerSettingGet(ctx context.Context, serverID pgtype.UUID) (S
 	return i, err
 }
 
+const serverSettingSeedAdvertiseHostIfUnset = `-- name: ServerSettingSeedAdvertiseHostIfUnset :exec
+UPDATE server_settings
+SET advertise_host = $2, updated_at = NOW()
+WHERE server_id = $1
+  AND (advertise_host = '' OR BTRIM(advertise_host) = '')
+`
+
+type ServerSettingSeedAdvertiseHostIfUnsetParams struct {
+	ServerID      pgtype.UUID `json:"server_id"`
+	AdvertiseHost string      `json:"advertise_host"`
+}
+
+func (q *Queries) ServerSettingSeedAdvertiseHostIfUnset(ctx context.Context, arg ServerSettingSeedAdvertiseHostIfUnsetParams) error {
+	_, err := q.db.Exec(ctx, serverSettingSeedAdvertiseHostIfUnset, arg.ServerID, arg.AdvertiseHost)
+	return err
+}
+
 const clusterSecretGet = `-- name: ClusterSecretGet :one
 SELECT ciphertext FROM cluster_secrets WHERE key = $1
 `
