@@ -91,8 +91,17 @@ if ! docker ps | grep -q kindling-postgres; then
     postgres -c wal_level=logical -c max_replication_slots=10 -c max_wal_senders=10
 fi
 
+# libguestfs (virt-make-fs for microVM rootfs) copies /boot/vmlinuz; Ubuntu ships
+# it mode 0600 so non-root kindling users need world-read on kernel images.
+if ls /boot/vmlinuz-* &>/dev/null; then
+  sudo chmod a+r /boot/vmlinuz-* || true
+fi
+
 echo ""
 echo "=== Provisioning complete ==="
 echo "PostgreSQL: postgres://kindling:kindling@localhost:5432/kindling"
 echo "Cloud Hypervisor: $(cloud-hypervisor --version)"
 echo "Ready to run: make dev-up"
+echo "Bare metal: after go build, run: sudo setcap cap_net_admin+ep bin/kindling"
+echo "  (so cloud-hypervisor can create TAP devices as non-root.)"
+echo "Optional: export KINDLING_RUNTIME=crun to use Docker even when KVM is present."

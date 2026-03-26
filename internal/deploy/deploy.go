@@ -395,7 +395,7 @@ func (d *Deployer) reconcileOneInstance(
 		return fmt.Errorf("start instance: %w", err)
 	}
 
-	if requiresExternalHealthCheck(d.rt.Name()) && !d.healthCheckLocalForwarded(ip) {
+	if requiresExternalHealthCheck(d.rt.Name()) && !d.waitHealthCheckLocalForwarded(ip, 90*time.Second) {
 		_ = d.rt.Stop(ctx, instID)
 		_, _ = d.q.DeploymentInstanceUpdateStatus(ctx, queries.DeploymentInstanceUpdateStatusParams{
 			ID:     inst.ID,
@@ -474,6 +474,19 @@ func (d *Deployer) healthCheckLocalForwarded(runtimeURL string) bool {
 		return false
 	}
 	return d.healthCheck("127.0.0.1", port)
+}
+
+// waitHealthCheckLocalForwarded retries until the workload listens (OCI / VM
+// publish can take tens of seconds after the parent process returns).
+func (d *Deployer) waitHealthCheckLocalForwarded(runtimeURL string, maxWait time.Duration) bool {
+	deadline := time.Now().Add(maxWait)
+	for time.Now().Before(deadline) {
+		if d.healthCheckLocalForwarded(runtimeURL) {
+			return true
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return false
 }
 
 func requiresExternalHealthCheck(runtimeName string) bool {
