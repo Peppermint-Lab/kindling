@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/kindlingvm/kindling/internal/oci"
 	"github.com/vishvananda/netlink"
 )
 
@@ -461,18 +462,10 @@ func cloudHypervisorTapName(id uuid.UUID, slot uint32) string {
 	return fmt.Sprintf("kch%s%x", id.String()[:8], slot&0xf)
 }
 
-func exportImageToDir(ctx context.Context, imageRef, rootfsDir string, id uuid.UUID) (string, error) {
-	if err := os.MkdirAll(rootfsDir, 0o755); err != nil {
-		return "", fmt.Errorf("create rootfs dir: %w", err)
-	}
-	containerName := fmt.Sprintf("kindling-export-%s", id.String()[:8])
-	_ = exec.CommandContext(ctx, "docker", "rm", "-f", containerName).Run()
-	if out, err := exec.CommandContext(ctx, "docker", "create", "--name", containerName, imageRef).CombinedOutput(); err != nil {
-		return "", fmt.Errorf("docker create: %s: %w", string(out), err)
-	}
-	defer exec.CommandContext(ctx, "docker", "rm", "-f", containerName).Run()
-	if out, err := exec.CommandContext(ctx, "docker", "cp", containerName+":/.", rootfsDir).CombinedOutput(); err != nil {
-		return "", fmt.Errorf("docker cp: %s: %w", string(out), err)
+func exportImageToDir(ctx context.Context, imageRef, rootfsDir string, _ uuid.UUID) (string, error) {
+	auth := oci.AuthFromEnv()
+	if err := oci.ExportImageRootfs(ctx, imageRef, rootfsDir, auth); err != nil {
+		return "", err
 	}
 	return rootfsDir, nil
 }

@@ -11,7 +11,7 @@ import (
 
 // patchBundleHostNetwork removes the network namespace from the OCI config so crun
 // joins the host network. Otherwise 127.0.0.1:<port> on the host would not reach
-// the container's loopback (see Apple VZ / docker -p parity for raw runtime URL).
+// the container's loopback (see Apple VZ host port forward parity for raw runtime URL).
 func patchBundleHostNetwork(bundleDir string) error {
 	p := filepath.Join(bundleDir, "config.json")
 	raw, err := os.ReadFile(p)

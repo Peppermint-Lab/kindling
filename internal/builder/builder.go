@@ -1,12 +1,10 @@
-// Package builder handles build orchestration. Each build runs in an isolated
-// dind (Docker-in-Docker) microVM. Source is downloaded as a GitHub tarball,
-// framework is auto-detected if no Dockerfile is present, and the image is
-// built with docker buildx and pushed to a registry.
+// Package builder handles build orchestration. Source is downloaded as a GitHub tarball,
+// framework is auto-detected if no Dockerfile is present, and the image is built with
+// buildah or podman (OCI) and optionally pushed to a registry.
 package builder
 
 import (
 	"archive/tar"
-	"bufio"
 	"compress/gzip"
 	"context"
 	"fmt"
@@ -14,15 +12,14 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/oci"
 )
 
 // Config holds builder configuration.
@@ -88,7 +85,7 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 	if build.Status == "pending" {
 		if err := b.q.BuildMarkBuilding(ctx, queries.BuildMarkBuildingParams{
 			ID:   build.ID,
-			VmID: pgtype.UUID{}, // no VM yet — builds run on the host for now
+			VmID: pgtype.UUID{}, // no build VM yet — builds run on the host for now
 		}); err != nil {
 			return fmt.Errorf("mark building: %w", err)
 		}
@@ -130,33 +127,40 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 		b.log(ctx, build.ID, "info", fmt.Sprintf("No Dockerfile found. Detected framework: %s", framework))
 	}
 
-	// Build the Docker image.
+	// Build the OCI image (buildah or podman).
 	imageTag := build.GithubCommit
 	if len(imageTag) > 12 {
 		imageTag = imageTag[:12]
 	}
 	imageRef := fmt.Sprintf("%s/%s:%s", b.cfg.RegistryURL, project.GithubRepository, imageTag)
 
-	b.log(ctx, build.ID, "info", fmt.Sprintf("Building image: %s", imageRef))
+	engine, err := oci.DetectBuildEngine()
+	if err != nil {
+		b.log(ctx, build.ID, "error", fmt.Sprintf("No OCI builder in PATH: %v", err))
+		return b.q.BuildMarkFailed(ctx, build.ID)
+	}
+	b.log(ctx, build.ID, "info", fmt.Sprintf("Building image with %s: %s", engine, imageRef))
 
 	dockerfilePath := project.DockerfilePath
 	if dockerfilePath == "" {
 		dockerfilePath = "Dockerfile"
 	}
 
-	if err := b.runDockerBuild(ctx, build, buildDir, imageRef, dockerfilePath); err != nil {
-		b.log(ctx, build.ID, "error", fmt.Sprintf("Docker build failed: %v", err))
+	logLine := func(line string) { b.log(ctx, build.ID, "info", line) }
+	if err := oci.BuildDockerfile(ctx, engine, buildDir, imageRef, dockerfilePath, logLine); err != nil {
+		b.log(ctx, build.ID, "error", fmt.Sprintf("OCI build failed: %v", err))
 		return b.q.BuildMarkFailed(ctx, build.ID)
 	}
 
-	b.log(ctx, build.ID, "info", "Docker build completed")
+	b.log(ctx, build.ID, "info", "OCI build completed")
 
 	// Push to registry if credentials are configured.
 	if b.cfg.RegistryUsername != "" {
 		b.log(ctx, build.ID, "info", "Pushing image to registry...")
-		if err := b.runDockerPush(ctx, build, imageRef); err != nil {
+		auth := &oci.Auth{Username: b.cfg.RegistryUsername, Password: b.cfg.RegistryPassword}
+		if err := oci.PushImage(ctx, engine, imageRef, auth); err != nil {
 			b.log(ctx, build.ID, "error", fmt.Sprintf("Push failed: %v", err))
-			// Don't fail the build — image is still available locally.
+			// Don't fail the build — image is still available locally (containers-storage).
 		} else {
 			b.log(ctx, build.ID, "info", "Image pushed successfully")
 		}
@@ -534,62 +538,6 @@ func (b *Builder) releaseLease(buildID uuid.UUID) {
 		ID:           uuidToPgtype(buildID),
 		ProcessingBy: uuidToPgtype(b.serverID),
 	})
-}
-
-// runDockerBuild runs `docker build` on a directory.
-func (b *Builder) runDockerBuild(ctx context.Context, build queries.Build, buildDir, imageRef, dockerfilePath string) error {
-	args := []string{"build", "-t", imageRef, "-f", dockerfilePath, "."}
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Dir = buildDir
-
-	// Stream stdout/stderr to build logs.
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start docker build: %w", err)
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		b.streamOutput(ctx, build.ID, stdout, "info")
-	}()
-	go func() {
-		defer wg.Done()
-		b.streamOutput(ctx, build.ID, stderr, "info")
-	}()
-
-	err := cmd.Wait()
-	wg.Wait()
-
-	if err != nil {
-		return fmt.Errorf("docker build: %w", err)
-	}
-	return nil
-}
-
-// runDockerPush pushes the image to the registry.
-func (b *Builder) runDockerPush(ctx context.Context, build queries.Build, imageRef string) error {
-	cmd := exec.CommandContext(ctx, "docker", "push", imageRef)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("docker push: %s: %w", string(out), err)
-	}
-	return nil
-}
-
-// streamOutput reads lines from r and writes them as build logs.
-func (b *Builder) streamOutput(ctx context.Context, buildID pgtype.UUID, r io.Reader, level string) {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line != "" {
-			b.log(ctx, buildID, level, line)
-		}
-	}
 }
 
 func uuidToPgtype(id uuid.UUID) pgtype.UUID {

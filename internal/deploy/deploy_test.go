@@ -7,7 +7,7 @@ func TestRequiresExternalHealthCheck(t *testing.T) {
 		t.Fatal("expected apple-vz to rely on runtime readiness instead of external health checks")
 	}
 
-	if !requiresExternalHealthCheck("docker") {
-		t.Fatal("expected docker runtime to keep external health checks")
+	if !requiresExternalHealthCheck("crun") {
+		t.Fatal("expected crun runtime to keep external health checks")
 	}
 }

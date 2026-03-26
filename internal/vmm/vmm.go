@@ -16,12 +16,14 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/oci"
 )
 
 // Config holds VMM configuration.
@@ -306,16 +308,16 @@ func (m *Manager) ensureBaseImage(ctx context.Context, image queries.Image) erro
 		return fmt.Errorf("skopeo copy: %w", err)
 	}
 
-	// Unpack OCI to bundle.
 	bundlePath := tmpDir + "/bundle"
-	if err := runCmd(ctx, "umoci", "unpack", "--image", ociPath+":latest", bundlePath); err != nil {
-		return fmt.Errorf("umoci unpack: %w", err)
+	if err := oci.UmociUnpack(ctx, ociPath+":latest", bundlePath); err != nil {
+		return err
 	}
 
-	// Convert to qcow2.
+	// Convert to qcow2 from unpacked rootfs (not the full OCI bundle with config.json).
+	rootfsPath := filepath.Join(bundlePath, "rootfs")
 	if err := runCmd(ctx, "virt-make-fs",
 		"--format=qcow2", "--type=ext4", "--size=+5G",
-		bundlePath, basePath,
+		rootfsPath, basePath,
 	); err != nil {
 		return fmt.Errorf("virt-make-fs: %w", err)
 	}

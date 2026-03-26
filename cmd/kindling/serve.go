@@ -120,9 +120,15 @@ func runServe(ctx context.Context, listenAddr, databaseURL, publicBaseURL string
 	defer rt.StopAll()
 	slog.Info("runtime detected", "runtime", rt.Name())
 
+	regURL := strings.TrimSpace(os.Getenv("KINDLING_REGISTRY_URL"))
+	if regURL == "" {
+		regURL = "kindling"
+	}
 	bldr := builder.New(builder.Config{
-		RegistryURL: "kindling",
-		GitHubToken: ghTok,
+		RegistryURL:      regURL,
+		GitHubToken:      ghTok,
+		RegistryUsername: strings.TrimSpace(os.Getenv("KINDLING_REGISTRY_USERNAME")),
+		RegistryPassword: strings.TrimSpace(os.Getenv("KINDLING_REGISTRY_PASSWORD")),
 	}, q, serverID)
 
 	deployer := deploy.New(q, db.Pool, serverID)

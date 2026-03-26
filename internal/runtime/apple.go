@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/Code-Hex/vz/v3"
 	"github.com/google/uuid"
+	"github.com/kindlingvm/kindling/internal/oci"
 )
 
 const (
@@ -355,29 +355,14 @@ func (r *AppleRuntime) Logs(ctx context.Context, id uuid.UUID) ([]string, error)
 	return out, nil
 }
 
-// exportImage exports a Docker image to a directory so it can be shared into the VM.
+// exportImage pulls/unpacks an OCI image to a directory so it can be shared into the VM.
 func (r *AppleRuntime) exportImage(ctx context.Context, imageRef string, id uuid.UUID) (string, error) {
 	home, _ := os.UserHomeDir()
 	appDir := fmt.Sprintf("%s/.kindling/apps/%s", home, id)
-	os.MkdirAll(appDir, 0o755)
-
-	// Create a container from the image and copy its filesystem out.
-	containerName := fmt.Sprintf("kindling-export-%s", id.String()[:8])
-
-	// Create container (don't start it).
-	if out, err := exec.CommandContext(ctx, "docker", "create", "--name", containerName, imageRef).CombinedOutput(); err != nil {
-		return "", fmt.Errorf("docker create: %s: %w", string(out), err)
+	auth := oci.AuthFromEnv()
+	if err := oci.ExportImageRootfs(ctx, imageRef, appDir, auth); err != nil {
+		return "", err
 	}
-
-	// Copy the entire container rootfs — includes the runtime (node, ruby, etc.)
-	// plus the app code at /app.
-	if out, err := exec.CommandContext(ctx, "docker", "cp", containerName+":/.", appDir).CombinedOutput(); err != nil {
-		return "", fmt.Errorf("docker cp: %s: %w", string(out), err)
-	}
-
-	// Remove the temporary container.
-	exec.CommandContext(ctx, "docker", "rm", containerName).Run()
-
 	slog.Info("exported image to directory", "image", imageRef, "dir", appDir)
 	return appDir, nil
 }

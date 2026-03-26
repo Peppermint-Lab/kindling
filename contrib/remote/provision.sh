@@ -1,24 +1,12 @@
 #!/usr/bin/env bash
-# Provision the remote dev server for Kindling.
+# Provision the remote dev server for Kindling (after host deps are installed).
 # Run once: make remote-provision
+#
+# Host packages + Postgres + Cloud Hypervisor: contrib/install-host-deps.sh --all
+# (Makefile runs that via scp + ssh before this script.)
 set -euo pipefail
 
-echo "=== Kindling dev server provisioning ==="
-
-# System packages
-sudo apt-get update
-sudo apt-get install -y \
-  build-essential \
-  curl \
-  git \
-  jq \
-  qemu-utils \
-  libguestfs-tools \
-  skopeo \
-  umoci \
-  iptables \
-  iproute2 \
-  postgresql-client
+echo "=== Kindling dev server provisioning (Go + firmware + kernel) ==="
 
 # Go (latest stable)
 GO_VERSION="1.24.4"
@@ -30,39 +18,16 @@ if ! go version 2>/dev/null | grep -q "$GO_VERSION"; then
 fi
 echo "Go: $(go version)"
 
-# Docker
-if ! docker version &>/dev/null; then
-  echo "Installing Docker..."
-  curl -fsSL https://get.docker.com | sh
-  sudo usermod -aG docker "$USER"
-fi
-echo "Docker: $(docker --version)"
-
-# Cloud Hypervisor
-CH_VERSION="v44.0"
-if ! cloud-hypervisor --version 2>/dev/null | grep -q "$CH_VERSION"; then
-  echo "Installing Cloud Hypervisor $CH_VERSION..."
-  curl -fsSL "https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/${CH_VERSION}/cloud-hypervisor-static" \
-    -o /tmp/cloud-hypervisor
-  chmod +x /tmp/cloud-hypervisor
-  sudo mv /tmp/cloud-hypervisor /usr/local/bin/cloud-hypervisor
-fi
-# cloud-hypervisor opens/configures TAP devices; CAP_NET_ADMIN is not inherited from kindling.
-sudo setcap cap_net_admin+ep /usr/local/bin/cloud-hypervisor 2>/dev/null || true
-echo "Cloud Hypervisor: $(cloud-hypervisor --version)"
-
-# Create data directories (before downloading anything)
+# Kernel/firmware for Cloud Hypervisor
 sudo mkdir -p /data/base /data/work
 sudo chown -R "$USER:$USER" /data
 
-# Kernel/firmware for Cloud Hypervisor
 if [ ! -f /data/vmlinuz.bin ]; then
   echo "Downloading hypervisor firmware..."
   curl -fsSL "https://github.com/cloud-hypervisor/rust-hypervisor-firmware/releases/download/0.4.2/hypervisor-fw" \
     -o /data/vmlinuz.bin
 fi
 
-# Also build a proper kernel for full OS support (runs in background)
 if [ ! -f /data/vmlinux-ch.bin ]; then
   echo "Building Cloud Hypervisor kernel (background)..."
   (
@@ -78,23 +43,6 @@ if [ ! -f /data/vmlinux-ch.bin ]; then
   echo "Check with: ls -la /data/vmlinux-ch.bin"
 fi
 
-# PostgreSQL (via Docker)
-if ! docker ps | grep -q kindling-postgres; then
-  echo "Starting PostgreSQL..."
-  docker run -d \
-    --name kindling-postgres \
-    --restart unless-stopped \
-    -p 5432:5432 \
-    -e POSTGRES_DB=kindling \
-    -e POSTGRES_USER=kindling \
-    -e POSTGRES_PASSWORD=kindling \
-    -v kindling-pgdata:/var/lib/postgresql/data \
-    postgres:17 \
-    postgres -c wal_level=logical -c max_replication_slots=10 -c max_wal_senders=10
-fi
-
-# libguestfs (virt-make-fs for microVM rootfs) copies /boot/vmlinuz; Ubuntu ships
-# it mode 0600 so non-root kindling users need world-read on kernel images.
 if ls /boot/vmlinuz-* &>/dev/null; then
   sudo chmod a+r /boot/vmlinuz-* || true
 fi
@@ -102,8 +50,8 @@ fi
 echo ""
 echo "=== Provisioning complete ==="
 echo "PostgreSQL: postgres://kindling:kindling@localhost:5432/kindling"
-echo "Cloud Hypervisor: $(cloud-hypervisor --version)"
+echo "Cloud Hypervisor: $(cloud-hypervisor --version 2>/dev/null || echo 'n/a — run install-host-deps.sh --all')"
 echo "Ready to run: make dev-up"
 echo "Bare metal: after go build, run: sudo setcap cap_net_admin+ep bin/kindling"
 echo "  (so cloud-hypervisor can create TAP devices as non-root.)"
-echo "Optional: export KINDLING_RUNTIME=crun to use Docker even when KVM is present."
+echo "Optional: export KINDLING_RUNTIME=crun to force crun instead of cloud-hypervisor when KVM is present."

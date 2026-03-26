@@ -1,11 +1,11 @@
 .PHONY: build dev db db-down migrate sqlc vet clean \
-       remote-provision remote-sync remote-build remote-initramfs remote-run \
+       install-deps remote-provision remote-sync remote-build remote-initramfs remote-run \
        dev-up dev-down
 
 DATABASE_URL ?= postgres://kindling:kindling@localhost:5432/kindling?sslmode=disable
 REMOTE_HOST ?= kindling-dev
 REMOTE_DIR ?= /home/ubuntu/kindling
-# Optional: public IP or DNS of the host so API/dashboard show a browser-openable runtime_url (docker/crun publish 0.0.0.0:port).
+# Optional: public IP or DNS of the host so API/dashboard show a browser-openable runtime_url (crun/cloud-hypervisor publish 0.0.0.0:port).
 KINDLING_RUNTIME_ADVERTISE_HOST ?=
 
 # === Local ===
@@ -53,36 +53,17 @@ kernel-build:
 	@rm -f $(KINDLING_DATA)/vmlinuz.bin
 	@bash scripts/build-kernel.sh
 
-# Build initramfs with guest agent (cross-compile for Linux)
+# Build initramfs with guest agent (requires GNU cpio; see scripts/build-initramfs-local.sh)
 initramfs:
-	@mkdir -p $(KINDLING_DATA)
-	@GOARCH_TARGET="amd64"; \
-	if [ "$$(uname -m)" = "arm64" ]; then GOARCH_TARGET="arm64"; fi; \
-	echo "Cross-compiling guest agent for Linux/$$GOARCH_TARGET..."; \
-	CGO_ENABLED=0 GOOS=linux GOARCH=$$GOARCH_TARGET go build -o /tmp/kindling-init ./cmd/guest-agent
-	@echo "Building initramfs via Docker..."
-	@PLATFORM="linux/amd64"; \
-	if [ "$$(uname -m)" = "arm64" ]; then PLATFORM="linux/arm64"; fi; \
-	docker run --rm --platform $$PLATFORM -v /tmp/kindling-init:/init:ro -v $(KINDLING_DATA):/out alpine:3.21 sh -c '\
-		apk add --no-cache cpio busybox-static && \
-		mkdir -p /rootfs/bin /rootfs/sbin /rootfs/etc /rootfs/proc /rootfs/sys /rootfs/dev /rootfs/tmp /rootfs/app /rootfs/usr/bin /rootfs/usr/sbin && \
-		cp /init /rootfs/init && chmod +x /rootfs/init && \
-		cp /bin/busybox.static /rootfs/bin/busybox && chmod +x /rootfs/bin/busybox && \
-		for cmd in sh ip ifconfig route ping cat ls mkdir mount umount; do \
-			ln -sf busybox /rootfs/bin/$$cmd; \
-		done && \
-		echo "nameserver 8.8.8.8" > /rootfs/etc/resolv.conf && \
-		cd /rootfs && find . | cpio -o -H newc 2>/dev/null | gzip > /out/initramfs.cpio.gz'
-	@rm -f /tmp/kindling-init
-	@echo "Initramfs built: $(KINDLING_DATA)/initramfs.cpio.gz"
+	@bash scripts/build-initramfs-local.sh
 
-# Start local Postgres
+# Start local Postgres (see contrib/dev-postgres.sh; no Docker required)
 db:
-	docker compose up -d postgres
+	@bash contrib/dev-postgres.sh start
 
 # Stop local Postgres
 db-down:
-	docker compose down
+	@bash contrib/dev-postgres.sh stop
 
 # Run schema migration
 migrate:
@@ -102,8 +83,14 @@ clean:
 
 # === Remote Dev (OVH) ===
 
-# One-time: provision the remote server
+# Local macOS/Linux dev: Homebrew (Darwin) or prints sudo command (Linux) — see contrib/install-host-deps.sh
+install-deps:
+	@bash contrib/install-host-deps.sh
+
+# One-time: install host deps on remote, then provision Go/firmware/kernel
 remote-provision:
+	scp contrib/install-host-deps.sh $(REMOTE_HOST):/tmp/kindling-install-host-deps.sh
+	ssh $(REMOTE_HOST) 'sudo bash /tmp/kindling-install-host-deps.sh --all'
 	ssh $(REMOTE_HOST) 'bash -s' < contrib/remote/provision.sh
 
 # Sync code to remote
