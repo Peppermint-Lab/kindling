@@ -1,4 +1,5 @@
 .PHONY: build dev db db-down migrate sqlc vet clean \
+       landing-dev landing-build \
        install-deps remote-provision remote-sync remote-build remote-initramfs remote-run \
        dev-up dev-down
 
@@ -80,6 +81,14 @@ vet:
 # Clean build artifacts
 clean:
 	rm -rf bin/
+
+# === Landing Page ===
+
+landing-dev:
+	@cd web/landing && npx vite --port 5174
+
+landing-build:
+	@cd web/landing && npm run build
 
 # === Remote Dev (OVH) ===
 
