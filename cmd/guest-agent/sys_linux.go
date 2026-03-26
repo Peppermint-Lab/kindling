@@ -6,6 +6,8 @@ import (
 	"syscall"
 )
 
+var defaultAppRootCandidates = []string{"/app", "/mnt/rootfs", "/mnt/rootfs/rootfs"}
+
 func mountEssentialFS() {
 	// Set PATH first so ip/sh are found.
 	os.Setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin")
@@ -53,11 +55,15 @@ func setHostname(name string) {
 }
 
 func chrootIntoApp() {
-	if _, err := os.Stat("/app/bin/sh"); err != nil {
+	if root := mountDiskRootfs(); root != "" {
+		log.Printf("mounted block device rootfs at %s", root)
+	}
+	root := resolveAppRoot(defaultAppRootCandidates, pathExistsMap(defaultAppRootCandidates))
+	if root == "" {
 		return
 	}
-	log.Println("chrooting into container rootfs at /app")
-	if err := syscall.Chroot("/app"); err != nil {
+	log.Printf("chrooting into container rootfs at %s", root)
+	if err := syscall.Chroot(root); err != nil {
 		log.Printf("chroot failed: %v", err)
 		return
 	}
@@ -70,4 +76,41 @@ func chrootIntoApp() {
 	syscall.Mount("sysfs", "/sys", "sysfs", 0, "")
 	syscall.Mount("devtmpfs", "/dev", "devtmpfs", 0, "")
 	syscall.Mount("tmpfs", "/tmp", "tmpfs", 0, "")
+}
+
+func mountDiskRootfs() string {
+	const mountPoint = "/mnt/rootfs"
+	os.MkdirAll("/mnt", 0o755)
+	os.MkdirAll(mountPoint, 0o755)
+
+	for _, dev := range []string{"/dev/vda", "/dev/vda1"} {
+		if err := syscall.Mount(dev, mountPoint, "ext4", 0, ""); err != nil {
+			continue
+		}
+		root := resolveAppRoot([]string{mountPoint, mountPoint + "/rootfs"}, pathExistsMap([]string{mountPoint, mountPoint + "/rootfs"}))
+		if root != "" {
+			return root
+		}
+		_ = syscall.Unmount(mountPoint, 0)
+	}
+	return ""
+}
+
+func pathExistsMap(candidates []string) map[string]bool {
+	out := make(map[string]bool, len(candidates))
+	for _, root := range candidates {
+		if _, err := os.Stat(root + "/bin/sh"); err == nil {
+			out[root+"/bin/sh"] = true
+		}
+	}
+	return out
+}
+
+func resolveAppRoot(candidates []string, exists map[string]bool) string {
+	for _, root := range candidates {
+		if exists[root+"/bin/sh"] {
+			return root
+		}
+	}
+	return ""
 }

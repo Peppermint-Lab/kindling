@@ -43,7 +43,7 @@ docker run --rm \
     if [ "$TARGET_ARCH" = "arm64" ]; then
       make defconfig
     else
-      make defconfig
+      make ch_defconfig
     fi
 
     # Enable virtio and vsock
@@ -100,8 +100,8 @@ docker run --rm \
       make -j$(nproc) Image
       cp arch/arm64/boot/Image /out/vmlinuz.bin
     else
-      make -j$(nproc) vmlinux
-      cp vmlinux /out/vmlinuz.bin
+      KCFLAGS="-Wa,-mx86-used-note=no" make -j$(nproc) bzImage
+      cp arch/x86/boot/compressed/vmlinux.bin /out/vmlinuz.bin
     fi
     echo ""
     echo "Kernel built: /out/vmlinuz.bin ($(du -h /out/vmlinuz.bin | cut -f1))"

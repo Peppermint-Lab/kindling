@@ -1,0 +1,48 @@
+//go:build linux
+
+package runtime
+
+import (
+	"testing"
+
+	"github.com/google/uuid"
+)
+
+func TestCloudHypervisorIPsAllocatesPointToPointPairs(t *testing.T) {
+	host0, guest0, err := cloudHypervisorIPs(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host0 != "10.0.0.0" || guest0 != "10.0.0.1/31" {
+		t.Fatalf("slot 0 = (%q, %q), want (10.0.0.0, 10.0.0.1/31)", host0, guest0)
+	}
+
+	host1, guest1, err := cloudHypervisorIPs(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host1 != "10.0.0.2" || guest1 != "10.0.0.3/31" {
+		t.Fatalf("slot 1 = (%q, %q), want (10.0.0.2, 10.0.0.3/31)", host1, guest1)
+	}
+}
+
+func TestCloudHypervisorTapNameUsesDeploymentID(t *testing.T) {
+	id1 := mustUUID("11111111-2222-3333-4444-555555555555")
+	id2 := mustUUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+	got1 := cloudHypervisorTapName(id1, 0)
+	got2 := cloudHypervisorTapName(id2, 0)
+	if got1 == got2 {
+		t.Fatalf("tap names should differ across deployments: %q", got1)
+	}
+	if len(got1) > 15 || len(got2) > 15 {
+		t.Fatalf("tap names must fit Linux interface limit: %q %q", got1, got2)
+	}
+}
+
+func mustUUID(s string) uuid.UUID {
+	id, err := uuid.Parse(s)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}

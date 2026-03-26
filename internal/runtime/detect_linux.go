@@ -5,16 +5,19 @@ package runtime
 import (
 	"log/slog"
 	"os"
+	"os/exec"
 )
 
 // NewDetectedRuntime returns the best runtime for this host.
-// On Linux with KVM, we still use crun/docker today: Cloud Hypervisor is managed
-// via internal/vmm and not yet wired to this Runtime interface.
-// Native crun uses host networking (see patchBundleHostNetwork) and an ephemeral
-// loopback port so reachable.runtime_url matches curl from the host like docker -p / Apple VZ.
+// On Linux with KVM and Cloud Hypervisor installed, prefer a microVM runtime.
+// Fall back to crun/docker when prerequisites are missing.
 func NewDetectedRuntime() Runtime {
 	if _, err := os.Stat("/dev/kvm"); err == nil {
-		slog.Info("KVM available; deploy runtime still uses crun/docker until cloud-hypervisor implements Runtime")
+		if _, err := exec.LookPath("cloud-hypervisor"); err == nil {
+			slog.Info("KVM + cloud-hypervisor detected, using cloud-hypervisor runtime")
+			return NewCloudHypervisorRuntime()
+		}
+		slog.Info("KVM available but cloud-hypervisor missing, falling back to crun/docker")
 	}
 	return NewCrunRuntime()
 }
