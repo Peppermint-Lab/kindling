@@ -240,3 +240,19 @@ func (r *CrunRuntime) StopAll() {
 		ci.cancel()
 	}
 }
+
+// ResourceStats implements Runtime (host /proc metrics for the crun child).
+func (r *CrunRuntime) ResourceStats(ctx context.Context, id uuid.UUID) (ResourceStats, error) {
+	_ = ctx
+	r.mu.Lock()
+	ci, ok := r.instances[id]
+	r.mu.Unlock()
+	if !ok || ci.cmd == nil || ci.cmd.Process == nil {
+		return ResourceStats{}, ErrInstanceNotRunning
+	}
+	stats, err := LinuxPIDResourceStats(ci.cmd.Process.Pid)
+	if err != nil {
+		return ResourceStats{}, err
+	}
+	return stats, nil
+}

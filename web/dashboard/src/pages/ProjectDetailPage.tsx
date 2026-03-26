@@ -7,6 +7,8 @@ import {
   type GitHubSetup,
   type GitHead,
   type ProjectDomain,
+  type UsageCurrent,
+  type UsageHistory,
   APIError,
 } from "@/lib/api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -34,6 +36,7 @@ import {
   LayoutListIcon,
   CloudDownloadIcon,
   GlobeIcon,
+  BarChart3Icon,
 } from "lucide-react"
 import { DeploymentReachability } from "@/components/deployment-reachability"
 import { phaseLabel, phaseVariant } from "@/lib/deploy-badge"
@@ -45,6 +48,41 @@ async function copyText(label: string, text: string) {
   } catch {
     console.warn("clipboard failed", label)
   }
+}
+
+function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "0 B"
+  const u = ["B", "KB", "MB", "GB", "TB"]
+  let v = n
+  let i = 0
+  while (v >= 1024 && i < u.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v.toFixed(i === 0 ? 0 : 1)} ${u[i]}`
+}
+
+function MiniBars({ values, label }: { values: number[]; label?: string }) {
+  const max = Math.max(1, ...values)
+  return (
+    <div>
+      {label != null && label !== "" ? <p className="text-xs text-muted-foreground mb-2">{label}</p> : null}
+      <div className="flex items-end gap-px h-20 w-full border rounded-md p-2 bg-muted/20">
+        {values.length === 0 ? (
+          <p className="text-xs text-muted-foreground w-full text-center self-center">No data yet</p>
+        ) : (
+          values.map((v, i) => (
+            <div
+              key={i}
+              className="flex-1 min-w-[2px] bg-primary/70 rounded-t-sm transition-[height]"
+              style={{ height: `${Math.max(6, (v / max) * 100)}%` }}
+              title={String(v)}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  )
 }
 
 export function ProjectDetailPage() {
@@ -78,6 +116,36 @@ export function ProjectDetailPage() {
   const [newDomainName, setNewDomainName] = useState("")
   const [domainSaving, setDomainSaving] = useState(false)
   const [verifyingId, setVerifyingId] = useState<string | null>(null)
+
+  const [mainTab, setMainTab] = useState("overview")
+  const [usageCurrent, setUsageCurrent] = useState<UsageCurrent | null>(null)
+  const [usageHistory, setUsageHistory] = useState<UsageHistory | null>(null)
+  const [usageLoading, setUsageLoading] = useState(false)
+  const [usageWindow, setUsageWindow] = useState<"1h" | "24h" | "7d">("24h")
+
+  const loadUsage = useCallback(async () => {
+    if (!id) return
+    setUsageLoading(true)
+    try {
+      const [c, h] = await Promise.all([
+        api.getProjectUsageCurrent(id),
+        api.getProjectUsageHistory(id, usageWindow),
+      ])
+      setUsageCurrent(c)
+      setUsageHistory(h)
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not load usage")
+      setUsageCurrent(null)
+      setUsageHistory(null)
+    } finally {
+      setUsageLoading(false)
+    }
+  }, [id, usageWindow])
+
+  useEffect(() => {
+    if (!id || mainTab !== "usage") return
+    void loadUsage()
+  }, [id, mainTab, loadUsage])
 
   const loadGitHubSetup = useCallback(async (projectId: string, hasRepo: boolean) => {
     if (!hasRepo) {
@@ -331,7 +399,7 @@ export function ProjectDetailPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="overview" className="min-w-0">
+      <Tabs value={mainTab} onValueChange={setMainTab} className="min-w-0">
         <TabsList variant="line" className="w-full min-w-0 max-w-full justify-start overflow-x-auto">
           <TabsTrigger value="overview" className="shrink-0">
             Overview
@@ -343,6 +411,10 @@ export function ProjectDetailPage() {
           <TabsTrigger value="deployments" className="shrink-0">
             <LayoutListIcon className="size-4" />
             Deployments
+          </TabsTrigger>
+          <TabsTrigger value="usage" className="shrink-0">
+            <BarChart3Icon className="size-4" />
+            Usage
           </TabsTrigger>
           <TabsTrigger value="domains" className="shrink-0">
             <GlobeIcon className="size-4" />
@@ -812,6 +884,153 @@ export function ProjectDetailPage() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="usage" className="mt-4 space-y-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-muted-foreground max-w-xl">
+              CPU, memory, and disk from workload instances; HTTP requests and edge traffic require TLS edge on :443.
+              History resolution is per-minute.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              {(["1h", "24h", "7d"] as const).map((w) => (
+                <Button
+                  key={w}
+                  type="button"
+                  size="sm"
+                  variant={usageWindow === w ? "default" : "outline"}
+                  onClick={() => setUsageWindow(w)}
+                >
+                  {w === "7d" ? "7d" : w}
+                </Button>
+              ))}
+              <Button type="button" size="sm" variant="secondary" onClick={() => void loadUsage()} disabled={usageLoading}>
+                <RefreshCwIcon className={`mr-2 size-4 ${usageLoading ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+            </div>
+          </div>
+
+          {usageLoading && !usageCurrent ? (
+            <div className="space-y-3">
+              <Skeleton className="h-24 rounded-xl" />
+              <Skeleton className="h-40 rounded-xl" />
+            </div>
+          ) : usageCurrent ? (
+            <>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">Avg CPU (instances)</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-2xl font-semibold tabular-nums">
+                      {usageCurrent.summary.cpu_percent_avg != null
+                        ? `${usageCurrent.summary.cpu_percent_avg.toFixed(1)}%`
+                        : "—"}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">Memory (RSS total)</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-2xl font-semibold tabular-nums">
+                      {formatBytes(usageCurrent.summary.memory_rss_bytes_total)}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">HTTP (15m, edge)</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-1 text-sm">
+                    <p>
+                      <span className="text-muted-foreground">Requests:</span>{" "}
+                      <span className="font-mono">{usageCurrent.summary.http_requests_15m}</span>
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      2xx/3xx: <span className="font-mono text-foreground">{usageCurrent.summary.http_status_2xx_15m}</span>{" "}
+                      · 4xx: <span className="font-mono text-foreground">{usageCurrent.summary.http_status_4xx_15m}</span>{" "}
+                      · 5xx: <span className="font-mono text-foreground">{usageCurrent.summary.http_status_5xx_15m}</span>
+                    </p>
+                    <p className="text-xs">
+                      In: {formatBytes(usageCurrent.summary.http_bytes_in_15m)} · Out:{" "}
+                      {formatBytes(usageCurrent.summary.http_bytes_out_15m)}
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {usageCurrent.instances.length > 0 ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Instances</CardTitle>
+                    <CardDescription>Latest sample per replica (last ~2h).</CardDescription>
+                  </CardHeader>
+                  <CardContent className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b text-left text-muted-foreground">
+                          <th className="py-2 pr-4 font-medium">Instance</th>
+                          <th className="py-2 pr-4 font-medium">Runtime</th>
+                          <th className="py-2 pr-4 font-medium">CPU %</th>
+                          <th className="py-2 pr-4 font-medium">RSS</th>
+                          <th className="py-2 pr-4 font-medium">Disk R/W</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {usageCurrent.instances.map((row) => (
+                          <tr key={row.deployment_instance_id} className="border-b border-border/60">
+                            <td className="py-2 pr-4 font-mono text-xs">{row.deployment_instance_id.slice(0, 8)}…</td>
+                            <td className="py-2 pr-4">{row.source}</td>
+                            <td className="py-2 pr-4 tabular-nums">{row.cpu_percent != null ? `${row.cpu_percent.toFixed(1)}%` : "—"}</td>
+                            <td className="py-2 pr-4 tabular-nums">{formatBytes(row.memory_rss_bytes)}</td>
+                            <td className="py-2 pr-4 text-xs tabular-nums text-muted-foreground">
+                              {formatBytes(row.disk_read_bytes)} / {formatBytes(row.disk_write_bytes)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </CardContent>
+                </Card>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No usage samples yet. Start a deployment on this server; metrics collect every ~15s.
+                </p>
+              )}
+
+              {usageHistory ? (
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Memory (max / minute)</CardTitle>
+                      <CardDescription>Window: {usageHistory.window}</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <MiniBars
+                        label="RSS peak per bucket"
+                        values={usageHistory.resource.map((x) => x.memory_rss_bytes_max)}
+                      />
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">HTTP requests / minute</CardTitle>
+                      <CardDescription>Aggregated across Kindling edge servers</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <MiniBars label="Requests" values={usageHistory.http.map((h) => h.request_count)} />
+                    </CardContent>
+                  </Card>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">Open this tab to load usage.</p>
+          )}
         </TabsContent>
       </Tabs>
 

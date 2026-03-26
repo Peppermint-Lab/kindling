@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/caddyserver/certmagic"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -59,6 +61,9 @@ type Config struct {
 
 	// APIBackend is the http://127.0.0.1:port origin for the control plane proxy.
 	APIBackend *url.URL
+
+	// ServerID identifies this kindling host for usage rollups (HTTP metrics).
+	ServerID uuid.UUID
 }
 
 // Backend is one upstream target (IP:port) for a hostname.
@@ -70,6 +75,7 @@ type Backend struct {
 // Route represents routing information for a domain.
 type Route struct {
 	ProjectID          pgtype.UUID
+	DeploymentID       pgtype.UUID
 	Backends           []Backend
 	RedirectTo         string
 	RedirectStatusCode int32
@@ -105,6 +111,7 @@ type Service struct {
 	cancel            context.CancelFunc
 	coldStartTimeout  time.Duration
 	httpsWriteTimeout time.Duration
+	serverID          pgtype.UUID
 }
 
 // New creates a new edge proxy service.
@@ -163,6 +170,7 @@ func New(cfg Config) (*Service, error) {
 	}
 
 	cfg.ControlPlaneHosts = cpHosts
+	sid := pgtype.UUID{Bytes: cfg.ServerID, Valid: cfg.ServerID != uuid.Nil}
 	s := &Service{
 		cfg:               cfg,
 		q:                 q,
@@ -170,6 +178,7 @@ func New(cfg Config) (*Service, error) {
 		routes:            make(map[string]Route),
 		coldStartTimeout:  cold,
 		httpsWriteTimeout: httpsWT,
+		serverID:          sid,
 	}
 
 	s.httpServer = &http.Server{
@@ -246,11 +255,13 @@ func (s *Service) loadRoutes(ctx context.Context) error {
 	proxySeen := make(map[string]map[string]struct{})
 	proxyBackends := make(map[string][]Backend)
 	proxyProjectID := make(map[string]pgtype.UUID)
+	proxyDeploymentID := make(map[string]pgtype.UUID)
 
 	for _, row := range rows {
 		if row.RedirectTo.Valid {
 			redirects[row.DomainName] = Route{
 				ProjectID:          row.ProjectID,
+				DeploymentID:       row.DeploymentID,
 				RedirectTo:         row.RedirectTo.String,
 				RedirectStatusCode: row.RedirectStatusCode.Int32,
 			}
@@ -277,6 +288,7 @@ func (s *Service) loadRoutes(ctx context.Context) error {
 			Port: row.VmPort.Int32,
 		})
 		proxyProjectID[row.DomainName] = row.ProjectID
+		proxyDeploymentID[row.DomainName] = row.DeploymentID
 	}
 
 	newRoutes := make(map[string]Route)
@@ -290,7 +302,11 @@ func (s *Service) loadRoutes(ctx context.Context) error {
 		if len(bes) == 0 {
 			continue
 		}
-		newRoutes[domain] = Route{Backends: bes, ProjectID: proxyProjectID[domain]}
+		newRoutes[domain] = Route{
+			Backends:     bes,
+			ProjectID:    proxyProjectID[domain],
+			DeploymentID: proxyDeploymentID[domain],
+		}
 	}
 
 	s.mu.Lock()
@@ -495,6 +511,12 @@ func (s *Service) reverseProxy(w http.ResponseWriter, r *http.Request, host stri
 		return
 	}
 
+	var inBytes int64
+	if r.Body != nil {
+		r.Body = &countReadCloser{ReadCloser: r.Body, n: &inBytes}
+	}
+	mw := &meteredResponseWriter{ResponseWriter: w}
+
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
@@ -505,7 +527,10 @@ func (s *Service) reverseProxy(w http.ResponseWriter, r *http.Request, host stri
 		req.Header.Set("X-Real-IP", r.RemoteAddr)
 	}
 	projID := route.ProjectID
+	depID := route.DeploymentID
+	statusCaptured := 0
 	proxy.ModifyResponse = func(resp *http.Response) error {
+		statusCaptured = resp.StatusCode
 		resp.Header.Set("Server", "Kindling")
 		if projID.Valid && resp.StatusCode < 500 {
 			if err := s.q.ProjectUpdateLastRequestAt(resp.Request.Context(), projID); err != nil {
@@ -538,5 +563,77 @@ func (s *Service) reverseProxy(w http.ResponseWriter, r *http.Request, host stri
 		s.reverseProxy(w, r.WithContext(ctx), host, newRoute)
 	}
 
-	proxy.ServeHTTP(w, r)
+	proxy.ServeHTTP(mw, r)
+
+	if statusCaptured == 0 {
+		return // Retry path or abandoned request; inner reverseProxy records if applicable.
+	}
+	if !s.serverID.Valid || !projID.Valid || !depID.Valid {
+		return
+	}
+	go s.recordAppHTTPUsage(context.Background(), projID, depID, statusCaptured, inBytes, mw.n)
+}
+
+type meteredResponseWriter struct {
+	http.ResponseWriter
+	n int64
+}
+
+func (m *meteredResponseWriter) Write(b []byte) (int, error) {
+	nn, err := m.ResponseWriter.Write(b)
+	m.n += int64(nn)
+	return nn, err
+}
+
+func (m *meteredResponseWriter) Unwrap() http.ResponseWriter {
+	return m.ResponseWriter
+}
+
+func (m *meteredResponseWriter) Flush() {
+	if f, ok := m.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+type countReadCloser struct {
+	io.ReadCloser
+	n *int64
+}
+
+func (c *countReadCloser) Read(p []byte) (int, error) {
+	nn, err := c.ReadCloser.Read(p)
+	*c.n += int64(nn)
+	return nn, err
+}
+
+func (s *Service) recordAppHTTPUsage(
+	ctx context.Context,
+	projectID, deploymentID pgtype.UUID,
+	statusCode int,
+	bytesIn, bytesOut int64,
+) {
+	var n2, n4, n5 int64
+	switch {
+	case statusCode >= 200 && statusCode < 400:
+		n2 = 1
+	case statusCode >= 400 && statusCode < 500:
+		n4 = 1
+	default:
+		n5 = 1
+	}
+	bucket := time.Now().UTC().Truncate(time.Minute)
+	if err := s.q.ProjectHTTPUsageRollupIncrement(ctx, queries.ProjectHTTPUsageRollupIncrementParams{
+		ServerID:     s.serverID,
+		ProjectID:    projectID,
+		DeploymentID: deploymentID,
+		BucketStart:  pgtype.Timestamptz{Time: bucket, Valid: true},
+		RequestCount: 1,
+		Status2xx:    n2,
+		Status4xx:    n4,
+		Status5xx:    n5,
+		BytesIn:      bytesIn,
+		BytesOut:     bytesOut,
+	}); err != nil && ctx.Err() == nil {
+		slog.Warn("ProjectHTTPUsageRollupIncrement", "error", err)
+	}
 }

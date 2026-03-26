@@ -81,8 +81,12 @@ func main() {
 	// Start log streaming to host.
 	logWriter := startLogStream()
 
+	appRef := &appRef{}
+	startStatsServer(appRef)
+
 	// Find and start the user's app.
 	appCmd := startApp(cfg.Env, logWriter)
+	appRef.set(appCmd)
 	if appCmd == nil {
 		log.Println("no application found, idling")
 		select {} // block forever

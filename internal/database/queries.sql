@@ -479,6 +479,7 @@ WHERE d.domain_name = $1 AND d.verified_at IS NOT NULL;
 -- name: RouteFindActive :many
 SELECT d.domain_name,
        d.project_id,
+       d.deployment_id,
        d.redirect_to,
        d.redirect_status_code,
        v.ip_address AS vm_ip,
@@ -622,3 +623,95 @@ SET display_label = $2,
     updated_at = NOW()
 WHERE id = $1 AND organization_id = $6
 RETURNING *;
+
+-- Usage metrics --
+
+-- name: InstanceUsageSampleInsert :exec
+INSERT INTO instance_usage_samples (
+    id, server_id, project_id, deployment_id, deployment_instance_id,
+    sampled_at, cpu_nanos_cumulative, cpu_percent, memory_rss_bytes, disk_read_bytes, disk_write_bytes, source
+) VALUES (
+    $1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9, $10, $11
+);
+
+-- name: DeploymentInstancesRunningForUsageOnServer :many
+SELECT
+    di.id,
+    di.deployment_id,
+    d.project_id
+FROM deployment_instances di
+INNER JOIN deployments d ON d.id = di.deployment_id AND d.deleted_at IS NULL
+WHERE di.server_id = $1
+  AND di.deleted_at IS NULL
+  AND di.status = 'running'
+  AND di.vm_id IS NOT NULL;
+
+-- name: InstanceUsageLatestPerInstance :many
+SELECT DISTINCT ON (deployment_instance_id)
+    deployment_instance_id,
+    sampled_at,
+    cpu_nanos_cumulative,
+    cpu_percent,
+    memory_rss_bytes,
+    disk_read_bytes,
+    disk_write_bytes,
+    source,
+    server_id
+FROM instance_usage_samples
+WHERE project_id = $1
+  AND sampled_at >= $2
+ORDER BY deployment_instance_id, sampled_at DESC;
+
+-- name: InstanceUsageLastBefore :one
+SELECT sampled_at, cpu_nanos_cumulative
+FROM instance_usage_samples
+WHERE deployment_instance_id = $1
+  AND sampled_at < $2
+ORDER BY sampled_at DESC
+LIMIT 1;
+
+-- name: InstanceUsageSamplesByProjectWindow :many
+SELECT
+    date_trunc('minute', sampled_at)::timestamptz AS bucket_start,
+    COALESCE(MAX(memory_rss_bytes), 0)::bigint AS memory_rss_bytes_max,
+    COALESCE(AVG(cpu_percent), 0)::float8 AS cpu_percent_avg
+FROM instance_usage_samples
+WHERE project_id = $1
+  AND sampled_at >= $2
+  AND sampled_at <= $3
+GROUP BY 1
+ORDER BY 1 ASC;
+
+-- name: ProjectHTTPUsageRollupIncrement :exec
+INSERT INTO project_http_usage_rollups (
+    id, server_id, project_id, deployment_id, bucket_start,
+    request_count, status_2xx, status_4xx, status_5xx, bytes_in, bytes_out, updated_at
+) VALUES (
+    gen_random_uuid(), $1, $2, $3, $4,
+    $5, $6, $7, $8, $9, $10, NOW()
+)
+ON CONFLICT (server_id, project_id, deployment_id, bucket_start)
+DO UPDATE SET
+    request_count = project_http_usage_rollups.request_count + EXCLUDED.request_count,
+    status_2xx = project_http_usage_rollups.status_2xx + EXCLUDED.status_2xx,
+    status_4xx = project_http_usage_rollups.status_4xx + EXCLUDED.status_4xx,
+    status_5xx = project_http_usage_rollups.status_5xx + EXCLUDED.status_5xx,
+    bytes_in = project_http_usage_rollups.bytes_in + EXCLUDED.bytes_in,
+    bytes_out = project_http_usage_rollups.bytes_out + EXCLUDED.bytes_out,
+    updated_at = NOW();
+
+-- name: ProjectHTTPUsageRollupsAggregated :many
+SELECT
+    bucket_start,
+    COALESCE(SUM(request_count), 0)::bigint AS request_count,
+    COALESCE(SUM(status_2xx), 0)::bigint AS status_2xx,
+    COALESCE(SUM(status_4xx), 0)::bigint AS status_4xx,
+    COALESCE(SUM(status_5xx), 0)::bigint AS status_5xx,
+    COALESCE(SUM(bytes_in), 0)::bigint AS bytes_in,
+    COALESCE(SUM(bytes_out), 0)::bigint AS bytes_out
+FROM project_http_usage_rollups
+WHERE project_id = $1
+  AND bucket_start >= $2
+  AND bucket_start <= $3
+GROUP BY bucket_start
+ORDER BY bucket_start ASC;

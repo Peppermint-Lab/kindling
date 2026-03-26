@@ -344,6 +344,56 @@ CREATE TABLE IF NOT EXISTS cluster_secrets (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Polled resource usage per deployment instance (control plane / workload server)
+CREATE TABLE IF NOT EXISTS instance_usage_samples (
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    server_id               UUID NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    project_id              UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    deployment_id           UUID NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+    deployment_instance_id  UUID NOT NULL REFERENCES deployment_instances(id) ON DELETE CASCADE,
+    sampled_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    cpu_nanos_cumulative    BIGINT NOT NULL DEFAULT 0,
+    cpu_percent             DOUBLE PRECISION,
+    memory_rss_bytes        BIGINT NOT NULL DEFAULT 0,
+    disk_read_bytes         BIGINT NOT NULL DEFAULT 0,
+    disk_write_bytes        BIGINT NOT NULL DEFAULT 0,
+    source                  TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_instance_usage_samples_project_time
+    ON instance_usage_samples (project_id, sampled_at DESC);
+CREATE INDEX IF NOT EXISTS idx_instance_usage_samples_instance_time
+    ON instance_usage_samples (deployment_instance_id, sampled_at DESC);
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'instance_usage_samples' AND column_name = 'cpu_percent'
+    ) THEN
+        ALTER TABLE instance_usage_samples ADD COLUMN cpu_percent DOUBLE PRECISION;
+    END IF;
+END $$;
+
+-- Edge proxy HTTP traffic rollups (one row per server × project × deployment × minute)
+CREATE TABLE IF NOT EXISTS project_http_usage_rollups (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    server_id       UUID NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    project_id      UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    deployment_id UUID NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+    bucket_start    TIMESTAMPTZ NOT NULL,
+    request_count   BIGINT NOT NULL DEFAULT 0,
+    status_2xx      BIGINT NOT NULL DEFAULT 0,
+    status_4xx      BIGINT NOT NULL DEFAULT 0,
+    status_5xx      BIGINT NOT NULL DEFAULT 0,
+    bytes_in        BIGINT NOT NULL DEFAULT 0,
+    bytes_out       BIGINT NOT NULL DEFAULT 0,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (server_id, project_id, deployment_id, bucket_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_http_rollups_project_bucket
+    ON project_http_usage_rollups (project_id, bucket_start DESC);
+
 -- Existing deployments: add projects.org_id, backfill to bootstrap org, enforce NOT NULL
 DO $$
 DECLARE
@@ -407,3 +457,5 @@ CREATE INDEX IF NOT EXISTS idx_domains_project_id ON domains(project_id);
 CREATE INDEX IF NOT EXISTS idx_domains_deployment_id ON domains(deployment_id);
 CREATE INDEX IF NOT EXISTS idx_environment_variables_project_id ON environment_variables(project_id);
 CREATE INDEX IF NOT EXISTS idx_projects_org_id ON projects(org_id);
+CREATE INDEX IF NOT EXISTS idx_instance_usage_samples_server_time
+    ON instance_usage_samples (server_id, sampled_at DESC);

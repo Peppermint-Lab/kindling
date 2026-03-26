@@ -58,6 +58,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/projects/{id}/deploy", a.triggerDeploy)
 	mux.HandleFunc("POST /api/deployments/{id}/cancel", a.cancelDeployment)
 	mux.HandleFunc("GET /api/servers", a.listServers)
+	a.registerUsageRoutes(mux)
 	a.registerAuthRoutes(mux)
 	a.registerProviderRoutes(mux)
 }

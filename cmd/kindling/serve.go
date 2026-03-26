@@ -32,6 +32,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/reconciler"
 	"github.com/kindlingvm/kindling/internal/rpc"
 	crunrt "github.com/kindlingvm/kindling/internal/runtime"
+	"github.com/kindlingvm/kindling/internal/usage"
 	"github.com/kindlingvm/kindling/internal/webhook"
 	"github.com/spf13/cobra"
 )
@@ -198,6 +199,8 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	defer rt.StopAll()
 	slog.Info("runtime detected", "runtime", rt.Name())
 
+	go usage.RunResourcePoller(ctx, q, serverID, rt, 15*time.Second)
+
 	bldr := builder.New(func(c context.Context) (builder.Config, error) {
 		s := cfgMgr.Snapshot()
 		if s == nil {
@@ -338,6 +341,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 			ColdStartTimeout:  coldStart,
 			ControlPlaneHosts: cpHosts,
 			APIBackend:        apiBackend,
+			ServerID:          serverID,
 		})
 		if err != nil {
 			return fmt.Errorf("edge proxy: %w", err)

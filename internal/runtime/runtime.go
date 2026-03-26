@@ -7,6 +7,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/kindlingvm/kindling/internal/oci"
@@ -45,6 +46,15 @@ type Instance struct {
 	Env      []string // KEY=value pairs
 }
 
+// ResourceStats holds counters suitable for usage sampling (CPU cumulative nanoseconds, RSS, disk I/O).
+type ResourceStats struct {
+	CPUNanosCumulative int64
+	MemoryRSSBytes     int64
+	DiskReadBytes      int64
+	DiskWriteBytes     int64
+	CollectedAt        time.Time
+}
+
 // Runtime is the interface for starting and stopping app instances.
 type Runtime interface {
 	// Name returns the runtime name (e.g. "crun", "cloud-hypervisor").
@@ -64,6 +74,9 @@ type Runtime interface {
 
 	// StopAll kills all running instances. Called during graceful shutdown.
 	StopAll()
+
+	// ResourceStats samples CPU/memory/disk for a running instance (deployment_instance id).
+	ResourceStats(ctx context.Context, id uuid.UUID) (ResourceStats, error)
 }
 
 // Detect returns the best available runtime for this host.

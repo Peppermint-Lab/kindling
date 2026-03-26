@@ -136,6 +136,48 @@ export type Server = {
   created_at: string
 }
 
+export type UsageInstance = {
+  deployment_instance_id: string
+  sampled_at?: string
+  cpu_percent?: number
+  memory_rss_bytes: number
+  disk_read_bytes: number
+  disk_write_bytes: number
+  source: string
+}
+
+export type UsageCurrent = {
+  instances: UsageInstance[]
+  summary: {
+    memory_rss_bytes_total: number
+    cpu_percent_avg: number | null
+    http_requests_15m: number
+    http_status_2xx_15m: number
+    http_status_4xx_15m: number
+    http_status_5xx_15m: number
+    http_bytes_in_15m: number
+    http_bytes_out_15m: number
+  }
+}
+
+export type UsageHistory = {
+  window: string
+  resource: Array<{
+    bucket_start: string
+    memory_rss_bytes_max: number
+    cpu_percent_avg: number
+  }>
+  http: Array<{
+    bucket_start: string
+    request_count: number
+    status_2xx: number
+    status_4xx: number
+    status_5xx: number
+    bytes_in: number
+    bytes_out: number
+  }>
+}
+
 export type APIMeta = {
   public_base_url: string
   public_base_url_configured: boolean
@@ -303,6 +345,14 @@ export const api = {
     request<void>(`/api/deployments/${id}/cancel`, { method: "POST" }),
 
   listServers: () => request<Server[]>("/api/servers"),
+
+  getProjectUsageCurrent: (projectId: string) =>
+    request<UsageCurrent>(`/api/projects/${projectId}/usage/current`),
+
+  getProjectUsageHistory: (projectId: string, window?: string) =>
+    request<UsageHistory>(
+      `/api/projects/${projectId}/usage/history${window != null && window !== "" ? `?window=${encodeURIComponent(window)}` : ""}`,
+    ),
 }
 
 /** SSE url for live deployment updates (use with EventSource). */

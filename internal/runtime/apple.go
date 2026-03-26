@@ -42,6 +42,7 @@ type AppleRuntime struct {
 
 type appleInstance struct {
 	vm      *vz.VirtualMachine
+	vsock   *vz.VirtioSocketDevice
 	ip      string
 	hostFwd net.Listener
 	logs    []string
@@ -206,6 +207,7 @@ func (r *AppleRuntime) startVM(ctx context.Context, inst Instance) (string, erro
 	socketDevices := vm.SocketDevices()
 	if len(socketDevices) > 0 {
 		vsockDev = socketDevices[0]
+		ai.vsock = vsockDev
 		listener, err := vsockDev.Listen(1024)
 		if err != nil {
 			cancel()
@@ -358,6 +360,22 @@ func (r *AppleRuntime) Logs(ctx context.Context, id uuid.UUID) ([]string, error)
 	out := make([]string, len(ai.logs))
 	copy(out, ai.logs)
 	return out, nil
+}
+
+// ResourceStats connects to guest-agent GET /stats over vsock.
+func (r *AppleRuntime) ResourceStats(ctx context.Context, id uuid.UUID) (ResourceStats, error) {
+	r.mu.Lock()
+	ai, ok := r.instances[id]
+	r.mu.Unlock()
+	if !ok || ai.vsock == nil {
+		return ResourceStats{}, ErrInstanceNotRunning
+	}
+	conn, err := ai.vsock.Connect(GuestStatsVsockPort)
+	if err != nil {
+		return ResourceStats{}, err
+	}
+	defer conn.Close()
+	return resourceStatsFromGuestHTTP(ctx, conn)
 }
 
 // exportImage pulls/unpacks an OCI image to a directory so it can be shared into the VM.

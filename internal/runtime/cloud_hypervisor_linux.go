@@ -414,6 +414,22 @@ func (r *CloudHypervisorRuntime) Logs(ctx context.Context, id uuid.UUID) ([]stri
 	return out, nil
 }
 
+// ResourceStats pulls guest-agent /stats over the vsock bridge.
+func (r *CloudHypervisorRuntime) ResourceStats(ctx context.Context, id uuid.UUID) (ResourceStats, error) {
+	r.mu.Lock()
+	ai, ok := r.instances[id]
+	r.mu.Unlock()
+	if !ok || ai.socketBase == "" {
+		return ResourceStats{}, ErrInstanceNotRunning
+	}
+	conn, err := dialCloudHypervisorGuestOverUDS(ai.socketBase, GuestStatsVsockPort)
+	if err != nil {
+		return ResourceStats{}, err
+	}
+	defer conn.Close()
+	return resourceStatsFromGuestHTTP(ctx, conn)
+}
+
 func (r *CloudHypervisorRuntime) StopAll() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
