@@ -47,6 +47,8 @@ if ! cloud-hypervisor --version 2>/dev/null | grep -q "$CH_VERSION"; then
   chmod +x /tmp/cloud-hypervisor
   sudo mv /tmp/cloud-hypervisor /usr/local/bin/cloud-hypervisor
 fi
+# cloud-hypervisor opens/configures TAP devices; CAP_NET_ADMIN is not inherited from kindling.
+sudo setcap cap_net_admin+ep /usr/local/bin/cloud-hypervisor 2>/dev/null || true
 echo "Cloud Hypervisor: $(cloud-hypervisor --version)"
 
 # Create data directories (before downloading anything)

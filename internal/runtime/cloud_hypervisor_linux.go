@@ -29,9 +29,11 @@ import (
 const (
 	cloudHypervisorDefaultBin       = "/usr/local/bin/cloud-hypervisor"
 	cloudHypervisorDefaultKernel    = "/data/vmlinux-ch.bin"
-	cloudHypervisorFallbackKernel   = "/data/vmlinuz.bin"
 	cloudHypervisorDefaultInitramfs = "/data/initramfs.cpio.gz"
-	cloudHypervisorVsockPort        = 1024
+	cloudHypervisorVsockPort = 1024
+	// Must match cmd/guest-agent tcpBridgeVsockPort. Host→guest uses the Firecracker/CH
+	// UDS protocol on --vsock socket= (CONNECT <port>\\n), not AF_VSOCK.
+	cloudHypervisorGuestBridgeVsockPort = 1025
 )
 
 type CloudHypervisorRuntime struct {
@@ -74,7 +76,8 @@ func NewCloudHypervisorRuntime() *CloudHypervisorRuntime {
 	return &CloudHypervisorRuntime{
 		instances:     make(map[uuid.UUID]*cloudHypervisorInstance),
 		binaryPath:    firstExistingPath(os.Getenv("KINDLING_CLOUD_HYPERVISOR_BIN"), cloudHypervisorDefaultBin),
-		kernelPath:    firstExistingPath(os.Getenv("KINDLING_CLOUD_HYPERVISOR_KERNEL_PATH"), cloudHypervisorDefaultKernel, homeKernel, cloudHypervisorFallbackKernel),
+		// Note: do not fall back to /data/vmlinuz.bin — provision.sh stores rust hypervisor firmware there, not a Linux bzImage/vmlinux.
+		kernelPath:    firstExistingPath(os.Getenv("KINDLING_CLOUD_HYPERVISOR_KERNEL_PATH"), cloudHypervisorDefaultKernel, homeKernel),
 		initramfsPath: firstExistingPath(os.Getenv("KINDLING_CLOUD_HYPERVISOR_INITRAMFS_PATH"), cloudHypervisorDefaultInitramfs, homeInitramfs),
 	}
 }
@@ -187,7 +190,7 @@ func (r *CloudHypervisorRuntime) startVM(ctx context.Context, inst Instance) (st
 	r.instances[inst.ID] = ai
 	r.mu.Unlock()
 
-	if err := waitForGuestReady(runCtx, ai.ready, 90*time.Second); err != nil {
+	if err := waitForGuestReady(runCtx, ai.ready, 180*time.Second); err != nil {
 		slog.Error("cloud-hypervisor guest never became ready",
 			"id", inst.ID,
 			"guest_ip", guestIP,
@@ -208,7 +211,7 @@ func (r *CloudHypervisorRuntime) startVM(ctx context.Context, inst Instance) (st
 		cancel()
 		return "", err
 	}
-	go r.forwardHostTCPToVM(runCtx, hostLn, guestIP, port)
+	go r.forwardHostTCPToVM(runCtx, hostLn, ai.socketBase)
 	go r.waitCH(inst.ID, ai)
 
 	slog.Info("cloud hypervisor VM started",
@@ -278,12 +281,11 @@ func (r *CloudHypervisorRuntime) cleanupGuestVsock(base string) {
 	_ = os.Remove(base + "_" + strconv.Itoa(cloudHypervisorVsockPort))
 }
 
-func (r *CloudHypervisorRuntime) forwardHostTCPToVM(ctx context.Context, hostLn net.Listener, guestIP string, guestPort int) {
+func (r *CloudHypervisorRuntime) forwardHostTCPToVM(ctx context.Context, hostLn net.Listener, vsockUDS string) {
 	go func() {
 		<-ctx.Done()
 		_ = hostLn.Close()
 	}()
-	target := net.JoinHostPort(guestIP, strconv.Itoa(guestPort))
 	for {
 		conn, err := hostLn.Accept()
 		if err != nil {
@@ -295,27 +297,66 @@ func (r *CloudHypervisorRuntime) forwardHostTCPToVM(ctx context.Context, hostLn 
 				return
 			}
 		}
-		go func(c net.Conn) {
-			defer c.Close()
-			back, err := net.DialTimeout("tcp", target, 5*time.Second)
-			if err != nil {
-				return
-			}
-			defer back.Close()
-			var wg sync.WaitGroup
-			wg.Add(2)
-			go func() {
-				defer wg.Done()
-				_, _ = ioCopyClose(back, c)
-			}()
-			go func() {
-				defer wg.Done()
-				_, _ = ioCopyClose(c, back)
-			}()
-			wg.Wait()
-		}(conn)
+		go r.relayHostTCPToGuestVsock(conn, vsockUDS)
 	}
 }
+
+// relayHostTCPToGuestVsock forwards one inbound TCP connection to the guest app over
+// virtio-vsock. The app binds 127.0.0.1; dialing guest eth0:port does not work (unlike
+// Docker publish). Cloud Hypervisor uses the Firecracker UDS vsock: Unix-connect to
+// --vsock socket= and send "CONNECT <port>\n" (see cloud-hypervisor docs/vsock.md).
+func (r *CloudHypervisorRuntime) relayHostTCPToGuestVsock(client net.Conn, vsockUDS string) {
+	defer client.Close()
+	back, err := dialCloudHypervisorGuestOverUDS(vsockUDS, cloudHypervisorGuestBridgeVsockPort)
+	if err != nil {
+		slog.Debug("cloud-hypervisor vsock to guest failed", "error", err)
+		return
+	}
+	defer back.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _ = ioCopyClose(back, client)
+	}()
+	go func() {
+		defer wg.Done()
+		_, _ = ioCopyClose(client, back)
+	}()
+	wg.Wait()
+}
+
+func dialCloudHypervisorGuestOverUDS(vsockUDS string, port uint32) (net.Conn, error) {
+	c, err := net.Dial("unix", vsockUDS)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := fmt.Fprintf(c, "CONNECT %d\n", port); err != nil {
+		_ = c.Close()
+		return nil, err
+	}
+	// Firecracker/CH vsock: host must consume "OK <cid-or-port>\\n" before application data.
+	br := bufio.NewReader(c)
+	line, err := br.ReadString('\n')
+	if err != nil {
+		_ = c.Close()
+		return nil, fmt.Errorf("vsock connect ack: %w", err)
+	}
+	if len(line) < 3 || line[0] != 'O' || line[1] != 'K' {
+		_ = c.Close()
+		return nil, fmt.Errorf("vsock connect ack: got %q", strings.TrimSpace(line))
+	}
+	// br wraps c; after the ACK line, all reads must go through br so peek-ahead stays in order.
+	return &vsockBridgedConn{Conn: c, br: br}, nil
+}
+
+type vsockBridgedConn struct {
+	net.Conn
+	br *bufio.Reader
+}
+
+func (v *vsockBridgedConn) Read(b []byte) (int, error) { return v.br.Read(b) }
 
 func (r *CloudHypervisorRuntime) waitCH(id uuid.UUID, ai *cloudHypervisorInstance) {
 	err := ai.cmd.Wait()

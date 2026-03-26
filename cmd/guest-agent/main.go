@@ -92,16 +92,21 @@ func main() {
 	if readyPort == 0 {
 		readyPort = 3000
 	}
-	readyCtx, readyCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Cold starts can exceed 30s; the host still runs HTTP health checks after /ready.
+	// Always bring up the vsock bridge and notify — do not skip notify when the TCP
+	// probe is slow (previous if/else chain never called notifyReady on timeout).
+	readyCtx, readyCancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer readyCancel()
 	if err := waitForTCPReady(readyCtx, fmt.Sprintf("127.0.0.1:%d", readyPort)); err != nil {
-		log.Printf("warning: readiness probe failed: %v", err)
-	} else if err := startHostTCPBridge(readyPort); err != nil {
+		log.Printf("warning: readiness probe timed out: %v", err)
+	}
+	if err := startHostTCPBridge(readyPort); err != nil {
 		log.Fatalf("host tcp vsock bridge: %v", err)
-	} else if err := notifyReady(); err != nil {
+	}
+	if err := notifyReady(); err != nil {
 		log.Printf("warning: ready notification failed: %v", err)
 	} else {
-		log.Printf("app became ready on port %d", readyPort)
+		log.Printf("notified host ready (port %d)", readyPort)
 	}
 
 	// Wait for app to exit or signal.

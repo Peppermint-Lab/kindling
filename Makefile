@@ -118,7 +118,9 @@ remote-sync:
 
 # Build on remote
 remote-build: remote-sync
-	ssh $(REMOTE_HOST) 'cd $(REMOTE_DIR) && go build -o bin/kindling ./cmd/kindling'
+	ssh $(REMOTE_HOST) 'cd $(REMOTE_DIR) && go build -o bin/kindling ./cmd/kindling && \
+		sudo setcap cap_net_admin+ep "$(REMOTE_DIR)/bin/kindling" && \
+		(if [ -f /usr/local/bin/cloud-hypervisor ]; then sudo setcap cap_net_admin+ep /usr/local/bin/cloud-hypervisor; fi)'
 
 # Build initramfs on remote
 remote-initramfs: remote-sync
