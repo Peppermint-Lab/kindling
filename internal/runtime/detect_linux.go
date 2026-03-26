@@ -9,24 +9,24 @@ import (
 	"strings"
 )
 
-// NewDetectedRuntime returns the best runtime for this host.
-// On Linux with KVM and Cloud Hypervisor installed, prefer a microVM runtime.
-// Otherwise uses crun with skopeo/umoci (no Docker).
-//
-// Set KINDLING_RUNTIME=crun to force the crun path even on KVM hosts — useful when
-// microVM networking or guest images need more tuning.
-func NewDetectedRuntime() Runtime {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("KINDLING_RUNTIME"))) {
+// NewDetectedRuntime returns the best runtime for this host using cfg (DB-backed settings).
+// Set cfg.ForceRuntime to "crun" to force the OCI path even on KVM hosts.
+func NewDetectedRuntime(cfg HostRuntimeConfig) Runtime {
+	adv := cfg.AdvertiseHost
+	auth := cfg.PullAuth
+	chPaths := cfg.CloudHypervisor
+
+	switch strings.ToLower(strings.TrimSpace(cfg.ForceRuntime)) {
 	case "crun", "oci", "docker":
-		slog.Info("KINDLING_RUNTIME override, using crun", "kindling_runtime", os.Getenv("KINDLING_RUNTIME"))
-		return NewCrunRuntime()
+		slog.Info("runtime override, using crun", "force_runtime", cfg.ForceRuntime)
+		return NewCrunRuntime(adv, auth)
 	}
 	if _, err := os.Stat("/dev/kvm"); err == nil {
 		if _, err := exec.LookPath("cloud-hypervisor"); err == nil {
 			slog.Info("KVM + cloud-hypervisor detected, using cloud-hypervisor runtime")
-			return NewCloudHypervisorRuntime()
+			return NewCloudHypervisorRuntime(chPaths, adv, auth)
 		}
 		slog.Info("KVM available but cloud-hypervisor missing, falling back to crun")
 	}
-	return NewCrunRuntime()
+	return NewCrunRuntime(adv, auth)
 }

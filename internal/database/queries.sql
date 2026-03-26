@@ -63,6 +63,28 @@ ON CONFLICT (key) DO UPDATE SET
     value = EXCLUDED.value,
     updated_at = NOW();
 
+-- name: ClusterSettingsAll :many
+SELECT key, value FROM cluster_settings ORDER BY key;
+
+-- name: ServerSettingEnsure :exec
+INSERT INTO server_settings (server_id) VALUES ($1) ON CONFLICT (server_id) DO NOTHING;
+
+-- name: ServerSettingGet :one
+SELECT * FROM server_settings WHERE server_id = $1;
+
+-- name: ClusterSecretGet :one
+SELECT ciphertext FROM cluster_secrets WHERE key = $1;
+
+-- name: ClusterSecretUpsert :exec
+INSERT INTO cluster_secrets (key, ciphertext, updated_at)
+VALUES ($1, $2, NOW())
+ON CONFLICT (key) DO UPDATE SET
+    ciphertext = EXCLUDED.ciphertext,
+    updated_at = NOW();
+
+-- name: ClusterSecretDelete :exec
+DELETE FROM cluster_secrets WHERE key = $1;
+
 -- Images --
 
 -- name: ImageFindOrCreate :one

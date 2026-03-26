@@ -21,17 +21,6 @@ type Auth struct {
 	Password string
 }
 
-// AuthFromEnv returns credentials from KINDLING_REGISTRY_USERNAME /
-// KINDLING_REGISTRY_PASSWORD when both are non-empty.
-func AuthFromEnv() *Auth {
-	u := os.Getenv("KINDLING_REGISTRY_USERNAME")
-	p := os.Getenv("KINDLING_REGISTRY_PASSWORD")
-	if u == "" || p == "" {
-		return nil
-	}
-	return &Auth{Username: u, Password: p}
-}
-
 // ExportImageRootfs pulls an image by ref and unpacks its root filesystem into destDir.
 // It tries containers-storage first (local buildah/podman images), then docker:// for
 // registry-backed refs. destDir is removed and recreated before unpack.

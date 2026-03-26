@@ -45,6 +45,17 @@ type ClusterSetting struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+// ServerSetting is per-host runtime configuration (see server_settings).
+type ServerSetting struct {
+	ServerID                    pgtype.UUID        `json:"server_id"`
+	RuntimeOverride             string             `json:"runtime_override"`
+	AdvertiseHost               string             `json:"advertise_host"`
+	CloudHypervisorBin          string             `json:"cloud_hypervisor_bin"`
+	CloudHypervisorKernelPath   string             `json:"cloud_hypervisor_kernel_path"`
+	CloudHypervisorInitramfsPath string            `json:"cloud_hypervisor_initramfs_path"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Deployment struct {
 	ID              pgtype.UUID        `json:"id"`
 	ProjectID       pgtype.UUID        `json:"project_id"`

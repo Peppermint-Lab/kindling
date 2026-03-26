@@ -371,6 +371,101 @@ func (q *Queries) ClusterSettingUpsert(ctx context.Context, arg ClusterSettingUp
 	return err
 }
 
+const clusterSettingsAll = `-- name: ClusterSettingsAll :many
+SELECT key, value FROM cluster_settings ORDER BY key
+`
+
+type ClusterSettingsAllRow struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+func (q *Queries) ClusterSettingsAll(ctx context.Context) ([]ClusterSettingsAllRow, error) {
+	rows, err := q.db.Query(ctx, clusterSettingsAll)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClusterSettingsAllRow
+	for rows.Next() {
+		var i ClusterSettingsAllRow
+		if err := rows.Scan(&i.Key, &i.Value); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const serverSettingEnsure = `-- name: ServerSettingEnsure :exec
+INSERT INTO server_settings (server_id) VALUES ($1) ON CONFLICT (server_id) DO NOTHING
+`
+
+func (q *Queries) ServerSettingEnsure(ctx context.Context, serverID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, serverSettingEnsure, serverID)
+	return err
+}
+
+const serverSettingGet = `-- name: ServerSettingGet :one
+SELECT server_id, runtime_override, advertise_host, cloud_hypervisor_bin, cloud_hypervisor_kernel_path, cloud_hypervisor_initramfs_path, updated_at FROM server_settings WHERE server_id = $1
+`
+
+func (q *Queries) ServerSettingGet(ctx context.Context, serverID pgtype.UUID) (ServerSetting, error) {
+	row := q.db.QueryRow(ctx, serverSettingGet, serverID)
+	var i ServerSetting
+	err := row.Scan(
+		&i.ServerID,
+		&i.RuntimeOverride,
+		&i.AdvertiseHost,
+		&i.CloudHypervisorBin,
+		&i.CloudHypervisorKernelPath,
+		&i.CloudHypervisorInitramfsPath,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const clusterSecretGet = `-- name: ClusterSecretGet :one
+SELECT ciphertext FROM cluster_secrets WHERE key = $1
+`
+
+func (q *Queries) ClusterSecretGet(ctx context.Context, key string) ([]byte, error) {
+	row := q.db.QueryRow(ctx, clusterSecretGet, key)
+	var ciphertext []byte
+	err := row.Scan(&ciphertext)
+	return ciphertext, err
+}
+
+const clusterSecretUpsert = `-- name: ClusterSecretUpsert :exec
+INSERT INTO cluster_secrets (key, ciphertext, updated_at)
+VALUES ($1, $2, NOW())
+ON CONFLICT (key) DO UPDATE SET
+    ciphertext = EXCLUDED.ciphertext,
+    updated_at = NOW()
+`
+
+type ClusterSecretUpsertParams struct {
+	Key        string `json:"key"`
+	Ciphertext []byte `json:"ciphertext"`
+}
+
+func (q *Queries) ClusterSecretUpsert(ctx context.Context, arg ClusterSecretUpsertParams) error {
+	_, err := q.db.Exec(ctx, clusterSecretUpsert, arg.Key, arg.Ciphertext)
+	return err
+}
+
+const clusterSecretDelete = `-- name: ClusterSecretDelete :exec
+DELETE FROM cluster_secrets WHERE key = $1
+`
+
+func (q *Queries) ClusterSecretDelete(ctx context.Context, key string) error {
+	_, err := q.db.Exec(ctx, clusterSecretDelete, key)
+	return err
+}
+
 const deploymentClearWakeRequested = `-- name: DeploymentClearWakeRequested :exec
 UPDATE deployments SET wake_requested_at = NULL, updated_at = NOW() WHERE id = $1
 `

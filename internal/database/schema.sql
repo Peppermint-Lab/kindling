@@ -243,6 +243,51 @@ CREATE TABLE IF NOT EXISTS cluster_settings (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Per-server host/runtime settings (non-secret). Filled when a server registers.
+CREATE TABLE IF NOT EXISTS server_settings (
+    server_id                       UUID PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
+    runtime_override                TEXT NOT NULL DEFAULT '',
+    advertise_host                  TEXT NOT NULL DEFAULT '',
+    cloud_hypervisor_bin            TEXT NOT NULL DEFAULT '',
+    cloud_hypervisor_kernel_path    TEXT NOT NULL DEFAULT '',
+    cloud_hypervisor_initramfs_path TEXT NOT NULL DEFAULT '',
+    updated_at                       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Cluster-wide secrets (AES-GCM ciphertext, see internal/config/crypto.go)
+CREATE TABLE IF NOT EXISTS cluster_secrets (
+    key         TEXT PRIMARY KEY,
+    ciphertext   BYTEA NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- NOTIFY for runtime config reload (LISTEN kindling_config)
+CREATE OR REPLACE FUNCTION kindling_notify_config_change()
+RETURNS TRIGGER AS $$
+BEGIN
+    PERFORM pg_notify('kindling_config', TG_TABLE_NAME);
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS cluster_settings_config_notify ON cluster_settings;
+CREATE TRIGGER cluster_settings_config_notify
+    AFTER INSERT OR UPDATE OR DELETE ON cluster_settings
+    FOR EACH ROW EXECUTE PROCEDURE kindling_notify_config_change();
+
+DROP TRIGGER IF EXISTS server_settings_config_notify ON server_settings;
+CREATE TRIGGER server_settings_config_notify
+    AFTER INSERT OR UPDATE OR DELETE ON server_settings
+    FOR EACH ROW EXECUTE PROCEDURE kindling_notify_config_change();
+
+DROP TRIGGER IF EXISTS cluster_secrets_config_notify ON cluster_secrets;
+CREATE TRIGGER cluster_secrets_config_notify
+    AFTER INSERT OR UPDATE OR DELETE ON cluster_secrets
+    FOR EACH ROW EXECUTE PROCEDURE kindling_notify_config_change();
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_vms_server_id ON vms(server_id);
 CREATE INDEX IF NOT EXISTS idx_vms_status ON vms(status) WHERE deleted_at IS NULL;

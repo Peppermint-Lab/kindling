@@ -40,14 +40,21 @@ type Config struct {
 
 // Builder orchestrates builds via reconciliation.
 type Builder struct {
-	cfg      Config
-	q        *queries.Queries
-	serverID uuid.UUID
+	getConfig func(context.Context) (Config, error)
+	q         *queries.Queries
+	serverID  uuid.UUID
 }
 
-// New creates a new builder.
-func New(cfg Config, q *queries.Queries, serverID uuid.UUID) *Builder {
-	return &Builder{cfg: cfg, q: q, serverID: serverID}
+// New creates a new builder. getConfig is called on each reconcile to read DB-backed settings.
+func New(getConfig func(context.Context) (Config, error), q *queries.Queries, serverID uuid.UUID) *Builder {
+	return &Builder{getConfig: getConfig, q: q, serverID: serverID}
+}
+
+func (b *Builder) pullConfig(ctx context.Context) (Config, error) {
+	if b.getConfig == nil {
+		return Config{}, fmt.Errorf("builder: no config provider")
+	}
+	return b.getConfig(ctx)
 }
 
 // ReconcileBuild is the reconcile function for builds.
@@ -97,12 +104,17 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 		return fmt.Errorf("fetch project: %w", err)
 	}
 
+	cfg, err := b.pullConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("load builder config: %w", err)
+	}
+
 	// Log build start.
 	b.log(ctx, build.ID, "info", fmt.Sprintf("Building %s@%s", project.GithubRepository, build.GithubCommit))
 
 	// Download source tarball.
 	b.log(ctx, build.ID, "info", "Downloading source...")
-	tarball, err := b.downloadSource(ctx, project.GithubRepository, build.GithubCommit)
+	tarball, err := b.downloadSource(ctx, project.GithubRepository, build.GithubCommit, cfg.GitHubToken)
 	if err != nil {
 		b.log(ctx, build.ID, "error", fmt.Sprintf("Failed to download source: %v", err))
 		return b.q.BuildMarkFailed(ctx, build.ID)
@@ -132,7 +144,7 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 	if len(imageTag) > 12 {
 		imageTag = imageTag[:12]
 	}
-	imageRef := fmt.Sprintf("%s/%s:%s", b.cfg.RegistryURL, project.GithubRepository, imageTag)
+	imageRef := fmt.Sprintf("%s/%s:%s", cfg.RegistryURL, project.GithubRepository, imageTag)
 
 	engine, err := oci.DetectBuildEngine()
 	if err != nil {
@@ -155,9 +167,9 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 	b.log(ctx, build.ID, "info", "OCI build completed")
 
 	// Push to registry if credentials are configured.
-	if b.cfg.RegistryUsername != "" {
+	if cfg.RegistryUsername != "" {
 		b.log(ctx, build.ID, "info", "Pushing image to registry...")
-		auth := &oci.Auth{Username: b.cfg.RegistryUsername, Password: b.cfg.RegistryPassword}
+		auth := &oci.Auth{Username: cfg.RegistryUsername, Password: cfg.RegistryPassword}
 		if err := oci.PushImage(ctx, engine, imageRef, auth); err != nil {
 			b.log(ctx, build.ID, "error", fmt.Sprintf("Push failed: %v", err))
 			// Don't fail the build — image is still available locally (containers-storage).
@@ -169,7 +181,7 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 	// Create image record.
 	image, err := b.q.ImageFindOrCreate(ctx, queries.ImageFindOrCreateParams{
 		ID:         uuidToPgtype(uuid.New()),
-		Registry:   b.cfg.RegistryURL,
+		Registry:   cfg.RegistryURL,
 		Repository: project.GithubRepository,
 		Tag:        imageTag,
 	})
@@ -191,7 +203,7 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 	return nil
 }
 
-func (b *Builder) downloadSource(ctx context.Context, repo, commit string) (io.ReadCloser, error) {
+func (b *Builder) downloadSource(ctx context.Context, repo, commit, githubToken string) (io.ReadCloser, error) {
 	// Normalize repo: strip full URL to owner/repo.
 	repo = strings.TrimPrefix(repo, "https://github.com/")
 	repo = strings.TrimPrefix(repo, "http://github.com/")
@@ -204,8 +216,8 @@ func (b *Builder) downloadSource(ctx context.Context, repo, commit string) (io.R
 	if err != nil {
 		return nil, err
 	}
-	if b.cfg.GitHubToken != "" {
-		req.Header.Set("Authorization", "Bearer "+b.cfg.GitHubToken)
+	if githubToken != "" {
+		req.Header.Set("Authorization", "Bearer "+githubToken)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 

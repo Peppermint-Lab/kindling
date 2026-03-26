@@ -20,7 +20,7 @@ build:
 
 # Run locally (requires Postgres via `make db`)
 dev: build kernel initramfs
-	DATABASE_URL=$(DATABASE_URL) ./bin/kindling serve
+	./bin/kindling serve
 
 # Data directory
 KINDLING_DATA ?= $(HOME)/.kindling
@@ -128,10 +128,7 @@ remote-networking:
 
 # Run kindling on remote
 remote-run: remote-build
-	ssh $(REMOTE_HOST) 'cd $(REMOTE_DIR) && \
-		DATABASE_URL=$(DATABASE_URL) \
-		$(if $(KINDLING_RUNTIME_ADVERTISE_HOST),KINDLING_RUNTIME_ADVERTISE_HOST=$(KINDLING_RUNTIME_ADVERTISE_HOST),) \
-		./bin/kindling serve'
+	ssh $(REMOTE_HOST) 'cd $(REMOTE_DIR) && ./bin/kindling serve'
 
 # Full dev setup: sync, build, run API + dashboard
 dev-up: remote-build
@@ -142,10 +139,7 @@ dev-up: remote-build
 	@echo "Starting SSH tunnel..."
 	@ssh -f -N -L 8080:localhost:8080 $(REMOTE_HOST)
 	@echo "Starting kindling API on $(REMOTE_HOST)..."
-	@ssh $(REMOTE_HOST) 'cd $(REMOTE_DIR) && \
-		DATABASE_URL=$(DATABASE_URL) \
-		$(if $(KINDLING_RUNTIME_ADVERTISE_HOST),KINDLING_RUNTIME_ADVERTISE_HOST=$(KINDLING_RUNTIME_ADVERTISE_HOST),) \
-		nohup ./bin/kindling serve > /tmp/kindling.log 2>&1 &'
+	@ssh $(REMOTE_HOST) 'cd $(REMOTE_DIR) && nohup ./bin/kindling serve > /tmp/kindling.log 2>&1 &'
 	@sleep 2
 	@echo "Starting dashboard..."
 	@cd web/dashboard && nohup npx vite > /tmp/kindling-dashboard.log 2>&1 &

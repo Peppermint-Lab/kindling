@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/kindlingvm/kindling/internal/bootstrap"
+	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/githubapi"
 	"github.com/kindlingvm/kindling/internal/rpc"
@@ -39,7 +41,11 @@ func projectCreateCmd() *cobra.Command {
 		Use:   "create",
 		Short: "Create a new project",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			dbURL = resolveDBURL(dbURL)
+			var err error
+			dbURL, err = resolveDBURL(dbURL)
+			if err != nil {
+				return err
+			}
 			pool, err := pgxpool.New(cmd.Context(), dbURL)
 			if err != nil {
 				return err
@@ -49,10 +55,10 @@ func projectCreateCmd() *cobra.Command {
 			q := queries.New(pool)
 			webhookSecret := ""
 			if repo != "" {
-				var err error
-				webhookSecret, err = rpc.GenerateWebhookSecret()
-				if err != nil {
-					return err
+				var genErr error
+				webhookSecret, genErr = rpc.GenerateWebhookSecret()
+				if genErr != nil {
+					return genErr
 				}
 			}
 			project, err := q.ProjectCreate(cmd.Context(), queries.ProjectCreateParams{
@@ -89,7 +95,11 @@ func projectListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List all projects",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			dbURL = resolveDBURL(dbURL)
+			var err error
+			dbURL, err = resolveDBURL(dbURL)
+			if err != nil {
+				return err
+			}
 			pool, err := pgxpool.New(cmd.Context(), dbURL)
 			if err != nil {
 				return err
@@ -128,7 +138,11 @@ func projectDeleteCmd() *cobra.Command {
 		Use:   "delete",
 		Short: "Delete a project",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			dbURL = resolveDBURL(dbURL)
+			var err error
+			dbURL, err = resolveDBURL(dbURL)
+			if err != nil {
+				return err
+			}
 			pool, err := pgxpool.New(cmd.Context(), dbURL)
 			if err != nil {
 				return err
@@ -172,9 +186,13 @@ func deployCmd() *cobra.Command {
 
 Pass --commit with a SHA/branch the builder can fetch, or omit --commit to resolve
 the tip of a branch via the GitHub API (default branch, or the branch from --ref).
-Private repositories need GITHUB_TOKEN in the environment.`,
+Private repositories need github_token stored encrypted in cluster_secrets (see kindling config import-env).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			dbURL = resolveDBURL(dbURL)
+			var err error
+			dbURL, err = resolveDBURL(dbURL)
+			if err != nil {
+				return err
+			}
 			pool, err := pgxpool.New(cmd.Context(), dbURL)
 			if err != nil {
 				return err
@@ -197,7 +215,11 @@ Private repositories need GITHUB_TOKEN in the environment.`,
 				if repo == "" {
 					return fmt.Errorf("project has no github_repository; pass --commit")
 				}
-				sha, usedRef, err := githubapi.ResolveCommit(cmd.Context(), nil, strings.TrimSpace(os.Getenv("GITHUB_TOKEN")), repo, ref)
+				ghTok, err := config.GitHubTokenFromPool(cmd.Context(), pool)
+				if err != nil {
+					return fmt.Errorf("github token from db: %w", err)
+				}
+				sha, usedRef, err := githubapi.ResolveCommit(cmd.Context(), nil, strings.TrimSpace(ghTok), repo, ref)
 				if err != nil {
 					return fmt.Errorf("resolve GitHub ref: %w", err)
 				}
@@ -242,7 +264,11 @@ func logsCmd() *cobra.Command {
 		Use:   "logs",
 		Short: "View build logs for a deployment",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			dbURL = resolveDBURL(dbURL)
+			var err error
+			dbURL, err = resolveDBURL(dbURL)
+			if err != nil {
+				return err
+			}
 			pool, err := pgxpool.New(cmd.Context(), dbURL)
 			if err != nil {
 				return err
@@ -291,12 +317,6 @@ func logsCmd() *cobra.Command {
 	return cmd
 }
 
-func resolveDBURL(flagValue string) string {
-	if flagValue != "" {
-		return flagValue
-	}
-	if v := os.Getenv("DATABASE_URL"); v != "" {
-		return v
-	}
-	return "postgres://kindling:kindling@localhost:5432/kindling?sslmode=disable"
+func resolveDBURL(flagValue string) (string, error) {
+	return bootstrap.ResolvePostgresDSN(flagValue)
 }

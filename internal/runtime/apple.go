@@ -37,6 +37,7 @@ type AppleRuntime struct {
 
 	kernelPath    string
 	initramfsPath string
+	pullAuth      *oci.Auth
 }
 
 type appleInstance struct {
@@ -65,6 +66,9 @@ type AppleRuntimeConfig struct {
 
 	// InitramfsPath is the path to the initramfs with the guest agent.
 	InitramfsPath string
+
+	// PullAuth is optional registry credentials for image export.
+	PullAuth *oci.Auth
 }
 
 // NewAppleRuntime creates a new Apple Virtualization Framework runtime.
@@ -81,6 +85,7 @@ func NewAppleRuntime(cfg AppleRuntimeConfig) *AppleRuntime {
 		instances:     make(map[uuid.UUID]*appleInstance),
 		kernelPath:    cfg.KernelPath,
 		initramfsPath: cfg.InitramfsPath,
+		pullAuth:      cfg.PullAuth,
 	}
 }
 
@@ -359,8 +364,7 @@ func (r *AppleRuntime) Logs(ctx context.Context, id uuid.UUID) ([]string, error)
 func (r *AppleRuntime) exportImage(ctx context.Context, imageRef string, id uuid.UUID) (string, error) {
 	home, _ := os.UserHomeDir()
 	appDir := fmt.Sprintf("%s/.kindling/apps/%s", home, id)
-	auth := oci.AuthFromEnv()
-	if err := oci.ExportImageRootfs(ctx, imageRef, appDir, auth); err != nil {
+	if err := oci.ExportImageRootfs(ctx, imageRef, appDir, r.pullAuth); err != nil {
 		return "", err
 	}
 	slog.Info("exported image to directory", "image", imageRef, "dir", appDir)

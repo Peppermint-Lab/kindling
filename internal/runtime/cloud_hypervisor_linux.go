@@ -42,9 +42,11 @@ type CloudHypervisorRuntime struct {
 	instances map[uuid.UUID]*cloudHypervisorInstance
 	nextSlot  atomic.Uint32
 
-	binaryPath    string
-	kernelPath    string
-	initramfsPath string
+	binaryPath        string
+	kernelPath        string
+	initramfsPath     string
+	advertiseHost     string
+	pullAuth          *oci.Auth
 }
 
 type cloudHypervisorInstance struct {
@@ -70,16 +72,19 @@ type guestConfig struct {
 	Port     int      `json:"port"`
 }
 
-func NewCloudHypervisorRuntime() *CloudHypervisorRuntime {
+// NewCloudHypervisorRuntime builds paths from cfg and defaults (no environment variables).
+func NewCloudHypervisorRuntime(cfg CloudHypervisorHostConfig, advertiseHost string, pullAuth *oci.Auth) *CloudHypervisorRuntime {
 	home, _ := os.UserHomeDir()
 	homeKernel := filepath.Join(home, ".kindling", "vmlinuz.bin")
 	homeInitramfs := filepath.Join(home, ".kindling", "initramfs.cpio.gz")
 	return &CloudHypervisorRuntime{
 		instances:     make(map[uuid.UUID]*cloudHypervisorInstance),
-		binaryPath:    firstExistingPath(os.Getenv("KINDLING_CLOUD_HYPERVISOR_BIN"), cloudHypervisorDefaultBin),
-		// Note: do not fall back to /data/vmlinuz.bin — provision.sh stores rust hypervisor firmware there, not a Linux bzImage/vmlinux.
-		kernelPath:    firstExistingPath(os.Getenv("KINDLING_CLOUD_HYPERVISOR_KERNEL_PATH"), cloudHypervisorDefaultKernel, homeKernel),
-		initramfsPath: firstExistingPath(os.Getenv("KINDLING_CLOUD_HYPERVISOR_INITRAMFS_PATH"), cloudHypervisorDefaultInitramfs, homeInitramfs),
+		binaryPath:    firstExistingPath(cfg.BinaryPath, cloudHypervisorDefaultBin),
+		// Note: do not fall back to /data/vmlinux.bin — provision.sh stores rust hypervisor firmware there, not a Linux bzImage/vmlinux.
+		kernelPath:    firstExistingPath(cfg.KernelPath, cloudHypervisorDefaultKernel, homeKernel),
+		initramfsPath: firstExistingPath(cfg.InitramfsPath, cloudHypervisorDefaultInitramfs, homeInitramfs),
+		advertiseHost: strings.TrimSpace(advertiseHost),
+		pullAuth:      pullAuth,
 	}
 }
 
@@ -110,7 +115,7 @@ func (r *CloudHypervisorRuntime) startVM(ctx context.Context, inst Instance) (st
 		return "", fmt.Errorf("create work dir: %w", err)
 	}
 
-	rootfsDir, err := exportImageToDir(ctx, inst.ImageRef, filepath.Join(workDir, "rootfs"), inst.ID)
+	rootfsDir, err := exportImageToDir(ctx, inst.ImageRef, filepath.Join(workDir, "rootfs"), r.pullAuth)
 	if err != nil {
 		_ = os.RemoveAll(workDir)
 		return "", err
@@ -207,7 +212,7 @@ func (r *CloudHypervisorRuntime) startVM(ctx context.Context, inst Instance) (st
 		return "", fmt.Errorf("host tcp forward listen: %w", err)
 	}
 	ai.hostFwd = hostLn
-	ai.ip, err = applyAdvertisedHost(hostLn.Addr().String())
+		ai.ip, err = applyAdvertisedHost(hostLn.Addr().String(), r.advertiseHost)
 	if err != nil {
 		cancel()
 		return "", err
@@ -462,8 +467,7 @@ func cloudHypervisorTapName(id uuid.UUID, slot uint32) string {
 	return fmt.Sprintf("kch%s%x", id.String()[:8], slot&0xf)
 }
 
-func exportImageToDir(ctx context.Context, imageRef, rootfsDir string, _ uuid.UUID) (string, error) {
-	auth := oci.AuthFromEnv()
+func exportImageToDir(ctx context.Context, imageRef, rootfsDir string, auth *oci.Auth) (string, error) {
 	if err := oci.ExportImageRootfs(ctx, imageRef, rootfsDir, auth); err != nil {
 		return "", err
 	}

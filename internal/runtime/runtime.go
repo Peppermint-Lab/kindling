@@ -9,7 +9,31 @@ import (
 	"os"
 
 	"github.com/google/uuid"
+	"github.com/kindlingvm/kindling/internal/oci"
 )
+
+// CloudHypervisorHostConfig holds Linux microVM binary and image paths (ignored on non-Linux).
+type CloudHypervisorHostConfig struct {
+	BinaryPath    string
+	KernelPath    string
+	InitramfsPath string
+}
+
+// HostRuntimeConfig wires DB-backed (or other) settings into runtime selection.
+// Zero value means advertise host unset, auto-detect runtime, and no registry auth.
+type HostRuntimeConfig struct {
+	// ForceRuntime: "crun", "cloud-hypervisor", or empty for auto-detect (Linux).
+	ForceRuntime string
+	// AdvertiseHost rewrites loopback/0.0.0.0 published addresses for browser reachability.
+	AdvertiseHost string
+	// PullAuth is optional credentials for registry image pulls.
+	PullAuth *oci.Auth
+	// CloudHypervisor paths for the Linux microVM runtime.
+	CloudHypervisor CloudHypervisorHostConfig
+	// AppleKernelPath / AppleInitramfsPath override defaults under ~/.kindling on macOS.
+	AppleKernelPath    string
+	AppleInitramfsPath string
+}
 
 // Instance represents a running or pending app instance.
 type Instance struct {

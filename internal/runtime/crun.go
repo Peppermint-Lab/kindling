@@ -17,8 +17,10 @@ import (
 
 // CrunRuntime runs OCI containers via crun (no Docker daemon).
 type CrunRuntime struct {
-	mu        sync.Mutex
-	instances map[uuid.UUID]*crunInstance
+	mu            sync.Mutex
+	instances     map[uuid.UUID]*crunInstance
+	advertiseHost string
+	pullAuth      *oci.Auth
 }
 
 type crunInstance struct {
@@ -30,13 +32,17 @@ type crunInstance struct {
 }
 
 // NewCrunRuntime creates a new crun-based runtime. crun must be installed.
-func NewCrunRuntime() *CrunRuntime {
+// advertiseHost rewrites published 127.0.0.1/0.0.0.0 addresses for browser reachability (same as former KINDLING_RUNTIME_ADVERTISE_HOST).
+// pullAuth is optional registry credentials for skopeo pulls.
+func NewCrunRuntime(advertiseHost string, pullAuth *oci.Auth) *CrunRuntime {
 	if _, err := exec.LookPath("crun"); err != nil {
 		slog.Error("crun is required for the OCI fallback runtime on Linux; install crun (e.g. apt install crun)",
 			"err", err)
 	}
 	return &CrunRuntime{
-		instances: make(map[uuid.UUID]*crunInstance),
+		instances:     make(map[uuid.UUID]*crunInstance),
+		advertiseHost: strings.TrimSpace(advertiseHost),
+		pullAuth:      pullAuth,
 	}
 }
 
@@ -58,7 +64,7 @@ func (r *CrunRuntime) startCrun(ctx context.Context, inst Instance) (string, err
 	imageRef := inst.ImageRef
 	ociDir := fmt.Sprintf("/tmp/kindling-oci-%s", inst.ID)
 
-	if err := oci.PullToOCILayout(ctx, imageRef, ociDir, oci.AuthFromEnv()); err != nil {
+	if err := oci.PullToOCILayout(ctx, imageRef, ociDir, r.pullAuth); err != nil {
 		return "", err
 	}
 
@@ -77,7 +83,7 @@ func (r *CrunRuntime) startCrun(ctx context.Context, inst Instance) (string, err
 		return "", fmt.Errorf("allocate local port: %w", err)
 	}
 	rawAddr := fmt.Sprintf("127.0.0.1:%d", hostPort)
-	listenAddr, err := applyAdvertisedHost(rawAddr)
+	listenAddr, err := applyAdvertisedHost(rawAddr, r.advertiseHost)
 	if err != nil {
 		return "", err
 	}
@@ -204,14 +210,14 @@ func (r *CrunRuntime) captureOutput(ci *crunInstance, rd interface{ Read([]byte)
 	}
 }
 
-// applyAdvertisedHost rewrites 0.0.0.0 / loopback to KINDLING_RUNTIME_ADVERTISE_HOST when set
+// applyAdvertisedHost rewrites 0.0.0.0 / loopback to advertiseHost when set
 // (bare-metal / cloud: browsers reach the public IP, not 127.0.0.1).
-func applyAdvertisedHost(hostPort string) (string, error) {
+func applyAdvertisedHost(hostPort, advertiseHost string) (string, error) {
 	host, port, err := net.SplitHostPort(hostPort)
 	if err != nil {
 		return hostPort, fmt.Errorf("split host/port %q: %w", hostPort, err)
 	}
-	adv := strings.TrimSpace(os.Getenv("KINDLING_RUNTIME_ADVERTISE_HOST"))
+	adv := strings.TrimSpace(advertiseHost)
 	if adv == "" {
 		return hostPort, nil
 	}

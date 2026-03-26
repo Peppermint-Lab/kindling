@@ -9,7 +9,6 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -17,12 +16,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/kindlingvm/kindling/internal/bootstrap"
 	"github.com/kindlingvm/kindling/internal/builder"
+	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/deploy"
 	"github.com/kindlingvm/kindling/internal/edgeproxy"
 	"github.com/kindlingvm/kindling/internal/listener"
+	"github.com/kindlingvm/kindling/internal/oci"
 	"github.com/kindlingvm/kindling/internal/reconciler"
 	"github.com/kindlingvm/kindling/internal/rpc"
 	crunrt "github.com/kindlingvm/kindling/internal/runtime"
@@ -32,40 +34,24 @@ import (
 
 func serveCmd() *cobra.Command {
 	var (
-		listenAddr      string
-		databaseURL     string
-		publicBaseURL   string
-		edgeHTTPSAddr   string
-		edgeHTTPAddr    string
-		acmeEmail       string
-		acmeStaging     bool
+		listenAddr    string
+		publicBaseURL string
+		edgeHTTPSAddr string
+		edgeHTTPAddr  string
+		acmeEmail     string
+		acmeStaging   bool
 	)
 
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Start the kindling server",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if databaseURL == "" {
-				databaseURL = os.Getenv("DATABASE_URL")
+			databaseURL, err := bootstrap.ResolvePostgresDSN("")
+			if err != nil {
+				return err
 			}
-			if databaseURL == "" {
-				return fmt.Errorf("--database-url or DATABASE_URL is required")
-			}
-			if publicBaseURL == "" {
-				publicBaseURL = os.Getenv("KINDLING_PUBLIC_URL")
-			}
-			if edgeHTTPSAddr == "" {
-				edgeHTTPSAddr = strings.TrimSpace(os.Getenv("KINDLING_EDGE_HTTPS_ADDR"))
-			}
-			if edgeHTTPAddr == "" {
-				edgeHTTPAddr = strings.TrimSpace(os.Getenv("KINDLING_EDGE_HTTP_ADDR"))
-			}
-			if acmeEmail == "" {
-				acmeEmail = strings.TrimSpace(os.Getenv("KINDLING_ACME_EMAIL"))
-			}
-			return runServe(cmd.Context(), serveOptions{
+			return runServe(cmd.Context(), databaseURL, serveOptions{
 				listenAddr:    listenAddr,
-				databaseURL:   databaseURL,
 				publicBaseURL: publicBaseURL,
 				edgeHTTPSAddr: edgeHTTPSAddr,
 				edgeHTTPAddr:  edgeHTTPAddr,
@@ -76,19 +62,17 @@ func serveCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&listenAddr, "listen", ":8080", "API listen address")
-	cmd.Flags().StringVar(&databaseURL, "database-url", "", "PostgreSQL connection string")
-	cmd.Flags().StringVar(&publicBaseURL, "public-url", "", "Optional seed for cluster_settings.public_base_url when that row is missing (e.g. first boot). Also KINDLING_PUBLIC_URL.")
-	cmd.Flags().StringVar(&edgeHTTPSAddr, "edge-https", "", "HTTPS listen address for TLS edge proxy (e.g. :443). Also KINDLING_EDGE_HTTPS_ADDR.")
-	cmd.Flags().StringVar(&edgeHTTPAddr, "edge-http", ":80", "HTTP listen address for edge proxy redirect to HTTPS")
-	cmd.Flags().StringVar(&acmeEmail, "acme-email", "", "Email for Let's Encrypt (TLS edge). Also KINDLING_ACME_EMAIL.")
-	cmd.Flags().BoolVar(&acmeStaging, "acme-staging", false, "Use Let's Encrypt staging CA")
+	cmd.Flags().StringVar(&publicBaseURL, "public-url", "", "Optional seed for cluster_settings.public_base_url when that row is missing (e.g. first boot)")
+	cmd.Flags().StringVar(&edgeHTTPSAddr, "edge-https", "", "HTTPS listen for TLS edge proxy (e.g. :443); stored in cluster_settings when missing")
+	cmd.Flags().StringVar(&edgeHTTPAddr, "edge-http", ":80", "HTTP listen for edge proxy; stored in cluster_settings.edge_http_addr when missing")
+	cmd.Flags().StringVar(&acmeEmail, "acme-email", "", "Let's Encrypt email; stored in cluster_settings when missing")
+	cmd.Flags().BoolVar(&acmeStaging, "acme-staging", false, "Use Let's Encrypt staging CA; stored in cluster_settings when missing")
 
 	return cmd
 }
 
 type serveOptions struct {
 	listenAddr    string
-	databaseURL   string
 	publicBaseURL string
 	edgeHTTPSAddr string
 	edgeHTTPAddr  string
@@ -96,9 +80,8 @@ type serveOptions struct {
 	acmeStaging   bool
 }
 
-func runServe(ctx context.Context, opts serveOptions) error {
+func runServe(ctx context.Context, databaseURL string, opts serveOptions) error {
 	listenAddr := opts.listenAddr
-	databaseURL := opts.databaseURL
 	publicBaseURL := opts.publicBaseURL
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -122,7 +105,6 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	// Set up core services
 	serverID := loadServerID()
 	q := queries.New(db.Pool)
-	ghTok := strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
 
 	// Register this server in the database.
 	_, err = q.ServerRegister(ctx, queries.ServerRegisterParams{
@@ -151,24 +133,60 @@ func runServe(ctx context.Context, opts serveOptions) error {
 		}
 	}()
 
+	if err := q.ServerSettingEnsure(ctx, pgtype.UUID{Bytes: serverID, Valid: true}); err != nil {
+		return fmt.Errorf("ensure server settings: %w", err)
+	}
+
 	if err := seedPublicBaseURLIfUnset(ctx, q, publicBaseURL); err != nil {
 		return fmt.Errorf("seed public base url: %w", err)
 	}
+	if err := seedClusterSettingsFromServeFlags(ctx, q, opts); err != nil {
+		return fmt.Errorf("seed cluster settings: %w", err)
+	}
 
-	// Detect and create runtime.
-	rt := crunrt.NewDetectedRuntime()
+	masterKey, err := bootstrap.LoadOrCreateMasterKey()
+	if err != nil {
+		return fmt.Errorf("master key: %w", err)
+	}
+
+	cfgMgr := config.NewManager(db.Pool, serverID, masterKey)
+	if err := cfgMgr.Reload(ctx); err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	go func() {
+		if err := cfgMgr.RunListen(ctx); err != nil && ctx.Err() == nil {
+			slog.Error("config listen ended", "error", err)
+		}
+	}()
+
+	snap := cfgMgr.Snapshot()
+	pullAuth := registryAuthFromSnapshot(snap)
+	rt := crunrt.NewDetectedRuntime(crunrt.HostRuntimeConfig{
+		ForceRuntime:    snap.ServerRuntimeOverride,
+		AdvertiseHost:   snap.ServerAdvertiseHost,
+		PullAuth:        pullAuth,
+		CloudHypervisor: crunrt.CloudHypervisorHostConfig{
+			BinaryPath:    snap.ServerCloudHypervisorBin,
+			KernelPath:    snap.ServerCloudHypervisorKernelPath,
+			InitramfsPath: snap.ServerCloudHypervisorInitramfsPath,
+		},
+		AppleKernelPath:    "",
+		AppleInitramfsPath: "",
+	})
 	defer rt.StopAll()
 	slog.Info("runtime detected", "runtime", rt.Name())
 
-	regURL := strings.TrimSpace(os.Getenv("KINDLING_REGISTRY_URL"))
-	if regURL == "" {
-		regURL = "kindling"
-	}
-	bldr := builder.New(builder.Config{
-		RegistryURL:      regURL,
-		GitHubToken:      ghTok,
-		RegistryUsername: strings.TrimSpace(os.Getenv("KINDLING_REGISTRY_USERNAME")),
-		RegistryPassword: strings.TrimSpace(os.Getenv("KINDLING_REGISTRY_PASSWORD")),
+	bldr := builder.New(func(c context.Context) (builder.Config, error) {
+		s := cfgMgr.Snapshot()
+		if s == nil {
+			return builder.Config{}, fmt.Errorf("config snapshot unavailable")
+		}
+		return builder.Config{
+			GitHubToken:      s.GitHubToken,
+			RegistryURL:      s.RegistryURL,
+			RegistryUsername: s.RegistryUsername,
+			RegistryPassword: s.RegistryPassword,
+		}, nil
 	}, q, serverID)
 
 	deployer := deploy.New(q, db.Pool, serverID)
@@ -275,22 +293,17 @@ func runServe(ctx context.Context, opts serveOptions) error {
 	}()
 	slog.Info("WAL listener started")
 
-	if opts.edgeHTTPSAddr != "" {
-		coldStart := 2 * time.Minute
-		if v := strings.TrimSpace(os.Getenv("KINDLING_COLD_START_TIMEOUT")); v != "" {
-			if d, err := time.ParseDuration(v); err == nil && d > 0 {
-				coldStart = d
-			}
-		}
-		edgeHTTP := opts.edgeHTTPAddr
+	if snap.EdgeHTTPSAddr != "" {
+		coldStart := snap.ColdStartTimeout
+		edgeHTTP := snap.EdgeHTTPAddr
 		if edgeHTTP == "" {
 			edgeHTTP = ":80"
 		}
 		edgeSvc, err := edgeproxy.New(edgeproxy.Config{
 			HTTPAddr:          edgeHTTP,
-			HTTPSAddr:         opts.edgeHTTPSAddr,
-			ACMEEmail:         opts.acmeEmail,
-			ACMEStaging:       opts.acmeStaging,
+			HTTPSAddr:         snap.EdgeHTTPSAddr,
+			ACMEEmail:         snap.ACMEEmail,
+			ACMEStaging:       snap.ACMEStaging,
 			Pool:              db.Pool,
 			RouteChangeNotify: routeChangeCh,
 			ColdStartTimeout:  coldStart,
@@ -301,7 +314,7 @@ func runServe(ctx context.Context, opts serveOptions) error {
 		if err := edgeSvc.Start(ctx); err != nil {
 			return fmt.Errorf("edge proxy start: %w", err)
 		}
-		slog.Info("edge proxy started", "https", opts.edgeHTTPSAddr, "http", edgeHTTP)
+		slog.Info("edge proxy started", "https", snap.EdgeHTTPSAddr, "http", edgeHTTP)
 		go func() {
 			<-ctx.Done()
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -310,16 +323,10 @@ func runServe(ctx context.Context, opts serveOptions) error {
 		}()
 	}
 
-	idleSec := int64(300)
-	if v := strings.TrimSpace(os.Getenv("KINDLING_SCALE_TO_ZERO_IDLE_SECONDS")); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
-			idleSec = n
-		}
-	}
-	go runIdleScaleDownLoop(ctx, databaseURL, q, deploymentReconciler, idleSec)
+	go runIdleScaleDownLoop(ctx, databaseURL, q, deploymentReconciler, cfgMgr)
 
 	// API server
-	api := rpc.NewAPI(q, ghTok)
+	api := rpc.NewAPI(q, cfgMgr)
 	webhookHandler := webhook.NewHandler(q)
 
 	mux := http.NewServeMux()
@@ -352,7 +359,7 @@ func runServe(ctx context.Context, opts serveOptions) error {
 // runIdleScaleDownLoop periodically marks eligible projects as scaled_to_zero
 // so the deployment reconciler can drain instances. Only one process holds the
 // advisory lock per cluster at a time.
-func runIdleScaleDownLoop(ctx context.Context, databaseURL string, q *queries.Queries, deploymentReconciler *reconciler.Scheduler, idleSeconds int64) {
+func runIdleScaleDownLoop(ctx context.Context, databaseURL string, q *queries.Queries, deploymentReconciler *reconciler.Scheduler, cfgMgr *config.Manager) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -360,6 +367,10 @@ func runIdleScaleDownLoop(ctx context.Context, databaseURL string, q *queries.Qu
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			idleSeconds := int64(300)
+			if cfgMgr != nil && cfgMgr.Snapshot() != nil {
+				idleSeconds = cfgMgr.Snapshot().ScaleToZeroIdleSeconds
+			}
 			runIdleScaleDownOnce(ctx, databaseURL, q, deploymentReconciler, idleSeconds)
 		}
 	}
@@ -400,6 +411,51 @@ func runIdleScaleDownOnce(ctx context.Context, databaseURL string, q *queries.Qu
 		deploymentReconciler.ScheduleNow(uuid.UUID(dep.ID.Bytes))
 		slog.Info("idle scale-to-zero", "project_id", p.ID, "deployment_id", dep.ID)
 	}
+}
+
+func seedClusterSettingsFromServeFlags(ctx context.Context, q *queries.Queries, opts serveOptions) error {
+	if err := seedClusterSettingIfUnset(ctx, q, config.SettingEdgeHTTPSAddr, opts.edgeHTTPSAddr); err != nil {
+		return err
+	}
+	if err := seedClusterSettingIfUnset(ctx, q, config.SettingEdgeHTTPAddr, opts.edgeHTTPAddr); err != nil {
+		return err
+	}
+	if err := seedClusterSettingIfUnset(ctx, q, config.SettingACMEEmail, opts.acmeEmail); err != nil {
+		return err
+	}
+	if opts.acmeStaging {
+		if err := seedClusterSettingIfUnset(ctx, q, config.SettingACMEStaging, "true"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func seedClusterSettingIfUnset(ctx context.Context, q *queries.Queries, key, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	_, err := q.ClusterSettingGet(ctx, key)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	return q.ClusterSettingUpsert(ctx, queries.ClusterSettingUpsertParams{Key: key, Value: value})
+}
+
+func registryAuthFromSnapshot(s *config.Snapshot) *oci.Auth {
+	if s == nil {
+		return nil
+	}
+	u := strings.TrimSpace(s.RegistryUsername)
+	p := strings.TrimSpace(s.RegistryPassword)
+	if u == "" || p == "" {
+		return nil
+	}
+	return &oci.Auth{Username: u, Password: p}
 }
 
 func seedPublicBaseURLIfUnset(ctx context.Context, q *queries.Queries, fromFlag string) error {

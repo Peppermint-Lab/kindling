@@ -8,19 +8,30 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
 
 // API provides REST endpoints for the dashboard.
 type API struct {
-	q           *queries.Queries
-	githubToken string
+	q   *queries.Queries
+	cfg *config.Manager
 }
 
-// NewAPI creates a new API handler. githubToken is optional; when set it is used
-// for GitHub API calls (private repos and higher rate limits).
-func NewAPI(q *queries.Queries, githubToken string) *API {
-	return &API{q: q, githubToken: githubToken}
+// NewAPI creates a new API handler. cfg supplies DB-backed secrets (e.g. GitHub token).
+func NewAPI(q *queries.Queries, cfg *config.Manager) *API {
+	return &API{q: q, cfg: cfg}
+}
+
+func (a *API) gitHubToken() string {
+	if a.cfg == nil {
+		return ""
+	}
+	s := a.cfg.Snapshot()
+	if s == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.GitHubToken)
 }
 
 // Register mounts all API routes on the given mux.

@@ -53,7 +53,7 @@ func (a *API) gitHead(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ref := strings.TrimSpace(r.URL.Query().Get("ref"))
-	sha, usedRef, err := githubapi.ResolveCommit(r.Context(), nil, a.githubToken, repo, ref)
+	sha, usedRef, err := githubapi.ResolveCommit(r.Context(), nil, a.gitHubToken(), repo, ref)
 	if err != nil {
 		writeAPIError(w, http.StatusBadGateway, "github_error", err.Error())
 		return
@@ -97,6 +97,6 @@ func (a *API) gitHead(w http.ResponseWriter, r *http.Request) {
 		"running_commit":          runningCommit,
 		"latest_deployed_commit":  latestDeployed,
 		"update_available":        updateAvailable,
-		"github_token_configured": a.githubToken != "",
+		"github_token_configured": a.gitHubToken() != "",
 	})
 }
