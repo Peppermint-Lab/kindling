@@ -126,7 +126,18 @@ func skopeoCopy(ctx context.Context, src, dest string, useSrcAuth bool, auth *Au
 		args = append(args, "--src-creds", auth.Username+":"+auth.Password)
 	}
 	args = append(args, src, dest)
-	cmd := exec.CommandContext(ctx, "skopeo", args...)
+	// Rootless skopeo needs the same user namespace as buildah (see `buildah unshare`); otherwise
+	// `containers-storage:` reads fail with "Error during unshare(...): Operation not permitted".
+	var cmd *exec.Cmd
+	if runtime.GOOS == "linux" && os.Geteuid() != 0 && strings.HasPrefix(src, "containers-storage:") {
+		if _, err := exec.LookPath("buildah"); err == nil {
+			wrapped := append([]string{"unshare", "skopeo"}, args...)
+			cmd = exec.CommandContext(ctx, "buildah", wrapped...)
+		}
+	}
+	if cmd == nil {
+		cmd = exec.CommandContext(ctx, "skopeo", args...)
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s: %w", string(out), err)
