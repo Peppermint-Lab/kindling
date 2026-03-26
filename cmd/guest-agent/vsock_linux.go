@@ -1,25 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
-	"syscall"
 	"time"
-	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
-
-// sockaddrVM is the AF_VSOCK sockaddr structure.
-type sockaddrVM struct {
-	family    uint16
-	reserved1 uint16
-	port      uint32
-	cid       uint32
-	flags     uint8
-	zero      [3]uint8
-}
 
 // vsockConn wraps a raw vsock file descriptor as a net.Conn.
 type vsockConn struct {
@@ -36,30 +25,26 @@ func (c *vsockConn) SetReadDeadline(t time.Time) error  { return c.f.SetReadDead
 func (c *vsockConn) SetWriteDeadline(t time.Time) error { return c.f.SetWriteDeadline(t) }
 
 func dialVsock(cid, port int) (net.Conn, error) {
-	fd, err := syscall.Socket(40, syscall.SOCK_STREAM, 0) // AF_VSOCK = 40
-	if err != nil {
-		return nil, fmt.Errorf("socket: %w", err)
+	sa := &unix.SockaddrVM{CID: uint32(cid), Port: uint32(port)}
+	for {
+		fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM, 0)
+		if err != nil {
+			if errors.Is(err, unix.EINTR) {
+				continue
+			}
+			return nil, fmt.Errorf("socket: %w", err)
+		}
+		err = unix.Connect(fd, sa)
+		if err == nil {
+			f := os.NewFile(uintptr(fd), "vsock")
+			return &vsockConn{f: f}, nil
+		}
+		_ = unix.Close(fd)
+		if errors.Is(err, unix.EINTR) {
+			continue
+		}
+		return nil, fmt.Errorf("connect: %w", err)
 	}
-
-	sa := sockaddrVM{
-		family: 40,
-		port:   uint32(port),
-		cid:    uint32(cid),
-	}
-
-	_, _, errno := syscall.RawSyscall(
-		syscall.SYS_CONNECT,
-		uintptr(fd),
-		uintptr(unsafe.Pointer(&sa)),
-		unsafe.Sizeof(sa),
-	)
-	if errno != 0 {
-		syscall.Close(fd)
-		return nil, fmt.Errorf("connect: %w", errno)
-	}
-
-	f := os.NewFile(uintptr(fd), "vsock")
-	return &vsockConn{f: f}, nil
 }
 
 type vsockListener struct {
@@ -68,12 +53,17 @@ type vsockListener struct {
 }
 
 func (l *vsockListener) Accept() (net.Conn, error) {
-	nfd, _, err := unix.Accept(l.fd)
-	if err != nil {
+	for {
+		nfd, _, err := unix.Accept(l.fd)
+		if err == nil {
+			f := os.NewFile(uintptr(nfd), "vsock-accept")
+			return &vsockConn{f: f}, nil
+		}
+		if errors.Is(err, unix.EINTR) {
+			continue
+		}
 		return nil, err
 	}
-	f := os.NewFile(uintptr(nfd), "vsock-accept")
-	return &vsockConn{f: f}, nil
 }
 
 func (l *vsockListener) Close() error {
