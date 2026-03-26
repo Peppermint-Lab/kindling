@@ -43,3 +43,26 @@ func TestRequiresExternalHealthCheck(t *testing.T) {
 		t.Fatal("expected crun runtime to keep external health checks")
 	}
 }
+
+func TestShouldKeepRunningVM(t *testing.T) {
+	vm := queries.Vm{
+		Status: "running",
+	}
+
+	if shouldKeepRunningVM(vm, "cloud-hypervisor", false) {
+		t.Fatal("expected unhealthy external runtime VM to be recycled")
+	}
+
+	if !shouldKeepRunningVM(vm, "cloud-hypervisor", true) {
+		t.Fatal("expected healthy external runtime VM to stay in service")
+	}
+
+	if !shouldKeepRunningVM(vm, "apple-vz", false) {
+		t.Fatal("expected apple-vz VM to rely on runtime readiness instead of host health checks")
+	}
+
+	vm.DeletedAt = pgtype.Timestamptz{Valid: true, Time: time.Now()}
+	if shouldKeepRunningVM(vm, "cloud-hypervisor", true) {
+		t.Fatal("expected deleted VM to be recycled")
+	}
+}

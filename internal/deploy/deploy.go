@@ -423,15 +423,18 @@ func (d *Deployer) reconcileOneInstance(
 
 	if inst.Status == "running" && inst.VmID.Valid {
 		vm, err := d.q.VMFirstByID(ctx, inst.VmID)
-		if err == nil && !vm.DeletedAt.Valid && vm.Status == "running" {
+		if err == nil {
 			port := 3000
 			if vm.Port.Valid {
 				port = int(vm.Port.Int32)
 			}
-			if requiresExternalHealthCheck(d.rt.Name()) && !d.healthCheckVMFromHost(vm, port) {
-				return fmt.Errorf("instance failed health check")
+			hostHealthCheckOK := true
+			if d.rt != nil && requiresExternalHealthCheck(d.rt.Name()) {
+				hostHealthCheckOK = d.healthCheckVMFromHost(vm, port)
 			}
-			return nil
+			if shouldKeepRunningVM(vm, d.rt.Name(), hostHealthCheckOK) {
+				return nil
+			}
 		}
 	}
 
@@ -588,6 +591,16 @@ func (d *Deployer) waitHealthCheckLocalForwarded(runtimeURL string, maxWait time
 
 func requiresExternalHealthCheck(runtimeName string) bool {
 	return runtimeName != "apple-vz"
+}
+
+func shouldKeepRunningVM(vm queries.Vm, runtimeName string, hostHealthCheckOK bool) bool {
+	if vm.DeletedAt.Valid || vm.Status != "running" {
+		return false
+	}
+	if requiresExternalHealthCheck(runtimeName) && !hostHealthCheckOK {
+		return false
+	}
+	return true
 }
 
 func (d *Deployer) drainOldDeployments(ctx context.Context, current queries.Deployment) {
