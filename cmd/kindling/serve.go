@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -306,6 +308,13 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		if edgeHTTP == "" {
 			edgeHTTP = ":80"
 		}
+		cpHost, apiBackend, err := controlPlaneEdgeFromDB(ctx, q, listenAddr)
+		if err != nil {
+			return fmt.Errorf("control plane edge: %w", err)
+		}
+		if cpHost != "" {
+			slog.Info("edge control plane proxy", "host", cpHost, "api", apiBackend.String())
+		}
 		edgeSvc, err := edgeproxy.New(edgeproxy.Config{
 			HTTPAddr:          edgeHTTP,
 			HTTPSAddr:         snap.EdgeHTTPSAddr,
@@ -314,6 +323,8 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 			Pool:              db.Pool,
 			RouteChangeNotify: routeChangeCh,
 			ColdStartTimeout:  coldStart,
+			ControlPlaneHost:  cpHost,
+			APIBackend:        apiBackend,
 		})
 		if err != nil {
 			return fmt.Errorf("edge proxy: %w", err)
@@ -361,6 +372,54 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	}
 
 	return nil
+}
+
+// controlPlaneEdgeFromDB returns hostname + loopback API origin when public_base_url
+// is https with a non-IP host, so the edge can terminate TLS and proxy to the API.
+func controlPlaneEdgeFromDB(ctx context.Context, q *queries.Queries, listenAddr string) (string, *url.URL, error) {
+	v, err := q.ClusterSettingGet(ctx, rpc.ClusterSettingKeyPublicBaseURL)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil, nil
+		}
+		return "", nil, err
+	}
+	raw := rpc.NormalizePublicBaseURL(v)
+	if raw == "" {
+		return "", nil, nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return "", nil, nil
+	}
+	if u.Scheme != "https" {
+		return "", nil, nil
+	}
+	h := strings.ToLower(u.Hostname())
+	if net.ParseIP(h) != nil {
+		return "", nil, nil
+	}
+	apiURL, err := url.Parse(loopbackAPIOrigin(listenAddr))
+	if err != nil {
+		return "", nil, err
+	}
+	if apiURL.Scheme != "http" {
+		return "", nil, fmt.Errorf("api backend must be http, got %q", apiURL.Scheme)
+	}
+	return h, apiURL, nil
+}
+
+func loopbackAPIOrigin(listenAddr string) string {
+	if host, port, err := net.SplitHostPort(listenAddr); err == nil {
+		if host == "" || host == "0.0.0.0" || host == "[::]" || host == "::" {
+			host = "127.0.0.1"
+		}
+		return "http://" + net.JoinHostPort(host, port)
+	}
+	if strings.HasPrefix(listenAddr, ":") {
+		return "http://127.0.0.1" + listenAddr
+	}
+	return "http://" + listenAddr
 }
 
 // runIdleScaleDownLoop periodically marks eligible projects as scaled_to_zero

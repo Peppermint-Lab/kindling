@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,6 +48,14 @@ type Config struct {
 	// scaled-to-zero deployment (default 2m). The HTTPS server write timeout is
 	// sized from this.
 	ColdStartTimeout time.Duration
+
+	// ControlPlaneHost is the lowercase hostname from cluster public_base_url when
+	// that URL uses https and is not a bare IP. HTTPS on this host is proxied to
+	// APIBackend (Kindling API + webhooks on loopback).
+	ControlPlaneHost string
+
+	// APIBackend is the http://127.0.0.1:port origin for the control plane proxy.
+	APIBackend *url.URL
 }
 
 // Backend is one upstream target (IP:port) for a hostname.
@@ -98,6 +107,8 @@ func New(cfg Config) (*Service, error) {
 	q := queries.New(cfg.Pool)
 	storage := NewPostgreSQLStorage(cfg.Pool)
 
+	cpHost := strings.ToLower(strings.TrimSpace(cfg.ControlPlaneHost))
+
 	// Configure CertMagic.
 	certConfig := certmagic.NewDefault()
 	certConfig.Storage = storage
@@ -115,9 +126,12 @@ func New(cfg Config) (*Service, error) {
 		certConfig.Issuers = []certmagic.Issuer{issuer}
 	}
 
-	// On-demand TLS: only provision certs for verified domains.
+	// On-demand TLS: verified app domains, plus control plane hostname from public_base_url.
 	certConfig.OnDemand = &certmagic.OnDemandConfig{
 		DecisionFunc: func(ctx context.Context, name string) error {
+			if cpHost != "" && strings.EqualFold(name, cpHost) {
+				return nil
+			}
 			_, err := q.DomainVerified(ctx, name)
 			if err != nil {
 				return fmt.Errorf("domain not authorized: %s", name)
@@ -126,6 +140,7 @@ func New(cfg Config) (*Service, error) {
 		},
 	}
 
+	cfg.ControlPlaneHost = cpHost
 	s := &Service{
 		cfg:               cfg,
 		q:                 q,
@@ -317,6 +332,11 @@ func (s *Service) serveHTTPS(w http.ResponseWriter, r *http.Request) {
 		host = r.Host
 	}
 
+	if s.cfg.ControlPlaneHost != "" && s.cfg.APIBackend != nil && strings.EqualFold(host, s.cfg.ControlPlaneHost) {
+		s.proxyControlPlane(w, r, host)
+		return
+	}
+
 	s.mu.RLock()
 	route, ok := s.routes[host]
 	s.mu.RUnlock()
@@ -413,6 +433,26 @@ func (s *Service) requestColdStart(ctx context.Context, lookup queries.DomainEdg
 		return fmt.Errorf("request wake: %w", err)
 	}
 	return nil
+}
+
+func (s *Service) proxyControlPlane(w http.ResponseWriter, r *http.Request, host string) {
+	proxy := httputil.NewSingleHostReverseProxy(s.cfg.APIBackend)
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		req.Host = r.Host
+		if req.Header.Get("X-Forwarded-For") == "" {
+			req.Header.Set("X-Forwarded-For", r.RemoteAddr)
+		}
+		req.Header.Set("X-Forwarded-Proto", "https")
+		req.Header.Set("X-Forwarded-Host", r.Host)
+		req.Header.Set("X-Real-IP", r.RemoteAddr)
+	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		slog.Warn("control plane proxy error", "host", host, "error", err)
+		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+	}
+	proxy.ServeHTTP(w, r)
 }
 
 func (s *Service) reverseProxy(w http.ResponseWriter, r *http.Request, host string, route Route) {
