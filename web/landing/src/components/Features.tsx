@@ -25,7 +25,7 @@ export function Features() {
         <div>
           <dt className="font-semibold">Isolated builds</dt>
           <dd className="mt-1 text-gray-600 leading-relaxed">
-            Every build runs in its own environment via buildah/podman. No
+            Every build runs in its own environment via buildah. No
             shared Docker daemon, no cross-tenant leaks.
           </dd>
         </div>

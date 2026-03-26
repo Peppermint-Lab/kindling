@@ -13,7 +13,7 @@ const faqs = [
   },
   {
     q: "What's the minimum server requirement?",
-    a: "Any Linux server. A $5 VPS works for small projects. For microVM isolation you need KVM support. Without KVM, Kindling falls back to crun containers automatically. You need buildah or podman in PATH for builds.",
+    a: "Any Linux server. A $5 VPS works for small projects. For microVM isolation you need KVM support. Without KVM, Kindling falls back to crun containers automatically. You need buildah in PATH for builds.",
   },
   {
     q: "How does the reconciler architecture work?",
@@ -25,7 +25,7 @@ const faqs = [
   },
   {
     q: "What's the tech stack?",
-    a: "Go single binary. PostgreSQL for state and coordination. Cloud Hypervisor (rust-vmm) for microVMs. CertMagic for TLS. buildah/podman for OCI image builds. React + Vite + Tailwind for the dashboard. Connect RPC + REST API. OpenTelemetry for tracing.",
+    a: "Go single binary. PostgreSQL for state and coordination. Cloud Hypervisor (rust-vmm) for microVMs. CertMagic for TLS. buildah for OCI image builds. React + Vite + Tailwind for the dashboard. Connect RPC + REST API. OpenTelemetry for tracing.",
   },
 ]
 

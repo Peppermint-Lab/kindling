@@ -10,6 +10,27 @@ import (
 	"github.com/kindlingvm/kindling/internal/oci"
 )
 
+func writeFakeExecutable(t *testing.T, dir, name string) {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake %s: %v", name, err)
+	}
+}
+
+func TestDetectBuildEngine_requiresBuildah(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	podmanOnlyDir := t.TempDir()
+	writeFakeExecutable(t, podmanOnlyDir, "podman")
+	t.Setenv("PATH", podmanOnlyDir)
+
+	_, err := oci.DetectBuildEngine()
+	if err == nil {
+		t.Fatal("expected DetectBuildEngine to require buildah")
+	}
+}
+
 // TestExportImageRootfs_dockerHubAlpine pulls a small public image and unpacks it.
 // Requires network, skopeo, and umoci. Skips when tools are missing or -short.
 func TestExportImageRootfs_dockerHubAlpine(t *testing.T) {

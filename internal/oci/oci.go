@@ -1,4 +1,4 @@
-// Package oci wraps OCI image operations without the Docker CLI: build (buildah/podman),
+// Package oci wraps OCI image operations without the Docker CLI: build (buildah),
 // registry push, and exporting image rootfs via skopeo + umoci for microVM runtimes.
 package oci
 
@@ -15,14 +15,14 @@ import (
 	"sync"
 )
 
-// Auth holds optional registry credentials for skopeo/buildah/podman.
+// Auth holds optional registry credentials for skopeo/buildah.
 type Auth struct {
 	Username string
 	Password string
 }
 
 // ExportImageRootfs pulls an image by ref and unpacks its root filesystem into destDir.
-// It tries containers-storage first (local buildah/podman images), then docker:// for
+// It tries containers-storage first (local buildah images), then docker:// for
 // registry-backed refs. destDir is removed and recreated before unpack.
 func ExportImageRootfs(ctx context.Context, imageRef, destDir string, auth *Auth) error {
 	if err := os.RemoveAll(destDir); err != nil {
@@ -138,18 +138,14 @@ type BuildEngine string
 
 const (
 	EngineBuildah BuildEngine = "buildah"
-	EnginePodman  BuildEngine = "podman"
 )
 
-// DetectBuildEngine returns buildah or podman if available in PATH.
+// DetectBuildEngine returns buildah when available in PATH.
 func DetectBuildEngine() (BuildEngine, error) {
 	if _, err := exec.LookPath("buildah"); err == nil {
 		return EngineBuildah, nil
 	}
-	if _, err := exec.LookPath("podman"); err == nil {
-		return EnginePodman, nil
-	}
-	return "", fmt.Errorf("neither buildah nor podman found in PATH (install one for OCI image builds)")
+	return "", fmt.Errorf("buildah not found in PATH (install it for OCI image builds)")
 }
 
 // BuildDockerfile runs an OCI image build in buildDir, tagging the result as imageRef.
@@ -159,8 +155,6 @@ func BuildDockerfile(ctx context.Context, engine BuildEngine, buildDir, imageRef
 	switch engine {
 	case EngineBuildah:
 		cmd = exec.CommandContext(ctx, "buildah", "bud", "-t", imageRef, "-f", dockerfilePath, ".")
-	case EnginePodman:
-		cmd = exec.CommandContext(ctx, "podman", "build", "-t", imageRef, "-f", dockerfilePath, ".")
 	default:
 		return fmt.Errorf("unsupported build engine: %q", engine)
 	}
@@ -211,17 +205,6 @@ func PushImage(ctx context.Context, engine BuildEngine, imageRef string, auth *A
 		out, err := exec.CommandContext(ctx, "buildah", args...).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("buildah push: %s: %w", string(out), err)
-		}
-		return nil
-	case EnginePodman:
-		args := []string{"push"}
-		if auth != nil && auth.Username != "" {
-			args = append(args, "--creds", auth.Username+":"+auth.Password)
-		}
-		args = append(args, imageRef, dest)
-		out, err := exec.CommandContext(ctx, "podman", args...).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("podman push: %s: %w", string(out), err)
 		}
 		return nil
 	default:

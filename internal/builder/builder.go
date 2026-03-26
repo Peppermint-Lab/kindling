@@ -1,6 +1,6 @@
 // Package builder handles build orchestration. Source is downloaded as a GitHub tarball,
 // framework is auto-detected if no Dockerfile is present, and the image is built with
-// buildah or podman (OCI) and optionally pushed to a registry.
+// buildah (OCI) and optionally pushed to a registry.
 package builder
 
 import (
@@ -139,7 +139,7 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 		b.log(ctx, build.ID, "info", fmt.Sprintf("No Dockerfile found. Detected framework: %s", framework))
 	}
 
-	// Build the OCI image (buildah or podman).
+	// Build the OCI image with buildah.
 	imageTag := build.GithubCommit
 	if len(imageTag) > 12 {
 		imageTag = imageTag[:12]
