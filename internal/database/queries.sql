@@ -30,8 +30,9 @@ UPDATE servers SET status = 'drained', updated_at = NOW() WHERE id = $1;
 SELECT s.* FROM servers s
 LEFT JOIN vms v ON v.server_id = s.id AND v.deleted_at IS NULL
 WHERE s.status = 'active'
+  AND s.last_heartbeat_at > NOW() - INTERVAL '3 minutes'
 GROUP BY s.id
-ORDER BY COUNT(v.id) ASC
+ORDER BY COUNT(v.id) ASC, s.last_heartbeat_at DESC
 LIMIT 1;
 
 -- name: ServerAllocateIPRange :one
@@ -76,8 +77,8 @@ SELECT * FROM images WHERE id = $1;
 -- Projects --
 
 -- name: ProjectCreate :one
-INSERT INTO projects (id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO projects (id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: ProjectFirstByID :one
@@ -96,6 +97,64 @@ DELETE FROM projects WHERE id = $1;
 UPDATE projects
 SET github_webhook_secret = $2, updated_at = NOW()
 WHERE id = $1
+RETURNING *;
+
+-- name: ProjectUpdateDesiredInstanceCount :one
+UPDATE projects
+SET desired_instance_count = $2, updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- Deployment instances (horizontal scaling) --
+
+-- name: DeploymentInstanceCreate :one
+INSERT INTO deployment_instances (id, deployment_id, status)
+VALUES ($1, $2, 'pending')
+RETURNING *;
+
+-- name: DeploymentInstanceFirstByID :one
+SELECT * FROM deployment_instances WHERE id = $1;
+
+-- name: DeploymentInstanceFindByDeploymentID :many
+SELECT * FROM deployment_instances
+WHERE deployment_id = $1 AND deleted_at IS NULL
+ORDER BY created_at ASC;
+
+-- name: DeploymentInstanceUpdateServer :one
+UPDATE deployment_instances SET server_id = $2, updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING *;
+
+-- name: DeploymentInstanceUpdateStatus :one
+UPDATE deployment_instances SET status = $2, updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING *;
+
+-- name: DeploymentInstanceAttachVM :one
+UPDATE deployment_instances SET vm_id = $2, status = $3, updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING *;
+
+-- name: DeploymentInstanceSoftDelete :exec
+UPDATE deployment_instances SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1;
+
+-- name: DeploymentInstanceSoftDeleteByDeploymentID :exec
+UPDATE deployment_instances SET deleted_at = NOW(), updated_at = NOW()
+WHERE deployment_id = $1 AND deleted_at IS NULL;
+
+-- name: DeploymentInstanceVMIDsByServerID :many
+SELECT vm_id FROM deployment_instances
+WHERE server_id = $1 AND deleted_at IS NULL AND vm_id IS NOT NULL;
+
+-- name: DeploymentInstanceResetForDeadServer :exec
+UPDATE deployment_instances
+SET server_id = NULL, vm_id = NULL, status = 'pending', updated_at = NOW()
+WHERE server_id = $1 AND deleted_at IS NULL;
+
+-- name: DeploymentInstancePrepareRetry :one
+UPDATE deployment_instances
+SET server_id = NULL, vm_id = NULL, status = 'pending', updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
 -- Environment Variables --
@@ -206,7 +265,9 @@ UPDATE deployments SET stopped_at = NOW(), updated_at = NOW() WHERE id = $1;
 UPDATE deployments SET failed_at = NOW(), updated_at = NOW() WHERE id = $1;
 
 -- name: DeploymentFindByVMID :one
-SELECT * FROM deployments WHERE vm_id = $1 AND deleted_at IS NULL;
+SELECT d.* FROM deployments d
+JOIN deployment_instances di ON di.deployment_id = d.id AND di.deleted_at IS NULL
+WHERE di.vm_id = $1 AND d.deleted_at IS NULL;
 
 -- name: DeploymentFindRunningAndOlder :many
 SELECT * FROM deployments
@@ -219,8 +280,9 @@ WHERE project_id = $1
 ORDER BY created_at;
 
 -- name: DeploymentFindRunningByServerID :many
-SELECT d.* FROM deployments d
-JOIN vms v ON d.vm_id = v.id
+SELECT DISTINCT d.* FROM deployments d
+JOIN deployment_instances di ON di.deployment_id = d.id AND di.deleted_at IS NULL
+JOIN vms v ON di.vm_id = v.id AND v.deleted_at IS NULL
 WHERE v.server_id = $1
   AND d.running_at IS NOT NULL
   AND d.stopped_at IS NULL
@@ -298,7 +360,10 @@ SELECT d.domain_name,
        v.id AS vm_id
 FROM domains d
 LEFT JOIN deployments dep ON d.deployment_id = dep.id
-LEFT JOIN vms v ON dep.vm_id = v.id AND v.deleted_at IS NULL
+LEFT JOIN deployment_instances di ON di.deployment_id = dep.id
+    AND di.deleted_at IS NULL
+    AND di.status = 'running'
+LEFT JOIN vms v ON di.vm_id = v.id AND v.deleted_at IS NULL
 WHERE d.verified_at IS NOT NULL;
 
 -- VM Logs --

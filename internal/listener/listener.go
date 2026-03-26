@@ -40,11 +40,13 @@ type Config struct {
 	PublicationName string
 
 	// Handlers for each table.
-	OnDeployment Handler
-	OnBuild      Handler
-	OnVM         Handler
-	OnDomain     Handler
-	OnServer     Handler
+	OnDeployment         Handler
+	OnDeploymentInstance Handler
+	OnProject            Handler
+	OnBuild              Handler
+	OnVM                 Handler
+	OnDomain             Handler
+	OnServer             Handler
 }
 
 // Listener streams PostgreSQL WAL changes and dispatches to handlers.
@@ -116,7 +118,7 @@ func (l *Listener) setupPublication(ctx context.Context) error {
 	}
 
 	create := fmt.Sprintf(
-		"CREATE PUBLICATION %s FOR TABLE deployments, builds, vms, domains, servers",
+		"CREATE PUBLICATION %s FOR TABLE deployments, deployment_instances, projects, builds, vms, domains, servers",
 		l.cfg.PublicationName,
 	)
 	result = l.conn.Exec(ctx, create)
@@ -304,6 +306,14 @@ func (l *Listener) dispatch(ctx context.Context, relationID uint32, tuple *pglog
 	case "deployments":
 		if l.cfg.OnDeployment != nil {
 			l.cfg.OnDeployment(ctx, id)
+		}
+	case "deployment_instances":
+		if l.cfg.OnDeploymentInstance != nil {
+			l.cfg.OnDeploymentInstance(ctx, id)
+		}
+	case "projects":
+		if l.cfg.OnProject != nil {
+			l.cfg.OnProject(ctx, id)
 		}
 	case "builds":
 		if l.cfg.OnBuild != nil {

@@ -16,7 +16,7 @@ func TestBuildDeploymentReachabilityRuntimeOnly(t *testing.T) {
 		Port:      pgtype.Int4{Int32: 32768, Valid: true},
 	}
 
-	got := buildDeploymentReachability(vm, nil)
+	got := buildDeploymentReachabilityFromVMs([]*queries.Vm{vm}, nil)
 	if got == nil {
 		t.Fatal("expected reachability")
 	}
@@ -51,7 +51,7 @@ func TestBuildDeploymentReachabilityWithMixedPublicEndpoints(t *testing.T) {
 		},
 	}
 
-	got := buildDeploymentReachability(vm, domains)
+	got := buildDeploymentReachabilityFromVMs([]*queries.Vm{vm}, domains)
 	if got == nil {
 		t.Fatal("expected reachability")
 	}
@@ -86,7 +86,7 @@ func TestBuildDeploymentReachabilityFormatsIPv6RuntimeURL(t *testing.T) {
 		Port:      pgtype.Int4{Int32: 3000, Valid: true},
 	}
 
-	got := buildDeploymentReachability(vm, nil)
+	got := buildDeploymentReachabilityFromVMs([]*queries.Vm{vm}, nil)
 	if got == nil {
 		t.Fatal("expected reachability")
 	}
@@ -98,7 +98,7 @@ func TestBuildDeploymentReachabilityFormatsIPv6RuntimeURL(t *testing.T) {
 func TestBuildDeploymentReachabilityReturnsNilWhenEmpty(t *testing.T) {
 	t.Parallel()
 
-	if got := buildDeploymentReachability(nil, nil); got != nil {
+	if got := buildDeploymentReachabilityFromVMs(nil, nil); got != nil {
 		t.Fatalf("expected nil, got %#v", got)
 	}
 }

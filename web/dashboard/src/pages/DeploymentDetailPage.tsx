@@ -207,6 +207,14 @@ export function DeploymentDetailPage() {
                     {deployment.created_at ? new Date(deployment.created_at).toLocaleString() : "—"}
                   </dd>
                 </div>
+                {(deployment.desired_instance_count != null || deployment.running_instance_count != null) && (
+                  <div>
+                    <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Instances</dt>
+                    <dd className="font-mono text-sm mt-1">
+                      {deployment.running_instance_count ?? 0} / {deployment.desired_instance_count ?? 1} running
+                    </dd>
+                  </div>
+                )}
                 {deployment.build_status && (
                   <div className="sm:col-span-2">
                     <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Build</dt>

@@ -45,6 +45,7 @@ export type Project = {
   github_repository: string
   dockerfile_path: string
   root_directory: string
+  desired_instance_count?: number
   created_at: string
   updated_at: string
 }
@@ -63,6 +64,8 @@ export type Deployment = {
   updated_at?: string | null
   build_status?: string
   phase: string
+  desired_instance_count?: number
+  running_instance_count?: number
   reachable?: DeploymentReachability | null
 }
 
@@ -146,9 +149,13 @@ export const api = {
     github_repository?: string
     dockerfile_path?: string
     root_directory?: string
+    desired_instance_count?: number
   }) => request<Project>("/api/projects", { method: "POST", body: JSON.stringify(data) }),
 
   getProject: (id: string) => request<Project>(`/api/projects/${id}`),
+
+  patchProject: (id: string, data: { desired_instance_count: number }) =>
+    request<Project>(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteProject: (id: string) => request<void>(`/api/projects/${id}`, { method: "DELETE" }),
 
   getGitHubSetup: (projectId: string) =>

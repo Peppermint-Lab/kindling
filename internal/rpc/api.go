@@ -30,6 +30,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/projects", a.listProjects)
 	mux.HandleFunc("POST /api/projects", a.createProject)
 	mux.HandleFunc("GET /api/projects/{id}", a.getProject)
+	mux.HandleFunc("PATCH /api/projects/{id}", a.patchProject)
 	mux.HandleFunc("DELETE /api/projects/{id}", a.deleteProject)
 	mux.HandleFunc("GET /api/projects/{id}/deployments", a.listDeployments)
 	mux.HandleFunc("GET /api/projects/{id}/github-setup", a.getGitHubSetup)
@@ -51,7 +52,7 @@ func (a *API) getMeta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"public_base_url":              base,
+		"public_base_url":            base,
 		"public_base_url_configured": base != "",
 		"webhook_path":               "/webhooks/github",
 	})
@@ -75,7 +76,7 @@ func (a *API) putMeta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"public_base_url":              base,
+		"public_base_url":            base,
 		"public_base_url_configured": base != "",
 		"webhook_path":               "/webhooks/github",
 	})
@@ -101,10 +102,11 @@ func (a *API) listProjects(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name             string `json:"name"`
-		GithubRepository string `json:"github_repository"`
-		DockerfilePath   string `json:"dockerfile_path"`
-		RootDirectory    string `json:"root_directory"`
+		Name                 string `json:"name"`
+		GithubRepository     string `json:"github_repository"`
+		DockerfilePath       string `json:"dockerfile_path"`
+		RootDirectory        string `json:"root_directory"`
+		DesiredInstanceCount int32  `json:"desired_instance_count"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
@@ -136,6 +138,10 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		webhookSecret = s
 	}
 
+	desired := req.DesiredInstanceCount
+	if desired < 1 {
+		desired = 1
+	}
 	project, err := a.q.ProjectCreate(r.Context(), queries.ProjectCreateParams{
 		ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		Name:                 req.Name,
@@ -144,12 +150,49 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		GithubWebhookSecret:  webhookSecret,
 		RootDirectory:        req.RootDirectory,
 		DockerfilePath:       req.DockerfilePath,
+		DesiredInstanceCount: desired,
 	})
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "create_project", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, project)
+}
+
+func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUID(r.PathValue("id"))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
+		return
+	}
+	var req struct {
+		DesiredInstanceCount *int32 `json:"desired_instance_count"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
+		return
+	}
+	if req.DesiredInstanceCount == nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", "desired_instance_count is required")
+		return
+	}
+	if *req.DesiredInstanceCount < 1 {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", "desired_instance_count must be at least 1")
+		return
+	}
+	if _, err := a.q.ProjectFirstByID(r.Context(), id); err != nil {
+		writeAPIError(w, http.StatusNotFound, "not_found", "project not found")
+		return
+	}
+	project, err := a.q.ProjectUpdateDesiredInstanceCount(r.Context(), queries.ProjectUpdateDesiredInstanceCountParams{
+		ID:                   id,
+		DesiredInstanceCount: *req.DesiredInstanceCount,
+	})
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, projectStripSecret(project))
 }
 
 func (a *API) getProject(w http.ResponseWriter, r *http.Request) {

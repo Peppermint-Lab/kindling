@@ -15,20 +15,22 @@ import (
 
 // deploymentOut is the JSON shape for deployment resources (API v0.2).
 type deploymentOut struct {
-	ID           string  `json:"id"`
-	ProjectID    string  `json:"project_id"`
-	BuildID      *string `json:"build_id,omitempty"`
-	ImageID      *string `json:"image_id,omitempty"`
-	VmID         *string `json:"vm_id,omitempty"`
-	GithubCommit string  `json:"github_commit"`
-	RunningAt    *string `json:"running_at"`
-	StoppedAt    *string `json:"stopped_at"`
-	FailedAt     *string `json:"failed_at"`
-	CreatedAt    *string `json:"created_at"`
-	UpdatedAt    *string `json:"updated_at"`
-	BuildStatus  string  `json:"build_status,omitempty"`
-	Phase        string  `json:"phase"`
-	Reachable    *deploymentReachabilityOut `json:"reachable,omitempty"`
+	ID                   string                     `json:"id"`
+	ProjectID            string                     `json:"project_id"`
+	BuildID              *string                    `json:"build_id,omitempty"`
+	ImageID              *string                    `json:"image_id,omitempty"`
+	VmID                 *string                    `json:"vm_id,omitempty"`
+	GithubCommit         string                     `json:"github_commit"`
+	RunningAt            *string                    `json:"running_at"`
+	StoppedAt            *string                    `json:"stopped_at"`
+	FailedAt             *string                    `json:"failed_at"`
+	CreatedAt            *string                    `json:"created_at"`
+	UpdatedAt            *string                    `json:"updated_at"`
+	BuildStatus          string                     `json:"build_status,omitempty"`
+	Phase                string                     `json:"phase"`
+	DesiredInstanceCount int                        `json:"desired_instance_count,omitempty"`
+	RunningInstanceCount int                        `json:"running_instance_count,omitempty"`
+	Reachable            *deploymentReachabilityOut `json:"reachable,omitempty"`
 }
 
 type deploymentListItemOut struct {
@@ -101,7 +103,29 @@ func (a *API) deploymentToOutCtx(ctx context.Context, dep queries.Deployment) de
 			build = &b
 		}
 	}
-	return deploymentToOut(dep, build, a.deploymentReachability(ctx, dep))
+	out := deploymentToOut(dep, build, a.deploymentReachability(ctx, dep))
+	if proj, err := a.q.ProjectFirstByID(ctx, dep.ProjectID); err == nil {
+		out.DesiredInstanceCount = int(proj.DesiredInstanceCount)
+	}
+	insts, err := a.q.DeploymentInstanceFindByDeploymentID(ctx, dep.ID)
+	if err == nil {
+		rc := 0
+		for _, inst := range insts {
+			if inst.Status == "running" && inst.VmID.Valid {
+				rc++
+			}
+		}
+		out.RunningInstanceCount = rc
+		if out.VmID == nil {
+			for _, inst := range insts {
+				if inst.VmID.Valid {
+					out.VmID = optionalUUIDString(inst.VmID)
+					break
+				}
+			}
+		}
+	}
+	return out
 }
 
 func (a *API) listRowToOutCtx(ctx context.Context, row queries.DeploymentFindRecentWithProjectRow) deploymentListItemOut {
@@ -128,15 +152,46 @@ func (a *API) listRowToOutCtx(ctx context.Context, row queries.DeploymentFindRec
 		UpdatedAt:    row.UpdatedAt,
 	}
 	out := deploymentToOut(dep, buildPtr, a.deploymentReachability(ctx, dep))
+	if proj, err := a.q.ProjectFirstByID(ctx, dep.ProjectID); err == nil {
+		out.DesiredInstanceCount = int(proj.DesiredInstanceCount)
+	}
+	if insts, err := a.q.DeploymentInstanceFindByDeploymentID(ctx, dep.ID); err == nil {
+		rc := 0
+		for _, inst := range insts {
+			if inst.Status == "running" && inst.VmID.Valid {
+				rc++
+			}
+		}
+		out.RunningInstanceCount = rc
+		if out.VmID == nil {
+			for _, inst := range insts {
+				if inst.VmID.Valid {
+					out.VmID = optionalUUIDString(inst.VmID)
+					break
+				}
+			}
+		}
+	}
 	return deploymentListItemOut{deploymentOut: out, ProjectName: row.ProjectName}
 }
 
 func (a *API) deploymentReachability(ctx context.Context, dep queries.Deployment) *deploymentReachabilityOut {
-	var vm *queries.Vm
-	if dep.VmID.Valid {
+	var vms []*queries.Vm
+	if instances, err := a.q.DeploymentInstanceFindByDeploymentID(ctx, dep.ID); err == nil {
+		for _, inst := range instances {
+			if !inst.VmID.Valid {
+				continue
+			}
+			v, err := a.q.VMFirstByID(ctx, inst.VmID)
+			if err == nil && !v.DeletedAt.Valid {
+				vms = append(vms, &v)
+			}
+		}
+	}
+	if len(vms) == 0 && dep.VmID.Valid {
 		v, err := a.q.VMFirstByID(ctx, dep.VmID)
 		if err == nil && !v.DeletedAt.Valid {
-			vm = &v
+			vms = append(vms, &v)
 		}
 	}
 
@@ -146,13 +201,14 @@ func (a *API) deploymentReachability(ctx context.Context, dep queries.Deployment
 		domains = rows
 	}
 
-	return buildDeploymentReachability(vm, domains)
+	return buildDeploymentReachabilityFromVMs(vms, domains)
 }
 
-func buildDeploymentReachability(vm *queries.Vm, domains []queries.Domain) *deploymentReachabilityOut {
+func buildDeploymentReachabilityFromVMs(vms []*queries.Vm, domains []queries.Domain) *deploymentReachabilityOut {
 	var out deploymentReachabilityOut
 
-	if vm != nil {
+	if len(vms) > 0 {
+		vm := vms[0]
 		out.VmIP = vm.IpAddress.String()
 		if vm.Port.Valid {
 			port := int(vm.Port.Int32)

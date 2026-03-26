@@ -12,6 +12,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/caddyserver/certmagic"
@@ -40,10 +41,15 @@ type Config struct {
 	RouteChangeNotify <-chan struct{}
 }
 
+// Backend is one upstream target (IP:port) for a hostname.
+type Backend struct {
+	IP   string
+	Port int32
+}
+
 // Route represents routing information for a domain.
 type Route struct {
-	IP                 string
-	Port               int32
+	Backends           []Backend
 	RedirectTo         string
 	RedirectStatusCode int32
 }
@@ -57,6 +63,7 @@ type Service struct {
 	certConfig  *certmagic.Config
 	routes      map[string]Route
 	mu          sync.RWMutex
+	backendRR   atomic.Uint64
 	cancel      context.CancelFunc
 }
 
@@ -176,24 +183,53 @@ func (s *Service) loadRoutes(ctx context.Context) error {
 		return err
 	}
 
-	newRoutes := make(map[string]Route)
+	redirects := make(map[string]Route)
+	// domain -> vm_id (hex string) -> struct{} for deduplication
+	proxySeen := make(map[string]map[string]struct{})
+	proxyBackends := make(map[string][]Backend)
+
 	for _, row := range rows {
 		if row.RedirectTo.Valid {
-			newRoutes[row.DomainName] = Route{
+			redirects[row.DomainName] = Route{
 				RedirectTo:         row.RedirectTo.String,
 				RedirectStatusCode: row.RedirectStatusCode.Int32,
 			}
 			continue
 		}
-
-		if !row.VmIp.IsValid() {
+		if row.VmIp == nil || !row.VmIp.IsValid() {
 			continue
 		}
-
-		newRoutes[row.DomainName] = Route{
+		vmKey := ""
+		if row.VmID.Valid {
+			vmKey = fmt.Sprintf("%x", row.VmID.Bytes)
+		}
+		if proxySeen[row.DomainName] == nil {
+			proxySeen[row.DomainName] = make(map[string]struct{})
+		}
+		if vmKey != "" {
+			if _, dup := proxySeen[row.DomainName][vmKey]; dup {
+				continue
+			}
+			proxySeen[row.DomainName][vmKey] = struct{}{}
+		}
+		proxyBackends[row.DomainName] = append(proxyBackends[row.DomainName], Backend{
 			IP:   row.VmIp.String(),
 			Port: row.VmPort.Int32,
+		})
+	}
+
+	newRoutes := make(map[string]Route)
+	for domain, r := range redirects {
+		newRoutes[domain] = r
+	}
+	for domain, bes := range proxyBackends {
+		if _, hasRedir := newRoutes[domain]; hasRedir {
+			continue
 		}
+		if len(bes) == 0 {
+			continue
+		}
+		newRoutes[domain] = Route{Backends: bes}
 	}
 
 	s.mu.Lock()
@@ -241,6 +277,15 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, target, http.StatusMovedPermanently)
 }
 
+func (s *Service) pickBackend(route Route) (Backend, bool) {
+	n := len(route.Backends)
+	if n == 0 {
+		return Backend{}, false
+	}
+	i := (s.backendRR.Add(1) - 1) % uint64(n)
+	return route.Backends[i], true
+}
+
 // serveHTTPS is the main proxy handler.
 func (s *Service) serveHTTPS(w http.ResponseWriter, r *http.Request) {
 	host, _, err := net.SplitHostPort(r.Host)
@@ -267,8 +312,13 @@ func (s *Service) serveHTTPS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reverse proxy to VM.
-	targetURL := fmt.Sprintf("http://%s:%d", route.IP, route.Port)
+	be, ok := s.pickBackend(route)
+	if !ok {
+		http.Error(w, "Service Not Found", http.StatusNotFound)
+		return
+	}
+
+	targetURL := fmt.Sprintf("http://%s:%d", be.IP, be.Port)
 	target, err := url.Parse(targetURL)
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)

@@ -29,6 +29,7 @@ export function ProjectsPage() {
     github_repository: "",
     dockerfile_path: "Dockerfile",
     root_directory: "/",
+    desired_instance_count: 1,
   })
 
   useEffect(() => {
@@ -49,6 +50,7 @@ export function ProjectsPage() {
         github_repository: form.github_repository.trim() || undefined,
         dockerfile_path: form.dockerfile_path.trim() || "Dockerfile",
         root_directory: form.root_directory.trim() || "/",
+        desired_instance_count: Math.max(1, Math.floor(Number(form.desired_instance_count)) || 1),
       })
       setDialogOpen(false)
       setForm({
@@ -56,6 +58,7 @@ export function ProjectsPage() {
         github_repository: "",
         dockerfile_path: "Dockerfile",
         root_directory: "/",
+        desired_instance_count: 1,
       })
       navigate(`/projects/${project.id}`)
     } catch (e) {
@@ -183,6 +186,20 @@ export function ProjectsPage() {
                   onChange={(e) => setForm({ ...form, root_directory: e.target.value })}
                 />
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="instances">Desired instance count</Label>
+              <Input
+                id="instances"
+                type="number"
+                min={1}
+                className="font-mono text-sm max-w-[140px]"
+                value={form.desired_instance_count}
+                onChange={(e) =>
+                  setForm({ ...form, desired_instance_count: Number(e.target.value) || 1 })
+                }
+              />
+              <p className="text-xs text-muted-foreground">Replicas for each running deployment (default 1).</p>
             </div>
           </div>
           <DialogFooter className="flex-col gap-2 sm:flex-row sm:gap-0">

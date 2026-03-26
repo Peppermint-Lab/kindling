@@ -15,11 +15,11 @@ func TestParseRuntimeAddress(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		raw     string
-		wantIP  netip.Addr
+		name     string
+		raw      string
+		wantIP   netip.Addr
 		wantPort int
-		wantErr bool
+		wantErr  bool
 	}{
 		{
 			name:     "docker host port",
@@ -76,44 +76,42 @@ func TestParseRuntimeAddress(t *testing.T) {
 	}
 }
 
-func TestPersistRuntimeVMMetadata(t *testing.T) {
+func TestPersistInstanceVMMetadata(t *testing.T) {
 	t.Parallel()
 
 	serverID := uuid.New()
-	deploymentID := uuid.New()
+	instanceID := uuid.New()
 	imageID := uuid.New()
 
-	store := &fakeRuntimeVMMetadataStore{
-		updateResult: queries.Deployment{
-			ID:    pgUUID(deploymentID),
-			VmID:  pgUUID(uuid.New()),
+	store := &fakeInstanceVMStore{
+		instance: queries.DeploymentInstance{
+			ID:           pgUUID(instanceID),
+			DeploymentID: pgUUID(uuid.New()),
+			Status:       "starting",
 		},
 	}
 
 	d := &Deployer{serverID: serverID}
-	dep := queries.Deployment{
-		ID:      pgUUID(deploymentID),
-		ImageID: pgUUID(imageID),
-	}
-
-	gotDep, err := d.persistRuntimeVMMetadata(
+	err := d.persistInstanceVMMetadata(
 		context.Background(),
 		store,
-		dep,
+		pgUUID(instanceID),
+		pgUUID(imageID),
+		serverID,
 		"127.0.0.1:32768",
 		1,
 		512,
 		[]string{"PORT=3000", "HELLO=world"},
 	)
 	if err != nil {
-		t.Fatalf("persistRuntimeVMMetadata: %v", err)
+		t.Fatalf("persistInstanceVMMetadata: %v", err)
 	}
 
 	if !store.created {
 		t.Fatal("expected VMCreate to be called")
 	}
-	if !store.updated {
-		t.Fatal("expected DeploymentUpdateVM to be called")
+	if !store.attached {
+		t.Fatal("expected DeploymentInstanceAttachVM to be called")
 	}
 	if store.createArg.ServerID != pgUUID(serverID) {
 		t.Fatalf("server_id = %+v, want %+v", store.createArg.ServerID, pgUUID(serverID))
@@ -124,20 +122,11 @@ func TestPersistRuntimeVMMetadata(t *testing.T) {
 	if store.createArg.Status != "running" {
 		t.Fatalf("status = %q, want running", store.createArg.Status)
 	}
-	if store.createArg.IpAddress != netip.MustParseAddr("127.0.0.1") {
-		t.Fatalf("ip_address = %s", store.createArg.IpAddress)
+	if store.attachArg.Status != "running" {
+		t.Fatalf("attach status = %q, want running", store.attachArg.Status)
 	}
-	if !store.createArg.Port.Valid || store.createArg.Port.Int32 != 32768 {
-		t.Fatalf("port = %+v, want 32768", store.createArg.Port)
-	}
-	if store.updateArg.ID != pgUUID(deploymentID) {
-		t.Fatalf("deployment id = %+v, want %+v", store.updateArg.ID, pgUUID(deploymentID))
-	}
-	if !store.updateArg.VmID.Valid {
-		t.Fatal("expected vm id to be set on deployment update")
-	}
-	if gotDep.VmID != store.updateArg.VmID {
-		t.Fatalf("returned deployment vm_id = %+v, want %+v", gotDep.VmID, store.updateArg.VmID)
+	if store.attachArg.ID != pgUUID(instanceID) {
+		t.Fatalf("attach instance id mismatch")
 	}
 
 	var persistedEnv []string
@@ -149,27 +138,28 @@ func TestPersistRuntimeVMMetadata(t *testing.T) {
 	}
 }
 
-func TestPersistRuntimeVMMetadataSoftDeletesVMWhenAttachFails(t *testing.T) {
+func TestPersistInstanceVMMetadataSoftDeletesVMWhenAttachFails(t *testing.T) {
 	t.Parallel()
 
 	serverID := uuid.New()
-	deploymentID := uuid.New()
+	instanceID := uuid.New()
 	imageID := uuid.New()
 
-	store := &fakeRuntimeVMMetadataStore{
-		updateErr: assertErr("attach failed"),
+	store := &fakeInstanceVMStore{
+		instance: queries.DeploymentInstance{
+			ID:     pgUUID(instanceID),
+			Status: "starting",
+		},
+		attachErr: assertErr("attach failed"),
 	}
 
 	d := &Deployer{serverID: serverID}
-	dep := queries.Deployment{
-		ID:      pgUUID(deploymentID),
-		ImageID: pgUUID(imageID),
-	}
-
-	_, err := d.persistRuntimeVMMetadata(
+	err := d.persistInstanceVMMetadata(
 		context.Background(),
 		store,
-		dep,
+		pgUUID(instanceID),
+		pgUUID(imageID),
+		serverID,
 		"127.0.0.1:32768",
 		1,
 		512,
@@ -181,41 +171,40 @@ func TestPersistRuntimeVMMetadataSoftDeletesVMWhenAttachFails(t *testing.T) {
 	if !store.softDeleted {
 		t.Fatal("expected VMSoftDelete to be called when attach fails")
 	}
-	if !store.softDeleteID.Valid {
-		t.Fatal("expected soft delete vm id to be recorded")
-	}
 }
 
-type fakeRuntimeVMMetadataStore struct {
-	createArg    queries.VMCreateParams
-	updateArg    queries.DeploymentUpdateVMParams
-	updateResult queries.Deployment
-	updateErr    error
-	softDeleteID pgtype.UUID
-	created      bool
-	updated      bool
-	softDeleted  bool
+type fakeInstanceVMStore struct {
+	instance    queries.DeploymentInstance
+	attachErr   error
+	createArg   queries.VMCreateParams
+	attachArg   queries.DeploymentInstanceAttachVMParams
+	created     bool
+	attached    bool
+	softDeleted bool
 }
 
-func (f *fakeRuntimeVMMetadataStore) VMCreate(_ context.Context, arg queries.VMCreateParams) (queries.Vm, error) {
+func (f *fakeInstanceVMStore) DeploymentInstanceFirstByID(_ context.Context, _ pgtype.UUID) (queries.DeploymentInstance, error) {
+	return f.instance, nil
+}
+
+func (f *fakeInstanceVMStore) VMCreate(_ context.Context, arg queries.VMCreateParams) (queries.Vm, error) {
 	f.created = true
 	f.createArg = arg
 	return queries.Vm{ID: arg.ID}, nil
 }
 
-func (f *fakeRuntimeVMMetadataStore) DeploymentUpdateVM(_ context.Context, arg queries.DeploymentUpdateVMParams) (queries.Deployment, error) {
-	f.updated = true
-	f.updateArg = arg
-	if f.updateErr != nil {
-		return queries.Deployment{}, f.updateErr
+func (f *fakeInstanceVMStore) DeploymentInstanceAttachVM(_ context.Context, arg queries.DeploymentInstanceAttachVMParams) (queries.DeploymentInstance, error) {
+	f.attached = true
+	f.attachArg = arg
+	if f.attachErr != nil {
+		return queries.DeploymentInstance{}, f.attachErr
 	}
-	f.updateResult.VmID = arg.VmID
-	return f.updateResult, nil
+	return f.instance, nil
 }
 
-func (f *fakeRuntimeVMMetadataStore) VMSoftDelete(_ context.Context, id pgtype.UUID) error {
+func (f *fakeInstanceVMStore) VMSoftDelete(_ context.Context, id pgtype.UUID) error {
 	f.softDeleted = true
-	f.softDeleteID = id
+	_ = id
 	return nil
 }
 
@@ -224,13 +213,13 @@ func pgUUID(id uuid.UUID) pgtype.UUID {
 }
 
 func assertErr(msg string) error {
-	return &testErr{msg: msg}
+	return &testErrMsg{msg: msg}
 }
 
-type testErr struct {
+type testErrMsg struct {
 	msg string
 }
 
-func (e *testErr) Error() string {
+func (e *testErrMsg) Error() string {
 	return e.msg
 }

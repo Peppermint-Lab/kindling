@@ -60,6 +60,17 @@ type Deployment struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type DeploymentInstance struct {
+	ID           pgtype.UUID        `json:"id"`
+	DeploymentID pgtype.UUID        `json:"deployment_id"`
+	ServerID     pgtype.UUID        `json:"server_id"`
+	VmID         pgtype.UUID        `json:"vm_id"`
+	Status       string             `json:"status"`
+	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Domain struct {
 	ID                 pgtype.UUID        `json:"id"`
 	ProjectID          pgtype.UUID        `json:"project_id"`
@@ -97,6 +108,7 @@ type Project struct {
 	GithubWebhookSecret  string             `json:"github_webhook_secret"`
 	RootDirectory        string             `json:"root_directory"`
 	DockerfilePath       string             `json:"dockerfile_path"`
+	DesiredInstanceCount int32              `json:"desired_instance_count"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }

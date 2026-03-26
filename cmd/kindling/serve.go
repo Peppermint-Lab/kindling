@@ -11,7 +11,9 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/builder"
@@ -20,17 +22,16 @@ import (
 	"github.com/kindlingvm/kindling/internal/deploy"
 	"github.com/kindlingvm/kindling/internal/listener"
 	"github.com/kindlingvm/kindling/internal/reconciler"
-	crunrt "github.com/kindlingvm/kindling/internal/runtime"
 	"github.com/kindlingvm/kindling/internal/rpc"
+	crunrt "github.com/kindlingvm/kindling/internal/runtime"
 	"github.com/kindlingvm/kindling/internal/webhook"
 	"github.com/spf13/cobra"
-	"github.com/google/uuid"
 )
 
 func serveCmd() *cobra.Command {
 	var (
-		listenAddr   string
-		databaseURL  string
+		listenAddr    string
+		databaseURL   string
 		publicBaseURL string
 	)
 
@@ -95,6 +96,21 @@ func runServe(ctx context.Context, listenAddr, databaseURL, publicBaseURL string
 	}
 	slog.Info("server registered", "server_id", serverID)
 
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := q.ServerHeartbeat(ctx, pgtype.UUID{Bytes: serverID, Valid: true}); err != nil {
+					slog.Error("server heartbeat failed", "error", err)
+				}
+			}
+		}
+	}()
+
 	if err := seedPublicBaseURLIfUnset(ctx, q, publicBaseURL); err != nil {
 		return fmt.Errorf("seed public base url: %w", err)
 	}
@@ -109,7 +125,7 @@ func runServe(ctx context.Context, listenAddr, databaseURL, publicBaseURL string
 		GitHubToken: ghTok,
 	}, q, serverID)
 
-	deployer := deploy.New(q, serverID)
+	deployer := deploy.New(q, db.Pool, serverID)
 	deployer.SetRuntime(rt)
 
 	// Set up reconcilers
@@ -174,11 +190,29 @@ func runServe(ctx context.Context, listenAddr, databaseURL, publicBaseURL string
 		OnDeployment: func(ctx context.Context, id uuid.UUID) {
 			deploymentReconciler.ScheduleNow(id)
 		},
+		OnDeploymentInstance: func(ctx context.Context, instanceID uuid.UUID) {
+			inst, err := q.DeploymentInstanceFirstByID(ctx, pgtype.UUID{Bytes: instanceID, Valid: true})
+			if err == nil && inst.DeploymentID.Valid {
+				deploymentReconciler.ScheduleNow(uuid.UUID(inst.DeploymentID.Bytes))
+			}
+			notifyRouteChange()
+		},
+		OnProject: func(ctx context.Context, projectID uuid.UUID) {
+			dep, err := q.DeploymentLatestRunningByProjectID(ctx, pgtype.UUID{Bytes: projectID, Valid: true})
+			if err == nil {
+				deploymentReconciler.ScheduleNow(uuid.UUID(dep.ID.Bytes))
+			}
+		},
 		OnBuild: func(ctx context.Context, id uuid.UUID) {
 			buildReconciler.ScheduleNow(id)
 		},
 		OnVM: func(ctx context.Context, id uuid.UUID) {
 			vmReconciler.ScheduleNow(id)
+			dep, err := q.DeploymentFindByVMID(ctx, pgtype.UUID{Bytes: id, Valid: true})
+			if err == nil {
+				deploymentReconciler.ScheduleNow(uuid.UUID(dep.ID.Bytes))
+			}
+			notifyRouteChange()
 		},
 		OnDomain: func(ctx context.Context, id uuid.UUID) {
 			domainReconciler.ScheduleNow(id)

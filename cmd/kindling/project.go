@@ -30,9 +30,9 @@ func projectCmd() *cobra.Command {
 
 func projectCreateCmd() *cobra.Command {
 	var (
-		name   string
-		repo   string
-		dbURL  string
+		name  string
+		repo  string
+		dbURL string
 	)
 
 	cmd := &cobra.Command{
@@ -63,6 +63,7 @@ func projectCreateCmd() *cobra.Command {
 				GithubWebhookSecret:  webhookSecret,
 				RootDirectory:        "/",
 				DockerfilePath:       "Dockerfile",
+				DesiredInstanceCount: 1,
 			})
 			if err != nil {
 				return fmt.Errorf("create project: %w", err)

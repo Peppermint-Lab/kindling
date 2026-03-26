@@ -32,9 +32,29 @@ CREATE TABLE IF NOT EXISTS projects (
     github_webhook_secret   TEXT NOT NULL DEFAULT '',
     root_directory          TEXT NOT NULL DEFAULT '',
     dockerfile_path         TEXT NOT NULL DEFAULT 'Dockerfile',
+    desired_instance_count  INT NOT NULL DEFAULT 1,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Migrate existing DBs created before desired_instance_count existed
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'projects' AND column_name = 'desired_instance_count'
+    ) THEN
+        ALTER TABLE projects ADD COLUMN desired_instance_count INT NOT NULL DEFAULT 1;
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'projects_desired_instance_count_check'
+    ) THEN
+        ALTER TABLE projects ADD CONSTRAINT projects_desired_instance_count_check
+            CHECK (desired_instance_count > 0);
+    END IF;
+END $$;
 
 -- Environment variables per project (values are encrypted)
 CREATE TABLE IF NOT EXISTS environment_variables (
@@ -100,6 +120,35 @@ CREATE TABLE IF NOT EXISTS deployments (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Deployment instances: one row per replica (horizontal scale) for a deployment revision
+CREATE TABLE IF NOT EXISTS deployment_instances (
+    id              UUID PRIMARY KEY,
+    deployment_id   UUID NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+    server_id       UUID REFERENCES servers(id),
+    vm_id           UUID REFERENCES vms(id),
+    status          TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'starting', 'running', 'failed', 'stopped')),
+    deleted_at      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_deployment_instances_deployment_id
+    ON deployment_instances(deployment_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_deployment_instances_server_id
+    ON deployment_instances(server_id) WHERE deleted_at IS NULL;
+
+-- Backfill from legacy deployments.vm_id (one VM per deployment) into deployment_instances
+INSERT INTO deployment_instances (id, deployment_id, server_id, vm_id, status, created_at, updated_at)
+SELECT gen_random_uuid(), d.id, v.server_id, d.vm_id, 'running', NOW(), NOW()
+FROM deployments d
+JOIN vms v ON v.id = d.vm_id AND v.deleted_at IS NULL
+WHERE d.vm_id IS NOT NULL AND d.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM deployment_instances di
+      WHERE di.deployment_id = d.id AND di.deleted_at IS NULL
+  );
 
 -- Domains: hostname routing
 CREATE TABLE IF NOT EXISTS domains (

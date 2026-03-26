@@ -61,6 +61,9 @@ export function ProjectDetailPage() {
   const [gitHeadRef, setGitHeadRef] = useState("")
   const [fetchingHeadForDialog, setFetchingHeadForDialog] = useState(false)
 
+  const [desiredInstances, setDesiredInstances] = useState(1)
+  const [scalingSaving, setScalingSaving] = useState(false)
+
   const loadGitHubSetup = useCallback(async (projectId: string, hasRepo: boolean) => {
     if (!hasRepo) {
       setGhSetup(null)
@@ -81,6 +84,8 @@ export function ProjectDetailPage() {
       .then(([p, d]) => {
         setProject(p)
         setDeployments(d)
+        const di = p.desired_instance_count
+        setDesiredInstances(typeof di === "number" && di >= 1 ? di : 1)
         void loadGitHubSetup(id, Boolean(p.github_repository?.trim()))
       })
       .catch((e) => setError(e instanceof APIError ? e.message : String(e)))
@@ -158,6 +163,24 @@ export function ProjectDetailPage() {
       setError(e instanceof APIError ? e.message : "Delete failed")
     } finally {
       setDeleting(false)
+    }
+  }
+
+  const handleSaveScaling = async () => {
+    if (!id) return
+    const n = Math.max(1, Math.floor(Number(desiredInstances)) || 1)
+    setScalingSaving(true)
+    setError(null)
+    try {
+      const p = await api.patchProject(id, { desired_instance_count: n })
+      setProject(p)
+      setDesiredInstances(p.desired_instance_count ?? n)
+      const d = await api.listDeployments(id)
+      setDeployments(d)
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not update instance count")
+    } finally {
+      setScalingSaving(false)
     }
   }
 
@@ -277,6 +300,44 @@ export function ProjectDetailPage() {
                 <div>
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Root directory</p>
                   <p className="font-mono text-sm mt-1">{project.root_directory}</p>
+                </div>
+              </div>
+              <div className="border-t pt-4 space-y-2">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Horizontal scaling</p>
+                <p className="text-xs text-muted-foreground">
+                  Desired replicas for the running deployment. Changes converge via the reconciler (may take a few
+                  seconds).
+                </p>
+                {latestRunningDeployment != null ? (
+                  <p className="text-sm">
+                    Current:{" "}
+                    <span className="font-mono">
+                      {latestRunningDeployment.running_instance_count ?? 0} /{" "}
+                      {latestRunningDeployment.desired_instance_count ?? project.desired_instance_count ?? 1} running
+                    </span>
+                  </p>
+                ) : null}
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                  <div className="space-y-1 flex-1 min-w-0">
+                    <Label className="text-xs text-muted-foreground">Desired instance count</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      className="font-mono h-9 w-full sm:max-w-[120px]"
+                      value={desiredInstances}
+                      onChange={(e) => setDesiredInstances(Number(e.target.value))}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    disabled={scalingSaving}
+                    className="shrink-0"
+                    onClick={() => void handleSaveScaling()}
+                  >
+                    {scalingSaving ? "Saving…" : "Save"}
+                  </Button>
                 </div>
               </div>
             </CardContent>

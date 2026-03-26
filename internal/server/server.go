@@ -230,9 +230,24 @@ func (s *Server) detectDeadServers(ctx context.Context) error {
 			Status: "dead",
 		}); err != nil {
 			slog.Error("failed to mark server dead", "server_id", srv.ID, "error", err)
+			continue
 		}
 
-		// TODO: VM failover — soft-delete VMs on dead server and recreate on healthy servers
+		vmIDs, err := s.q.DeploymentInstanceVMIDsByServerID(ctx, srv.ID)
+		if err != nil {
+			slog.Error("list instance vms for dead server", "server_id", srv.ID, "error", err)
+			continue
+		}
+		for _, vid := range vmIDs {
+			if vid.Valid {
+				if err := s.q.VMSoftDelete(ctx, vid); err != nil {
+					slog.Error("soft-delete vm on dead server", "vm_id", vid, "error", err)
+				}
+			}
+		}
+		if err := s.q.DeploymentInstanceResetForDeadServer(ctx, srv.ID); err != nil {
+			slog.Error("reset deployment instances for dead server", "server_id", srv.ID, "error", err)
+		}
 	}
 
 	return nil
