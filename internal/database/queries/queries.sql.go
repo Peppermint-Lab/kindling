@@ -1730,20 +1730,27 @@ func (q *Queries) InstanceUsageLastBefore(ctx context.Context, arg InstanceUsage
 }
 
 const instanceUsageLatestPerInstance = `-- name: InstanceUsageLatestPerInstance :many
-SELECT DISTINCT ON (deployment_instance_id)
-    deployment_instance_id,
-    sampled_at,
-    cpu_nanos_cumulative,
-    cpu_percent,
-    memory_rss_bytes,
-    disk_read_bytes,
-    disk_write_bytes,
-    source,
-    server_id
-FROM instance_usage_samples
-WHERE project_id = $1
-  AND sampled_at >= $2
-ORDER BY deployment_instance_id, sampled_at DESC
+SELECT DISTINCT ON (s.deployment_instance_id)
+    s.deployment_instance_id,
+    s.sampled_at,
+    s.cpu_nanos_cumulative,
+    s.cpu_percent,
+    s.memory_rss_bytes,
+    s.disk_read_bytes,
+    s.disk_write_bytes,
+    s.source,
+    s.server_id
+FROM instance_usage_samples s
+INNER JOIN deployment_instances di ON di.id = s.deployment_instance_id
+  AND di.deleted_at IS NULL
+  AND di.status = 'running'
+  AND di.vm_id IS NOT NULL
+INNER JOIN deployments d ON d.id = di.deployment_id
+  AND d.deleted_at IS NULL
+  AND d.project_id = s.project_id
+WHERE s.project_id = $1
+  AND s.sampled_at >= $2
+ORDER BY s.deployment_instance_id, s.sampled_at DESC
 `
 
 type InstanceUsageLatestPerInstanceParams struct {

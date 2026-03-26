@@ -977,7 +977,7 @@ export function ProjectDetailPage() {
                           <th className="py-2 pr-4 font-medium">Instance</th>
                           <th className="py-2 pr-4 font-medium">Runtime</th>
                           <th className="py-2 pr-4 font-medium">CPU %</th>
-                          <th className="py-2 pr-4 font-medium">RSS</th>
+                          <th className="py-2 pr-4 font-medium">RAM</th>
                           <th className="py-2 pr-4 font-medium">Disk R/W</th>
                         </tr>
                       </thead>
