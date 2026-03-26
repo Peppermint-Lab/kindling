@@ -47,6 +47,10 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/projects/{id}/github-setup", a.getGitHubSetup)
 	mux.HandleFunc("GET /api/projects/{id}/git-head", a.gitHead)
 	mux.HandleFunc("POST /api/projects/{id}/rotate-webhook-secret", a.rotateWebhookSecret)
+	mux.HandleFunc("GET /api/projects/{id}/domains", a.listProjectDomains)
+	mux.HandleFunc("POST /api/projects/{id}/domains", a.createProjectDomain)
+	mux.HandleFunc("DELETE /api/projects/{id}/domains/{domain_id}", a.deleteProjectDomain)
+	mux.HandleFunc("POST /api/projects/{id}/domains/{domain_id}/verify", a.verifyProjectDomain)
 	mux.HandleFunc("GET /api/deployments", a.listAllDeployments)
 	mux.HandleFunc("GET /api/deployments/{id}", a.getDeployment)
 	mux.HandleFunc("GET /api/deployments/{id}/logs", a.getDeploymentLogs)
@@ -62,35 +66,62 @@ func (a *API) getMeta(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	dash, err := a.dashboardPublicHost(r.Context())
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
+		return
+	}
+	out := map[string]any{
 		"public_base_url":            base,
 		"public_base_url_configured": base != "",
 		"webhook_path":               "/webhooks/github",
-	})
+	}
+	if dash != "" {
+		out["dashboard_public_host"] = dash
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (a *API) putMeta(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PublicBaseURL string `json:"public_base_url"`
+		PublicBaseURL       *string `json:"public_base_url"`
+		DashboardPublicHost *string `json:"dashboard_public_host"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
 		return
 	}
-	if err := a.clusterSettingUpsertPublicBaseURL(r.Context(), req.PublicBaseURL); err != nil {
-		writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
-		return
+	if req.PublicBaseURL != nil {
+		if err := a.clusterSettingUpsertPublicBaseURL(r.Context(), *req.PublicBaseURL); err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
+			return
+		}
+	}
+	if req.DashboardPublicHost != nil {
+		if err := a.clusterSettingUpsertDashboardPublicHost(r.Context(), *req.DashboardPublicHost); err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
+			return
+		}
 	}
 	base, err := a.publicBaseURL(r.Context())
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	dash, err := a.dashboardPublicHost(r.Context())
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
+		return
+	}
+	out := map[string]any{
 		"public_base_url":            base,
 		"public_base_url_configured": base != "",
 		"webhook_path":               "/webhooks/github",
-	})
+	}
+	if dash != "" {
+		out["dashboard_public_host"] = dash
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func projectStripSecret(p queries.Project) queries.Project {

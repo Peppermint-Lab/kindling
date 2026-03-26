@@ -204,12 +204,23 @@ CREATE TABLE IF NOT EXISTS domains (
     project_id          UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     deployment_id       UUID REFERENCES deployments(id),
     domain_name         TEXT NOT NULL UNIQUE,
+    verification_token  TEXT NOT NULL DEFAULT '',
     verified_at         TIMESTAMPTZ,
     redirect_to         TEXT,
     redirect_status_code INT,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Existing DBs: add verification_token for DNS domain verification
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'domains' AND column_name = 'verification_token'
+    ) THEN
+        ALTER TABLE domains ADD COLUMN verification_token TEXT NOT NULL DEFAULT '';
+    END IF;
+END $$;
 
 -- Build logs
 CREATE TABLE IF NOT EXISTS build_logs (

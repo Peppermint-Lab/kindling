@@ -19,7 +19,7 @@ install -d -m 0755 /etc/kindling
 ENV_DST=/etc/kindling/kindling.env
 if [[ ! -f "$ENV_DST" ]]; then
   install -m 0640 -o root -g "${SERVICE_USER}" "${REPO}/contrib/kindling-prod.env.example" "$ENV_DST"
-  echo "Created $ENV_DST — edit it (especially KINDLING_ADVERTISE_HOST, KINDLING_PUBLIC_URL, KINDLING_ACME_EMAIL), then:"
+  echo "Created $ENV_DST — edit it (especially KINDLING_ADVERTISE_HOST, KINDLING_PUBLIC_URL, optional KINDLING_DASHBOARD_HOST, KINDLING_ACME_EMAIL), then:"
   echo "  systemctl daemon-reload && systemctl enable --now kindling"
 else
   echo "Leaving existing $ENV_DST unchanged."
@@ -27,8 +27,13 @@ fi
 chgrp "${SERVICE_USER}" "$ENV_DST" 2>/dev/null || true
 chmod 640 "$ENV_DST" 2>/dev/null || true
 
-# systemd expects ubuntu homedir; adjust unit if SERVICE_USER changes.
-sed "s/^User=.*/User=${SERVICE_USER}/; s/^Group=.*/Group=${SERVICE_USER}/; s|^WorkingDirectory=.*|WorkingDirectory=${KINDLING_HOME}|" \
+# Adjust User/Group, HOME, XDG runtime dir, and WorkingDirectory for SERVICE_USER.
+sed \
+  -e "s/^User=.*/User=${SERVICE_USER}/" \
+  -e "s/^Group=.*/Group=${SERVICE_USER}/" \
+  -e "s|^Environment=HOME=/home/ubuntu|Environment=HOME=/home/${SERVICE_USER}|" \
+  -e "s|^ExecStartPre=.*|ExecStartPre=+/bin/sh -c 'install -d -m 0700 -o ${SERVICE_USER} -g ${SERVICE_USER} /tmp/kindling-xdg'|" \
+  -e "s|^WorkingDirectory=.*|WorkingDirectory=${KINDLING_HOME}|" \
   "${REPO}/contrib/systemd/kindling.service" > /etc/systemd/system/kindling.service
 
 systemctl daemon-reload

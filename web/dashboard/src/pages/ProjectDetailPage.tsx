@@ -1,7 +1,15 @@
 import { useEffect, useState, useCallback } from "react"
 import { useParams, Link, useNavigate } from "react-router-dom"
-import { api, type Project, type Deployment, type GitHubSetup, type GitHead, APIError } from "@/lib/api"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  api,
+  type Project,
+  type Deployment,
+  type GitHubSetup,
+  type GitHead,
+  type ProjectDomain,
+  APIError,
+} from "@/lib/api"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
@@ -25,6 +33,7 @@ import {
   FolderGitIcon,
   LayoutListIcon,
   CloudDownloadIcon,
+  GlobeIcon,
 } from "lucide-react"
 import { DeploymentReachability } from "@/components/deployment-reachability"
 import { phaseLabel, phaseVariant } from "@/lib/deploy-badge"
@@ -64,6 +73,12 @@ export function ProjectDetailPage() {
   const [desiredInstances, setDesiredInstances] = useState(1)
   const [scalingSaving, setScalingSaving] = useState(false)
 
+  const [domains, setDomains] = useState<ProjectDomain[]>([])
+  const [domainsLoading, setDomainsLoading] = useState(false)
+  const [newDomainName, setNewDomainName] = useState("")
+  const [domainSaving, setDomainSaving] = useState(false)
+  const [verifyingId, setVerifyingId] = useState<string | null>(null)
+
   const loadGitHubSetup = useCallback(async (projectId: string, hasRepo: boolean) => {
     if (!hasRepo) {
       setGhSetup(null)
@@ -77,6 +92,18 @@ export function ProjectDetailPage() {
     }
   }, [])
 
+  const loadDomains = useCallback(async (projectId: string) => {
+    setDomainsLoading(true)
+    try {
+      const list = await api.listProjectDomains(projectId)
+      setDomains(list)
+    } catch {
+      setDomains([])
+    } finally {
+      setDomainsLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (!id) return
     setError(null)
@@ -87,10 +114,11 @@ export function ProjectDetailPage() {
         const di = p.desired_instance_count
         setDesiredInstances(typeof di === "number" && di >= 1 ? di : 1)
         void loadGitHubSetup(id, Boolean(p.github_repository?.trim()))
+        void loadDomains(id)
       })
       .catch((e) => setError(e instanceof APIError ? e.message : String(e)))
       .finally(() => setLoading(false))
-  }, [id, loadGitHubSetup])
+  }, [id, loadGitHubSetup, loadDomains])
 
   const handleDeploy = async () => {
     if (!id) return
@@ -184,6 +212,50 @@ export function ProjectDetailPage() {
     }
   }
 
+  const handleAddDomain = async () => {
+    if (!id) return
+    const name = newDomainName.trim()
+    if (!name) return
+    setDomainSaving(true)
+    setError(null)
+    try {
+      await api.createProjectDomain(id, name)
+      setNewDomainName("")
+      await loadDomains(id)
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not add domain")
+    } finally {
+      setDomainSaving(false)
+    }
+  }
+
+  const handleVerifyDomain = async (domainId: string) => {
+    if (!id) return
+    setVerifyingId(domainId)
+    setError(null)
+    try {
+      await api.verifyProjectDomain(id, domainId)
+      await loadDomains(id)
+      const d = await api.listDeployments(id)
+      setDeployments(d)
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Verification failed")
+    } finally {
+      setVerifyingId(null)
+    }
+  }
+
+  const handleDeleteDomain = async (domainId: string) => {
+    if (!id) return
+    setError(null)
+    try {
+      await api.deleteProjectDomain(id, domainId)
+      await loadDomains(id)
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not remove domain")
+    }
+  }
+
   const handleRotateSecret = async () => {
     if (!id) return
     setRotating(true)
@@ -271,6 +343,10 @@ export function ProjectDetailPage() {
           <TabsTrigger value="deployments" className="shrink-0">
             <LayoutListIcon className="size-4" />
             Deployments
+          </TabsTrigger>
+          <TabsTrigger value="domains" className="shrink-0">
+            <GlobeIcon className="size-4" />
+            Domains
           </TabsTrigger>
         </TabsList>
 
@@ -364,6 +440,192 @@ export function ProjectDetailPage() {
               </CardContent>
             </Card>
           ) : null}
+        </TabsContent>
+
+        <TabsContent value="domains" className="mt-4 space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Custom domain</CardTitle>
+              <CardDescription className="leading-relaxed">
+                Put your own hostname (like <span className="font-mono">www.example.com</span>) in front of this project.
+                You only need DNS: one A record for traffic, one TXT record to prove you own the name.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="rounded-lg border bg-muted/30 px-4 py-3 text-sm">
+                <p className="font-medium text-foreground mb-2">Steps</p>
+                <ol className="list-decimal list-inside space-y-2 text-muted-foreground [&>li]:ps-1">
+                  <li>
+                    <span className="text-foreground">Deploy</span> this project so it is running.
+                  </li>
+                  <li>
+                    At your DNS provider, add an <span className="font-medium text-foreground">A</span> (or{" "}
+                    <span className="font-medium text-foreground">AAAA</span>) record: your hostname → the{" "}
+                    <span className="font-medium text-foreground">public IP</span> of the Kindling server (the box that
+                    runs your app and the HTTPS edge).
+                  </li>
+                  <li>
+                    Type that same hostname below and click <span className="font-medium text-foreground">Add domain</span>.
+                  </li>
+                  <li>
+                    Add the <span className="font-medium text-foreground">TXT</span> record we show you. Wait a minute or
+                    two for DNS to update.
+                  </li>
+                  <li>
+                    Click <span className="font-medium text-foreground">I&apos;ve added the TXT — verify</span>.
+                  </li>
+                </ol>
+                <p className="mt-3 text-xs text-muted-foreground border-t border-border/60 pt-3">
+                  After verification, HTTPS works when Kindling is started with TLS on port 443 (Let&apos;s Encrypt). Until
+                  then, you can still use the direct URL on the deployment page.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="new-domain" className="text-sm">
+                  Hostname to connect
+                </Label>
+                <p className="text-xs text-muted-foreground">Use the full name visitors will type, e.g. www.yourdomain.com</p>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <Input
+                    id="new-domain"
+                    placeholder="www.kindling.systems"
+                    className="font-mono h-10 sm:max-w-md"
+                    value={newDomainName}
+                    onChange={(e) => setNewDomainName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && void handleAddDomain()}
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-10 w-full sm:w-auto shrink-0"
+                    disabled={domainSaving || !newDomainName.trim()}
+                    onClick={() => void handleAddDomain()}
+                  >
+                    {domainSaving ? "Adding…" : "Add domain"}
+                  </Button>
+                </div>
+              </div>
+
+              {domainsLoading ? (
+                <p className="text-sm text-muted-foreground">Loading domains…</p>
+              ) : domains.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No domains yet. Follow the steps above, then add your hostname.
+                </p>
+              ) : (
+                <ul className="space-y-6">
+                  {domains.map((dom) => (
+                    <li key={dom.id} className="rounded-lg border p-4 space-y-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-mono text-sm font-medium break-all">{dom.domain_name}</span>
+                        {dom.verified_at ? (
+                          <Badge variant="default" className="shrink-0">
+                            Verified
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary" className="shrink-0">
+                            Waiting for TXT record
+                          </Badge>
+                        )}
+                      </div>
+
+                      {dom.dns_challenge ? (
+                        <div className="space-y-3">
+                          <div className="text-sm">
+                            <p className="font-medium">Prove you own this name</p>
+                            <ol className="mt-2 list-decimal list-inside space-y-1.5 text-muted-foreground text-xs [&>li]:ps-1">
+                              <li>Open your DNS provider (Cloudflare, Namecheap, Route 53, etc.).</li>
+                              <li>
+                                Create a <strong className="text-foreground">TXT</strong> record.
+                              </li>
+                              <li>
+                                <strong className="text-foreground">Name / Host</strong>: paste the first value below.
+                                Some UIs only want the part before your domain; if verify fails, try the shorter name your
+                                provider expects.
+                              </li>
+                              <li>
+                                <strong className="text-foreground">Value / Content</strong>: paste the second value
+                                (one long line, no quotes).
+                              </li>
+                              <li>Save and wait a minute, then use the verify button.</li>
+                            </ol>
+                          </div>
+                          <div className="rounded-md bg-muted/60 p-3 space-y-3 text-sm">
+                            <div>
+                              <div className="flex items-center justify-between gap-2 mb-1">
+                                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  TXT — Name / Host
+                                </span>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  onClick={() => void copyText("TXT name", dom.dns_challenge!.name)}
+                                >
+                                  <CopyIcon className="size-3.5 mr-1" />
+                                  Copy
+                                </Button>
+                              </div>
+                              <p className="font-mono text-xs break-all leading-relaxed">{dom.dns_challenge.name}</p>
+                            </div>
+                            <div>
+                              <div className="flex items-center justify-between gap-2 mb-1">
+                                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  TXT — Value / Content
+                                </span>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  onClick={() => void copyText("TXT value", dom.dns_challenge!.value)}
+                                >
+                                  <CopyIcon className="size-3.5 mr-1" />
+                                  Copy
+                                </Button>
+                              </div>
+                              <p className="font-mono text-xs break-all leading-relaxed">{dom.dns_challenge.value}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {dom.verified_at ? (
+                        <p className="text-xs text-muted-foreground">
+                          Traffic for this hostname can be routed here once DNS points at your server and TLS is enabled.
+                        </p>
+                      ) : null}
+
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        {!dom.verified_at ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="default"
+                            disabled={verifyingId === dom.id}
+                            onClick={() => void handleVerifyDomain(dom.id)}
+                          >
+                            {verifyingId === dom.id ? "Checking DNS…" : "I've added the TXT — verify"}
+                          </Button>
+                        ) : null}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="text-destructive border-destructive/30 hover:bg-destructive/10"
+                          onClick={() => void handleDeleteDomain(dom.id)}
+                        >
+                          Remove domain
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="github" className="mt-4">

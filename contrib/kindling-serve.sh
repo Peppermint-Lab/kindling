@@ -27,11 +27,17 @@ if [[ "${KINDLING_ACME_STAGING:-}" == "1" || "${KINDLING_ACME_STAGING:-}" == "tr
   STAGING_FLAG=(--acme-staging)
 fi
 
+DASH_FLAG=()
+if [[ -n "${KINDLING_DASHBOARD_HOST:-}" ]]; then
+  DASH_FLAG=(--dashboard-host "$KINDLING_DASHBOARD_HOST")
+fi
+
 cd "$KINDLING_HOME"
 exec "$KINDLING_HOME/bin/kindling" serve \
   --listen "$KINDLING_LISTEN" \
   --advertise-host "$KINDLING_ADVERTISE_HOST" \
   --public-url "$KINDLING_PUBLIC_URL" \
+  "${DASH_FLAG[@]}" \
   --edge-http "$KINDLING_EDGE_HTTP" \
   --edge-https "$KINDLING_EDGE_HTTPS" \
   --acme-email "$KINDLING_ACME_EMAIL" \

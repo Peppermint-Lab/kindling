@@ -15,12 +15,16 @@ export class APIError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  // Never send Content-Type on bodyless GET/HEAD (and similar): it turns the request
+  // into a CORS preflight; Safari then often surfaces failures as "access control checks".
+  const headers = new Headers(init?.headers)
+  const hasBody = init?.body != null && init.body !== ""
+  if (hasBody && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json")
+  }
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
+    headers,
   })
   const bodyText = await res.text()
   if (!res.ok) {
@@ -112,6 +116,8 @@ export type APIMeta = {
   public_base_url: string
   public_base_url_configured: boolean
   webhook_path: string
+  /** Hostname for the dashboard when split from API (e.g. app.example.com). */
+  dashboard_public_host?: string
 }
 
 export type GitHubSetup = {
@@ -135,9 +141,24 @@ export type GitHead = {
   github_token_configured: boolean
 }
 
+export type ProjectDomainDNSChallenge = {
+  type: string
+  name: string
+  value: string
+}
+
+export type ProjectDomain = {
+  id: string
+  domain_name: string
+  verified_at?: string
+  deployment_id?: string
+  dns_challenge?: ProjectDomainDNSChallenge
+  instructions?: string
+}
+
 export const api = {
   getMeta: () => request<APIMeta>("/api/meta"),
-  updateMeta: (data: { public_base_url: string }) =>
+  updateMeta: (data: { public_base_url?: string; dashboard_public_host?: string }) =>
     request<APIMeta>("/api/meta", {
       method: "PUT",
       body: JSON.stringify(data),
@@ -174,6 +195,23 @@ export const api = {
 
   listDeployments: (projectId: string) =>
     request<Deployment[]>(`/api/projects/${projectId}/deployments`),
+
+  listProjectDomains: (projectId: string) => request<ProjectDomain[]>(`/api/projects/${projectId}/domains`),
+
+  createProjectDomain: (projectId: string, domain_name: string) =>
+    request<ProjectDomain>(`/api/projects/${projectId}/domains`, {
+      method: "POST",
+      body: JSON.stringify({ domain_name }),
+    }),
+
+  verifyProjectDomain: (projectId: string, domainId: string) =>
+    request<ProjectDomain>(`/api/projects/${projectId}/domains/${domainId}/verify`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+
+  deleteProjectDomain: (projectId: string, domainId: string) =>
+    request<void>(`/api/projects/${projectId}/domains/${domainId}`, { method: "DELETE" }),
 
   listAllDeployments: (limit = 50) =>
     request<DeploymentListItem[]>(`/api/deployments?limit=${limit}`),

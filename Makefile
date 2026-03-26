@@ -1,7 +1,7 @@
 .PHONY: build dev db db-down migrate sqlc vet clean \
        landing-dev landing-build \
        install-deps remote-provision remote-sync remote-build remote-initramfs remote-run \
-       dev-up dev-down
+       dev-up dev-down dashboard-build remote-dashboard remote-restart
 
 DATABASE_URL ?= postgres://kindling:kindling@localhost:5432/kindling?sslmode=disable
 REMOTE_HOST ?= kindling-dev
@@ -10,6 +10,10 @@ REMOTE_DIR ?= /home/ubuntu/kindling
 REMOTE_PUBLIC_IP ?=
 # Optional: public IP or DNS of the host so API/dashboard show a browser-openable runtime_url (crun/cloud-hypervisor publish 0.0.0.0:port).
 KINDLING_RUNTIME_ADVERTISE_HOST ?=
+
+# Vite injects this as the API origin for production static dashboard builds (must match public_base_url on split-host).
+# Override for local builds, e.g. DASHBOARD_API_URL=http://127.0.0.1:8080 make dashboard-build
+DASHBOARD_API_URL ?= https://api.kindling.systems
 
 # === Local ===
 
@@ -91,6 +95,18 @@ landing-dev:
 
 landing-build:
 	@cd web/landing && npm run build
+
+# === Dashboard (Vite → web/dashboard/dist) ===
+
+dashboard-build:
+	@cd web/dashboard && VITE_API_URL="$(DASHBOARD_API_URL)" npm run build
+
+# Build with DASHBOARD_API_URL and sync dist/ to REMOTE_HOST (remote-sync excludes dist/)
+remote-dashboard: dashboard-build
+	rsync -az web/dashboard/dist/ $(REMOTE_HOST):$(REMOTE_DIR)/web/dashboard/dist/
+
+remote-restart:
+	ssh $(REMOTE_HOST) 'sudo systemctl restart kindling'
 
 # === Remote Dev (OVH) ===
 

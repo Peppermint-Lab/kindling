@@ -13,6 +13,7 @@ export function SettingsPage() {
   const [servers, setServers] = useState<Server[]>([])
   const [meta, setMeta] = useState<APIMeta | null>(null)
   const [publicUrlInput, setPublicUrlInput] = useState("")
+  const [dashboardHostInput, setDashboardHostInput] = useState("")
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -22,6 +23,7 @@ export function SettingsPage() {
       setServers(s)
       setMeta(m)
       setPublicUrlInput(m.public_base_url || "")
+      setDashboardHostInput(m.dashboard_public_host || "")
     })
 
   useEffect(() => {
@@ -34,9 +36,13 @@ export function SettingsPage() {
     setSaving(true)
     setError(null)
     try {
-      const m = await api.updateMeta({ public_base_url: publicUrlInput.trim() })
+      const m = await api.updateMeta({
+        public_base_url: publicUrlInput.trim(),
+        dashboard_public_host: dashboardHostInput.trim(),
+      })
       setMeta(m)
       setPublicUrlInput(m.public_base_url || "")
+      setDashboardHostInput(m.dashboard_public_host || "")
     } catch (e) {
       setError(e instanceof APIError ? e.message : String(e))
     } finally {
@@ -79,18 +85,29 @@ export function SettingsPage() {
           <Card>
             <CardContent className="pt-6 space-y-4 text-sm">
               <p className="text-muted-foreground">
-                Stored in the database (<span className="font-mono">cluster_settings.public_base_url</span>). Used for
-                absolute GitHub webhook links in the dashboard. Leave empty if you do not expose the API on a stable
-                public URL yet.
+                <span className="font-mono">public_base_url</span> is the API origin (webhooks,{" "}
+                <span className="font-mono">/api/*</span>), e.g. <span className="font-mono">https://api.example.com</span>.
+                Optional <span className="font-mono">dashboard_public_host</span> is the hostname for the SPA only (e.g.{" "}
+                <span className="font-mono">app.example.com</span>) when you split app and API on the edge.
               </p>
               <div className="space-y-2 max-w-xl">
-                <Label htmlFor="public-url">Public base URL</Label>
+                <Label htmlFor="public-url">Public API base URL</Label>
                 <Input
                   id="public-url"
-                  placeholder="https://kindling.example.com"
+                  placeholder="https://api.kindling.example.com"
                   className="font-mono text-sm"
                   value={publicUrlInput}
                   onChange={(e) => setPublicUrlInput(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2 max-w-xl">
+                <Label htmlFor="dashboard-host">Dashboard hostname (optional)</Label>
+                <Input
+                  id="dashboard-host"
+                  placeholder="app.kindling.example.com"
+                  className="font-mono text-sm"
+                  value={dashboardHostInput}
+                  onChange={(e) => setDashboardHostInput(e.target.value)}
                 />
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -104,9 +121,10 @@ export function SettingsPage() {
                 )}
               </div>
               <p className="text-xs text-muted-foreground">
-                On first boot only, <span className="font-mono">KINDLING_PUBLIC_URL</span> or{" "}
-                <span className="font-mono">--public-url</span> can seed this value if the setting row does not exist
-                yet.
+                First-boot seeds: <span className="font-mono">KINDLING_PUBLIC_URL</span> /{" "}
+                <span className="font-mono">--public-url</span>, and <span className="font-mono">KINDLING_DASHBOARD_HOST</span>{" "}
+                / <span className="font-mono">--dashboard-host</span>, only when the corresponding row is missing.
+                Production build: set <span className="font-mono">VITE_API_URL</span> to the API base URL.
               </p>
             </CardContent>
           </Card>

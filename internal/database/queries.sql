@@ -401,8 +401,23 @@ ORDER BY created_at;
 -- Domains --
 
 -- name: DomainCreate :one
-INSERT INTO domains (id, project_id, domain_name)
-VALUES ($1, $2, $3)
+INSERT INTO domains (id, project_id, domain_name, verification_token)
+VALUES ($1, $2, $3, $4)
+RETURNING *;
+
+-- name: DomainListByProjectID :many
+SELECT * FROM domains WHERE project_id = $1 ORDER BY domain_name ASC;
+
+-- name: DomainFirstByIDAndProject :one
+SELECT * FROM domains WHERE id = $1 AND project_id = $2;
+
+-- name: DomainDelete :exec
+DELETE FROM domains WHERE id = $1 AND project_id = $2;
+
+-- name: DomainSetVerified :one
+UPDATE domains
+SET verified_at = NOW(), verification_token = '', updated_at = NOW()
+WHERE id = $1 AND project_id = $2
 RETURNING *;
 
 -- name: DomainVerified :one

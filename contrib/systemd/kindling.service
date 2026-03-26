@@ -8,7 +8,12 @@ Wants=network-online.target
 Type=simple
 User=ubuntu
 Group=ubuntu
+# buildah/crun need XDG_RUNTIME_DIR. Using /tmp avoids rootless build failures inside user+mount
+# namespaces ("mkdir /run/user/<uid>: permission denied" when creating lock dirs).
+# Placeholder ubuntu is rewritten by contrib/setup-kindling-prod.sh.
 Environment=HOME=/home/ubuntu
+Environment=XDG_RUNTIME_DIR=/tmp/kindling-xdg
+ExecStartPre=+/bin/sh -c 'install -d -m 0700 -o ubuntu -g ubuntu /tmp/kindling-xdg'
 WorkingDirectory=/home/ubuntu/kindling
 ExecStart=/usr/local/lib/kindling/serve.sh
 Restart=always

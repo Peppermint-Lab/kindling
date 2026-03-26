@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -36,13 +37,14 @@ import (
 
 func serveCmd() *cobra.Command {
 	var (
-		listenAddr      string
-		publicBaseURL   string
-		advertiseHost   string
-		edgeHTTPSAddr   string
-		edgeHTTPAddr    string
-		acmeEmail       string
-		acmeStaging     bool
+		listenAddr    string
+		publicBaseURL string
+		dashboardHost string
+		advertiseHost string
+		edgeHTTPSAddr string
+		edgeHTTPAddr  string
+		acmeEmail     string
+		acmeStaging   bool
 	)
 
 	cmd := &cobra.Command{
@@ -54,19 +56,21 @@ func serveCmd() *cobra.Command {
 				return err
 			}
 			return runServe(cmd.Context(), databaseURL, serveOptions{
-				listenAddr:      listenAddr,
-				publicBaseURL:   publicBaseURL,
-				advertiseHost:   advertiseHost,
-				edgeHTTPSAddr:   edgeHTTPSAddr,
-				edgeHTTPAddr:    edgeHTTPAddr,
-				acmeEmail:       acmeEmail,
-				acmeStaging:     acmeStaging,
+				listenAddr:    listenAddr,
+				publicBaseURL: publicBaseURL,
+				dashboardHost: dashboardHost,
+				advertiseHost: advertiseHost,
+				edgeHTTPSAddr: edgeHTTPSAddr,
+				edgeHTTPAddr:  edgeHTTPAddr,
+				acmeEmail:     acmeEmail,
+				acmeStaging:   acmeStaging,
 			})
 		},
 	}
 
 	cmd.Flags().StringVar(&listenAddr, "listen", ":8080", "API listen address")
 	cmd.Flags().StringVar(&publicBaseURL, "public-url", "", "Optional seed for cluster_settings.public_base_url when that row is missing (e.g. first boot)")
+	cmd.Flags().StringVar(&dashboardHost, "dashboard-host", "", "Optional seed for cluster_settings.dashboard_public_host when missing (hostname for dashboard SPA, e.g. app.example.com); KINDLING_DASHBOARD_HOST if unset")
 	cmd.Flags().StringVar(&advertiseHost, "advertise-host", "", "Optional seed for server_settings.advertise_host when empty (public IP or DNS for browser-openable runtime URLs); KINDLING_RUNTIME_ADVERTISE_HOST if unset")
 	cmd.Flags().StringVar(&edgeHTTPSAddr, "edge-https", "", "HTTPS listen for TLS edge proxy (e.g. :443); stored in cluster_settings when missing")
 	cmd.Flags().StringVar(&edgeHTTPAddr, "edge-http", ":80", "HTTP listen for edge proxy; stored in cluster_settings.edge_http_addr when missing")
@@ -77,13 +81,14 @@ func serveCmd() *cobra.Command {
 }
 
 type serveOptions struct {
-	listenAddr      string
-	publicBaseURL   string
-	advertiseHost   string
-	edgeHTTPSAddr   string
-	edgeHTTPAddr    string
-	acmeEmail       string
-	acmeStaging     bool
+	listenAddr    string
+	publicBaseURL string
+	dashboardHost string
+	advertiseHost string
+	edgeHTTPSAddr string
+	edgeHTTPAddr  string
+	acmeEmail     string
+	acmeStaging   bool
 }
 
 func runServe(ctx context.Context, databaseURL string, opts serveOptions) error {
@@ -146,6 +151,13 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	if err := seedPublicBaseURLIfUnset(ctx, q, publicBaseURL); err != nil {
 		return fmt.Errorf("seed public base url: %w", err)
 	}
+	dashSeed := strings.TrimSpace(opts.dashboardHost)
+	if dashSeed == "" {
+		dashSeed = strings.TrimSpace(os.Getenv("KINDLING_DASHBOARD_HOST"))
+	}
+	if err := seedDashboardPublicHostIfUnset(ctx, q, dashSeed); err != nil {
+		return fmt.Errorf("seed dashboard public host: %w", err)
+	}
 	if err := seedClusterSettingsFromServeFlags(ctx, q, opts); err != nil {
 		return fmt.Errorf("seed cluster settings: %w", err)
 	}
@@ -171,9 +183,9 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	snap := cfgMgr.Snapshot()
 	pullAuth := registryAuthFromSnapshot(snap)
 	rt := crunrt.NewDetectedRuntime(crunrt.HostRuntimeConfig{
-		ForceRuntime:    snap.ServerRuntimeOverride,
-		AdvertiseHost:   snap.ServerAdvertiseHost,
-		PullAuth:        pullAuth,
+		ForceRuntime:  snap.ServerRuntimeOverride,
+		AdvertiseHost: snap.ServerAdvertiseHost,
+		PullAuth:      pullAuth,
 		CloudHypervisor: crunrt.CloudHypervisorHostConfig{
 			BinaryPath:    snap.ServerCloudHypervisorBin,
 			KernelPath:    snap.ServerCloudHypervisorKernelPath,
@@ -308,12 +320,12 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		if edgeHTTP == "" {
 			edgeHTTP = ":80"
 		}
-		cpHost, apiBackend, err := controlPlaneEdgeFromDB(ctx, q, listenAddr)
+		cpHosts, apiBackend, err := controlPlaneEdgeHostsFromDB(ctx, q, listenAddr)
 		if err != nil {
 			return fmt.Errorf("control plane edge: %w", err)
 		}
-		if cpHost != "" {
-			slog.Info("edge control plane proxy", "host", cpHost, "api", apiBackend.String())
+		if len(cpHosts) > 0 && apiBackend != nil {
+			slog.Info("edge control plane proxy", "hosts", cpHosts, "api", apiBackend.String())
 		}
 		edgeSvc, err := edgeproxy.New(edgeproxy.Config{
 			HTTPAddr:          edgeHTTP,
@@ -323,7 +335,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 			Pool:              db.Pool,
 			RouteChangeNotify: routeChangeCh,
 			ColdStartTimeout:  coldStart,
-			ControlPlaneHost:  cpHost,
+			ControlPlaneHosts: cpHosts,
 			APIBackend:        apiBackend,
 		})
 		if err != nil {
@@ -347,20 +359,34 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	api := rpc.NewAPI(q, cfgMgr)
 	webhookHandler := webhook.NewHandler(q)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+	apiMux := http.NewServeMux()
+	apiMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
-	// Browsers hit / on the control plane host; the mux would otherwise 404.
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+	// Browsers hit / on the API host; the mux would otherwise 404.
+	apiMux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/api/meta", http.StatusFound)
 	})
-	api.Register(mux)
-	mux.Handle("POST /webhooks/github", webhookHandler)
+	api.Register(apiMux)
+	apiMux.Handle("POST /webhooks/github", webhookHandler)
 
-	// CORS wrapper for Vite dev server
-	handler := corsMiddleware(mux)
+	dashHostStr, err := dashboardHostnameFromDB(ctx, q)
+	if err != nil {
+		return fmt.Errorf("read dashboard hostname: %w", err)
+	}
+
+	distDir := strings.TrimSpace(os.Getenv("KINDLING_DASHBOARD_DIST"))
+	if distDir == "" {
+		distDir = "web/dashboard/dist"
+	}
+
+	var handler http.Handler
+	if dashHostStr != "" {
+		handler = hostBasedHandler(corsMiddleware(apiMux), dashboardSPAHandler(distDir), dashHostStr)
+	} else {
+		handler = corsMiddleware(apiMux)
+	}
 
 	srv := &http.Server{Addr: listenAddr, Handler: handler}
 
@@ -378,39 +404,132 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	return nil
 }
 
-// controlPlaneEdgeFromDB returns hostname + loopback API origin when public_base_url
-// is https with a non-IP host, so the edge can terminate TLS and proxy to the API.
-func controlPlaneEdgeFromDB(ctx context.Context, q *queries.Queries, listenAddr string) (string, *url.URL, error) {
+// controlPlaneEdgeHostsFromDB returns unique hostnames (API + dashboard) and the
+// loopback origin when at least one HTTPS control-plane hostname is configured.
+func controlPlaneEdgeHostsFromDB(ctx context.Context, q *queries.Queries, listenAddr string) ([]string, *url.URL, error) {
+	apiHost, err := publicAPIHostnameFromDB(ctx, q)
+	if err != nil {
+		return nil, nil, err
+	}
+	dashHost, err := dashboardHostnameFromDB(ctx, q)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	apiURL, err := url.Parse(loopbackAPIOrigin(listenAddr))
+	if err != nil {
+		return nil, nil, err
+	}
+	if apiURL.Scheme != "http" {
+		return nil, nil, fmt.Errorf("api backend must be http, got %q", apiURL.Scheme)
+	}
+
+	var hosts []string
+	add := func(h string) {
+		if h == "" {
+			return
+		}
+		for _, x := range hosts {
+			if strings.EqualFold(x, h) {
+				return
+			}
+		}
+		hosts = append(hosts, strings.ToLower(h))
+	}
+	add(apiHost)
+	add(dashHost)
+
+	if len(hosts) == 0 {
+		return nil, nil, nil
+	}
+	return hosts, apiURL, nil
+}
+
+func publicAPIHostnameFromDB(ctx context.Context, q *queries.Queries) (string, error) {
 	v, err := q.ClusterSettingGet(ctx, rpc.ClusterSettingKeyPublicBaseURL)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", nil, nil
+			return "", nil
 		}
-		return "", nil, err
+		return "", err
 	}
 	raw := rpc.NormalizePublicBaseURL(v)
 	if raw == "" {
-		return "", nil, nil
+		return "", nil
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Hostname() == "" {
-		return "", nil, nil
+		return "", nil
 	}
 	if u.Scheme != "https" {
-		return "", nil, nil
+		return "", nil
 	}
 	h := strings.ToLower(u.Hostname())
 	if net.ParseIP(h) != nil {
-		return "", nil, nil
+		return "", nil
 	}
-	apiURL, err := url.Parse(loopbackAPIOrigin(listenAddr))
+	return h, nil
+}
+
+func dashboardHostnameFromDB(ctx context.Context, q *queries.Queries) (string, error) {
+	v, err := q.ClusterSettingGet(ctx, rpc.ClusterSettingKeyDashboardPublicHost)
 	if err != nil {
-		return "", nil, err
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
 	}
-	if apiURL.Scheme != "http" {
-		return "", nil, fmt.Errorf("api backend must be http, got %q", apiURL.Scheme)
-	}
-	return h, apiURL, nil
+	return rpc.NormalizeDashboardPublicHost(v), nil
+}
+
+func seedDashboardPublicHostIfUnset(ctx context.Context, q *queries.Queries, host string) error {
+	return seedClusterSettingIfUnset(ctx, q, rpc.ClusterSettingKeyDashboardPublicHost, host)
+}
+
+func hostBasedHandler(api http.Handler, dash http.Handler, dashHost string) http.Handler {
+	dashHost = strings.ToLower(strings.TrimSpace(dashHost))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, herr := net.SplitHostPort(r.Host)
+		if herr != nil || host == "" {
+			host = r.Host
+		}
+		host = strings.ToLower(host)
+		if dashHost != "" && host == dashHost {
+			dash.ServeHTTP(w, r)
+			return
+		}
+		api.ServeHTTP(w, r)
+	})
+}
+
+func dashboardSPAHandler(distDir string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fi, err := os.Stat(distDir); err != nil || !fi.IsDir() {
+			http.Error(w, "dashboard not built (missing "+distDir+")", http.StatusServiceUnavailable)
+			return
+		}
+		root, err := filepath.Abs(distDir)
+		if err != nil {
+			http.Error(w, "dashboard path", http.StatusInternalServerError)
+			return
+		}
+		rel := strings.TrimPrefix(filepath.Clean("/"+r.URL.Path), "/")
+		candidate := filepath.Join(root, rel)
+		absFile, err := filepath.Abs(candidate)
+		if err != nil {
+			http.Error(w, "invalid path", http.StatusBadRequest)
+			return
+		}
+		if absFile != root && !strings.HasPrefix(absFile, root+string(filepath.Separator)) {
+			http.Error(w, "invalid path", http.StatusBadRequest)
+			return
+		}
+		if fi, err := os.Stat(absFile); err == nil && !fi.IsDir() {
+			http.ServeFile(w, r, absFile)
+			return
+		}
+		http.ServeFile(w, r, filepath.Join(root, "index.html"))
+	})
 }
 
 func loopbackAPIOrigin(listenAddr string) string {

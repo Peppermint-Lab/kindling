@@ -49,10 +49,10 @@ type Config struct {
 	// sized from this.
 	ColdStartTimeout time.Duration
 
-	// ControlPlaneHost is the lowercase hostname from cluster public_base_url when
-	// that URL uses https and is not a bare IP. HTTPS on this host is proxied to
-	// APIBackend (Kindling API + webhooks on loopback).
-	ControlPlaneHost string
+	// ControlPlaneHosts are lowercase hostnames for the control plane: the API
+	// (from public_base_url) and optional dashboard host. HTTPS on these hosts
+	// is proxied to APIBackend (Kindling process on loopback).
+	ControlPlaneHosts []string
 
 	// APIBackend is the http://127.0.0.1:port origin for the control plane proxy.
 	APIBackend *url.URL
@@ -72,19 +72,36 @@ type Route struct {
 	RedirectStatusCode int32
 }
 
+func normalizeControlPlaneHosts(hosts []string) []string {
+	seen := make(map[string]struct{})
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if h == "" {
+			continue
+		}
+		if _, ok := seen[h]; ok {
+			continue
+		}
+		seen[h] = struct{}{}
+		out = append(out, h)
+	}
+	return out
+}
+
 // Service is the edge proxy.
 type Service struct {
-	cfg         Config
-	q           *queries.Queries
-	httpServer  *http.Server
-	httpsServer *http.Server
-	certConfig  *certmagic.Config
-	routes             map[string]Route
-	mu                 sync.RWMutex
-	backendRR          atomic.Uint64
-	cancel             context.CancelFunc
-	coldStartTimeout   time.Duration
-	httpsWriteTimeout  time.Duration
+	cfg               Config
+	q                 *queries.Queries
+	httpServer        *http.Server
+	httpsServer       *http.Server
+	certConfig        *certmagic.Config
+	routes            map[string]Route
+	mu                sync.RWMutex
+	backendRR         atomic.Uint64
+	cancel            context.CancelFunc
+	coldStartTimeout  time.Duration
+	httpsWriteTimeout time.Duration
 }
 
 // New creates a new edge proxy service.
@@ -107,7 +124,7 @@ func New(cfg Config) (*Service, error) {
 	q := queries.New(cfg.Pool)
 	storage := NewPostgreSQLStorage(cfg.Pool)
 
-	cpHost := strings.ToLower(strings.TrimSpace(cfg.ControlPlaneHost))
+	cpHosts := normalizeControlPlaneHosts(cfg.ControlPlaneHosts)
 
 	// Configure CertMagic.
 	certConfig := certmagic.NewDefault()
@@ -126,11 +143,13 @@ func New(cfg Config) (*Service, error) {
 		certConfig.Issuers = []certmagic.Issuer{issuer}
 	}
 
-	// On-demand TLS: verified app domains, plus control plane hostname from public_base_url.
+	// On-demand TLS: verified app domains, plus control plane hostnames (API + dashboard).
 	certConfig.OnDemand = &certmagic.OnDemandConfig{
 		DecisionFunc: func(ctx context.Context, name string) error {
-			if cpHost != "" && strings.EqualFold(name, cpHost) {
-				return nil
+			for _, h := range cpHosts {
+				if h != "" && strings.EqualFold(name, h) {
+					return nil
+				}
 			}
 			_, err := q.DomainVerified(ctx, name)
 			if err != nil {
@@ -140,7 +159,7 @@ func New(cfg Config) (*Service, error) {
 		},
 	}
 
-	cfg.ControlPlaneHost = cpHost
+	cfg.ControlPlaneHosts = cpHosts
 	s := &Service{
 		cfg:               cfg,
 		q:                 q,
@@ -332,9 +351,13 @@ func (s *Service) serveHTTPS(w http.ResponseWriter, r *http.Request) {
 		host = r.Host
 	}
 
-	if s.cfg.ControlPlaneHost != "" && s.cfg.APIBackend != nil && strings.EqualFold(host, s.cfg.ControlPlaneHost) {
-		s.proxyControlPlane(w, r, host)
-		return
+	if s.cfg.APIBackend != nil {
+		for _, h := range s.cfg.ControlPlaneHosts {
+			if h != "" && strings.EqualFold(host, h) {
+				s.proxyControlPlane(w, r, host)
+				return
+			}
+		}
 	}
 
 	s.mu.RLock()
