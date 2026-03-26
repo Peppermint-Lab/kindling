@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS projects (
     root_directory          TEXT NOT NULL DEFAULT '',
     dockerfile_path         TEXT NOT NULL DEFAULT 'Dockerfile',
     desired_instance_count  INT NOT NULL DEFAULT 1,
+    last_request_at         TIMESTAMPTZ,
+    scaled_to_zero          BOOLEAN NOT NULL DEFAULT false,
+    scale_to_zero_enabled   BOOLEAN NOT NULL DEFAULT false,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -47,12 +50,56 @@ DO $$ BEGIN
     END IF;
 END $$;
 
+-- Allow scale-to-zero (0 replicas when idle-scaled)
+DO $$ BEGIN
+    ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_desired_instance_count_check;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
 DO $$ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint WHERE conname = 'projects_desired_instance_count_check'
     ) THEN
         ALTER TABLE projects ADD CONSTRAINT projects_desired_instance_count_check
-            CHECK (desired_instance_count > 0);
+            CHECK (desired_instance_count >= 0);
+    END IF;
+END $$;
+
+-- Scale-to-zero: traffic/idle bookkeeping (idle scaler sets scaled_to_zero; edge clears on wake)
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'projects' AND column_name = 'last_request_at'
+    ) THEN
+        ALTER TABLE projects ADD COLUMN last_request_at TIMESTAMPTZ;
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'projects' AND column_name = 'scaled_to_zero'
+    ) THEN
+        ALTER TABLE projects ADD COLUMN scaled_to_zero BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'projects' AND column_name = 'scale_to_zero_enabled'
+    ) THEN
+        ALTER TABLE projects ADD COLUMN scale_to_zero_enabled BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+END $$;
+
+-- Wake signal from edge proxy (cold start)
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'deployments' AND column_name = 'wake_requested_at'
+    ) THEN
+        ALTER TABLE deployments ADD COLUMN wake_requested_at TIMESTAMPTZ;
     END IF;
 END $$;
 
@@ -117,6 +164,7 @@ CREATE TABLE IF NOT EXISTS deployments (
     stopped_at      TIMESTAMPTZ,
     failed_at       TIMESTAMPTZ,
     deleted_at      TIMESTAMPTZ,
+    wake_requested_at TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

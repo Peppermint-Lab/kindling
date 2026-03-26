@@ -106,7 +106,8 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		GithubRepository     string `json:"github_repository"`
 		DockerfilePath       string `json:"dockerfile_path"`
 		RootDirectory        string `json:"root_directory"`
-		DesiredInstanceCount int32  `json:"desired_instance_count"`
+		DesiredInstanceCount *int32 `json:"desired_instance_count"`
+		ScaleToZeroEnabled   *bool  `json:"scale_to_zero_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
@@ -138,11 +139,15 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		webhookSecret = s
 	}
 
-	desired := req.DesiredInstanceCount
-	if desired < 1 {
-		desired = 1
+	desired := int32(1)
+	if req.DesiredInstanceCount != nil {
+		desired = *req.DesiredInstanceCount
 	}
-	project, err := a.q.ProjectCreate(r.Context(), queries.ProjectCreateParams{
+	if desired < 0 {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", "desired_instance_count must be at least 0")
+		return
+	}
+	params := queries.ProjectCreateParams{
 		ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		Name:                 req.Name,
 		GithubRepository:     req.GithubRepository,
@@ -151,12 +156,23 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		RootDirectory:        req.RootDirectory,
 		DockerfilePath:       req.DockerfilePath,
 		DesiredInstanceCount: desired,
-	})
+	}
+	project, err := a.q.ProjectCreate(r.Context(), params)
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "create_project", err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, project)
+	if req.ScaleToZeroEnabled != nil && *req.ScaleToZeroEnabled {
+		project, err = a.q.ProjectUpdateScaleToZeroEnabled(r.Context(), queries.ProjectUpdateScaleToZeroEnabledParams{
+			ID:                 project.ID,
+			ScaleToZeroEnabled: true,
+		})
+		if err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "create_project", err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusCreated, projectStripSecret(project))
 }
 
 func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
@@ -167,27 +183,58 @@ func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		DesiredInstanceCount *int32 `json:"desired_instance_count"`
+		ScaleToZeroEnabled   *bool  `json:"scale_to_zero_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
 		return
 	}
-	if req.DesiredInstanceCount == nil {
-		writeAPIError(w, http.StatusBadRequest, "validation_error", "desired_instance_count is required")
-		return
-	}
-	if *req.DesiredInstanceCount < 1 {
-		writeAPIError(w, http.StatusBadRequest, "validation_error", "desired_instance_count must be at least 1")
+	if req.DesiredInstanceCount == nil && req.ScaleToZeroEnabled == nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", "provide desired_instance_count and/or scale_to_zero_enabled")
 		return
 	}
 	if _, err := a.q.ProjectFirstByID(r.Context(), id); err != nil {
 		writeAPIError(w, http.StatusNotFound, "not_found", "project not found")
 		return
 	}
-	project, err := a.q.ProjectUpdateDesiredInstanceCount(r.Context(), queries.ProjectUpdateDesiredInstanceCountParams{
-		ID:                   id,
-		DesiredInstanceCount: *req.DesiredInstanceCount,
-	})
+	var project queries.Project
+	if req.DesiredInstanceCount != nil {
+		if *req.DesiredInstanceCount < 0 {
+			writeAPIError(w, http.StatusBadRequest, "validation_error", "desired_instance_count must be at least 0")
+			return
+		}
+		project, err = a.q.ProjectUpdateDesiredInstanceCount(r.Context(), queries.ProjectUpdateDesiredInstanceCountParams{
+			ID:                   id,
+			DesiredInstanceCount: *req.DesiredInstanceCount,
+		})
+		if err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
+			return
+		}
+		if *req.DesiredInstanceCount > 0 {
+			_ = a.q.ProjectClearScaledToZero(r.Context(), id)
+		}
+	} else {
+		project, err = a.q.ProjectFirstByID(r.Context(), id)
+		if err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
+			return
+		}
+	}
+	if req.ScaleToZeroEnabled != nil {
+		project, err = a.q.ProjectUpdateScaleToZeroEnabled(r.Context(), queries.ProjectUpdateScaleToZeroEnabledParams{
+			ID:                 id,
+			ScaleToZeroEnabled: *req.ScaleToZeroEnabled,
+		})
+		if err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
+			return
+		}
+		if !*req.ScaleToZeroEnabled {
+			_ = a.q.ProjectClearScaledToZero(r.Context(), id)
+		}
+	}
+	project, err = a.q.ProjectFirstByID(r.Context(), id)
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
 		return

@@ -5,6 +5,7 @@ package edgeproxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"github.com/caddyserver/certmagic"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
@@ -39,6 +42,11 @@ type Config struct {
 
 	// RouteChangeNotify receives signals when routes may have changed.
 	RouteChangeNotify <-chan struct{}
+
+	// ColdStartTimeout is how long the edge waits for backends after waking a
+	// scaled-to-zero deployment (default 2m). The HTTPS server write timeout is
+	// sized from this.
+	ColdStartTimeout time.Duration
 }
 
 // Backend is one upstream target (IP:port) for a hostname.
@@ -49,6 +57,7 @@ type Backend struct {
 
 // Route represents routing information for a domain.
 type Route struct {
+	ProjectID          pgtype.UUID
 	Backends           []Backend
 	RedirectTo         string
 	RedirectStatusCode int32
@@ -61,10 +70,12 @@ type Service struct {
 	httpServer  *http.Server
 	httpsServer *http.Server
 	certConfig  *certmagic.Config
-	routes      map[string]Route
-	mu          sync.RWMutex
-	backendRR   atomic.Uint64
-	cancel      context.CancelFunc
+	routes             map[string]Route
+	mu                 sync.RWMutex
+	backendRR          atomic.Uint64
+	cancel             context.CancelFunc
+	coldStartTimeout   time.Duration
+	httpsWriteTimeout  time.Duration
 }
 
 // New creates a new edge proxy service.
@@ -74,6 +85,14 @@ func New(cfg Config) (*Service, error) {
 	}
 	if cfg.HTTPSAddr == "" {
 		cfg.HTTPSAddr = ":443"
+	}
+	cold := cfg.ColdStartTimeout
+	if cold <= 0 {
+		cold = 2 * time.Minute
+	}
+	httpsWT := 30 * time.Second
+	if cold+15*time.Second > httpsWT {
+		httpsWT = cold + 15*time.Second
 	}
 
 	q := queries.New(cfg.Pool)
@@ -108,10 +127,12 @@ func New(cfg Config) (*Service, error) {
 	}
 
 	s := &Service{
-		cfg:        cfg,
-		q:          q,
-		certConfig: certConfig,
-		routes:     make(map[string]Route),
+		cfg:               cfg,
+		q:                 q,
+		certConfig:        certConfig,
+		routes:            make(map[string]Route),
+		coldStartTimeout:  cold,
+		httpsWriteTimeout: httpsWT,
 	}
 
 	s.httpServer = &http.Server{
@@ -142,7 +163,7 @@ func (s *Service) Start(ctx context.Context) error {
 		Addr:         s.cfg.HTTPSAddr,
 		Handler:      http.HandlerFunc(s.serveHTTPS),
 		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		WriteTimeout: s.httpsWriteTimeout,
 		TLSConfig:    s.certConfig.TLSConfig(),
 	}
 
@@ -187,10 +208,12 @@ func (s *Service) loadRoutes(ctx context.Context) error {
 	// domain -> vm_id (hex string) -> struct{} for deduplication
 	proxySeen := make(map[string]map[string]struct{})
 	proxyBackends := make(map[string][]Backend)
+	proxyProjectID := make(map[string]pgtype.UUID)
 
 	for _, row := range rows {
 		if row.RedirectTo.Valid {
 			redirects[row.DomainName] = Route{
+				ProjectID:          row.ProjectID,
 				RedirectTo:         row.RedirectTo.String,
 				RedirectStatusCode: row.RedirectStatusCode.Int32,
 			}
@@ -216,6 +239,7 @@ func (s *Service) loadRoutes(ctx context.Context) error {
 			IP:   row.VmIp.String(),
 			Port: row.VmPort.Int32,
 		})
+		proxyProjectID[row.DomainName] = row.ProjectID
 	}
 
 	newRoutes := make(map[string]Route)
@@ -229,7 +253,7 @@ func (s *Service) loadRoutes(ctx context.Context) error {
 		if len(bes) == 0 {
 			continue
 		}
-		newRoutes[domain] = Route{Backends: bes}
+		newRoutes[domain] = Route{Backends: bes, ProjectID: proxyProjectID[domain]}
 	}
 
 	s.mu.Lock()
@@ -297,21 +321,101 @@ func (s *Service) serveHTTPS(w http.ResponseWriter, r *http.Request) {
 	route, ok := s.routes[host]
 	s.mu.RUnlock()
 
-	if !ok {
+	if ok && route.RedirectTo != "" {
+		s.serveRedirect(w, r, route)
+		return
+	}
+	if ok && len(route.Backends) > 0 {
+		s.reverseProxy(w, r, host, route)
+		return
+	}
+
+	// Scale-to-zero cold path or unknown host: resolve from DB.
+	lookup, err := s.q.DomainEdgeLookup(r.Context(), host)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "Service Not Found", http.StatusNotFound)
+			return
+		}
+		slog.Error("domain edge lookup", "host", host, "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	if lookup.RedirectTo.Valid {
+		code := int(lookup.RedirectStatusCode.Int32)
+		if code < 300 || code > 399 {
+			code = http.StatusMovedPermanently
+		}
+		http.Redirect(w, r, lookup.RedirectTo.String, code)
+		return
+	}
+
+	if !lookup.DeploymentID.Valid {
 		http.Error(w, "Service Not Found", http.StatusNotFound)
 		return
 	}
 
-	// Handle redirects.
-	if route.RedirectTo != "" {
-		code := int(route.RedirectStatusCode)
-		if code < 300 || code > 399 {
-			code = http.StatusMovedPermanently
+	if lookup.RunningBackendCount > 0 {
+		if err := s.loadRoutes(r.Context()); err != nil {
+			slog.Warn("route reload after race", "error", err)
 		}
-		http.Redirect(w, r, route.RedirectTo, code)
+		s.mu.RLock()
+		route, ok = s.routes[host]
+		s.mu.RUnlock()
+		if ok && len(route.Backends) > 0 {
+			s.reverseProxy(w, r, host, route)
+			return
+		}
+	}
+
+	if err := s.requestColdStart(r.Context(), lookup); err != nil {
+		slog.Error("cold start wake", "host", host, "error", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
+	deadline := time.Now().Add(s.coldStartTimeout)
+	for time.Now().Before(deadline) {
+		if err := s.loadRoutes(r.Context()); err != nil {
+			slog.Warn("route reload during cold start", "error", err)
+		}
+		s.mu.RLock()
+		route, routeOK := s.routes[host]
+		s.mu.RUnlock()
+		if routeOK && len(route.Backends) > 0 {
+			s.reverseProxy(w, r, host, route)
+			return
+		}
+		select {
+		case <-r.Context().Done():
+			http.Error(w, "Request Timeout", http.StatusRequestTimeout)
+			return
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
+}
+
+func (s *Service) serveRedirect(w http.ResponseWriter, r *http.Request, route Route) {
+	code := int(route.RedirectStatusCode)
+	if code < 300 || code > 399 {
+		code = http.StatusMovedPermanently
+	}
+	http.Redirect(w, r, route.RedirectTo, code)
+}
+
+func (s *Service) requestColdStart(ctx context.Context, lookup queries.DomainEdgeLookupRow) error {
+	if err := s.q.ProjectClearScaledToZero(ctx, lookup.ProjectID); err != nil {
+		return fmt.Errorf("clear scaled_to_zero: %w", err)
+	}
+	if _, err := s.q.DeploymentRequestWake(ctx, lookup.DeploymentID); err != nil {
+		return fmt.Errorf("request wake: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) reverseProxy(w http.ResponseWriter, r *http.Request, host string, route Route) {
 	be, ok := s.pickBackend(route)
 	if !ok {
 		http.Error(w, "Service Not Found", http.StatusNotFound)
@@ -334,8 +438,14 @@ func (s *Service) serveHTTPS(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set("X-Forwarded-Proto", "https")
 		req.Header.Set("X-Real-IP", r.RemoteAddr)
 	}
+	projID := route.ProjectID
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		resp.Header.Set("Server", "Kindling")
+		if projID.Valid && resp.StatusCode < 500 {
+			if err := s.q.ProjectUpdateLastRequestAt(resp.Request.Context(), projID); err != nil {
+				slog.Warn("last_request_at update", "error", err)
+			}
+		}
 		return nil
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {

@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/database"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/deploy"
+	"github.com/kindlingvm/kindling/internal/edgeproxy"
 	"github.com/kindlingvm/kindling/internal/listener"
 	"github.com/kindlingvm/kindling/internal/reconciler"
 	"github.com/kindlingvm/kindling/internal/rpc"
@@ -30,9 +32,13 @@ import (
 
 func serveCmd() *cobra.Command {
 	var (
-		listenAddr    string
-		databaseURL   string
-		publicBaseURL string
+		listenAddr      string
+		databaseURL     string
+		publicBaseURL   string
+		edgeHTTPSAddr   string
+		edgeHTTPAddr    string
+		acmeEmail       string
+		acmeStaging     bool
 	)
 
 	cmd := &cobra.Command{
@@ -48,18 +54,52 @@ func serveCmd() *cobra.Command {
 			if publicBaseURL == "" {
 				publicBaseURL = os.Getenv("KINDLING_PUBLIC_URL")
 			}
-			return runServe(cmd.Context(), listenAddr, databaseURL, publicBaseURL)
+			if edgeHTTPSAddr == "" {
+				edgeHTTPSAddr = strings.TrimSpace(os.Getenv("KINDLING_EDGE_HTTPS_ADDR"))
+			}
+			if edgeHTTPAddr == "" {
+				edgeHTTPAddr = strings.TrimSpace(os.Getenv("KINDLING_EDGE_HTTP_ADDR"))
+			}
+			if acmeEmail == "" {
+				acmeEmail = strings.TrimSpace(os.Getenv("KINDLING_ACME_EMAIL"))
+			}
+			return runServe(cmd.Context(), serveOptions{
+				listenAddr:    listenAddr,
+				databaseURL:   databaseURL,
+				publicBaseURL: publicBaseURL,
+				edgeHTTPSAddr: edgeHTTPSAddr,
+				edgeHTTPAddr:  edgeHTTPAddr,
+				acmeEmail:     acmeEmail,
+				acmeStaging:   acmeStaging,
+			})
 		},
 	}
 
 	cmd.Flags().StringVar(&listenAddr, "listen", ":8080", "API listen address")
 	cmd.Flags().StringVar(&databaseURL, "database-url", "", "PostgreSQL connection string")
 	cmd.Flags().StringVar(&publicBaseURL, "public-url", "", "Optional seed for cluster_settings.public_base_url when that row is missing (e.g. first boot). Also KINDLING_PUBLIC_URL.")
+	cmd.Flags().StringVar(&edgeHTTPSAddr, "edge-https", "", "HTTPS listen address for TLS edge proxy (e.g. :443). Also KINDLING_EDGE_HTTPS_ADDR.")
+	cmd.Flags().StringVar(&edgeHTTPAddr, "edge-http", ":80", "HTTP listen address for edge proxy redirect to HTTPS")
+	cmd.Flags().StringVar(&acmeEmail, "acme-email", "", "Email for Let's Encrypt (TLS edge). Also KINDLING_ACME_EMAIL.")
+	cmd.Flags().BoolVar(&acmeStaging, "acme-staging", false, "Use Let's Encrypt staging CA")
 
 	return cmd
 }
 
-func runServe(ctx context.Context, listenAddr, databaseURL, publicBaseURL string) error {
+type serveOptions struct {
+	listenAddr    string
+	databaseURL   string
+	publicBaseURL string
+	edgeHTTPSAddr string
+	edgeHTTPAddr  string
+	acmeEmail     string
+	acmeStaging   bool
+}
+
+func runServe(ctx context.Context, opts serveOptions) error {
+	listenAddr := opts.listenAddr
+	databaseURL := opts.databaseURL
+	publicBaseURL := opts.publicBaseURL
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -235,6 +275,49 @@ func runServe(ctx context.Context, listenAddr, databaseURL, publicBaseURL string
 	}()
 	slog.Info("WAL listener started")
 
+	if opts.edgeHTTPSAddr != "" {
+		coldStart := 2 * time.Minute
+		if v := strings.TrimSpace(os.Getenv("KINDLING_COLD_START_TIMEOUT")); v != "" {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				coldStart = d
+			}
+		}
+		edgeHTTP := opts.edgeHTTPAddr
+		if edgeHTTP == "" {
+			edgeHTTP = ":80"
+		}
+		edgeSvc, err := edgeproxy.New(edgeproxy.Config{
+			HTTPAddr:          edgeHTTP,
+			HTTPSAddr:         opts.edgeHTTPSAddr,
+			ACMEEmail:         opts.acmeEmail,
+			ACMEStaging:       opts.acmeStaging,
+			Pool:              db.Pool,
+			RouteChangeNotify: routeChangeCh,
+			ColdStartTimeout:  coldStart,
+		})
+		if err != nil {
+			return fmt.Errorf("edge proxy: %w", err)
+		}
+		if err := edgeSvc.Start(ctx); err != nil {
+			return fmt.Errorf("edge proxy start: %w", err)
+		}
+		slog.Info("edge proxy started", "https", opts.edgeHTTPSAddr, "http", edgeHTTP)
+		go func() {
+			<-ctx.Done()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			_ = edgeSvc.Stop(shutdownCtx)
+		}()
+	}
+
+	idleSec := int64(300)
+	if v := strings.TrimSpace(os.Getenv("KINDLING_SCALE_TO_ZERO_IDLE_SECONDS")); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			idleSec = n
+		}
+	}
+	go runIdleScaleDownLoop(ctx, databaseURL, q, deploymentReconciler, idleSec)
+
 	// API server
 	api := rpc.NewAPI(q, ghTok)
 	webhookHandler := webhook.NewHandler(q)
@@ -264,6 +347,59 @@ func runServe(ctx context.Context, listenAddr, databaseURL, publicBaseURL string
 	}
 
 	return nil
+}
+
+// runIdleScaleDownLoop periodically marks eligible projects as scaled_to_zero
+// so the deployment reconciler can drain instances. Only one process holds the
+// advisory lock per cluster at a time.
+func runIdleScaleDownLoop(ctx context.Context, databaseURL string, q *queries.Queries, deploymentReconciler *reconciler.Scheduler, idleSeconds int64) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runIdleScaleDownOnce(ctx, databaseURL, q, deploymentReconciler, idleSeconds)
+		}
+	}
+}
+
+func runIdleScaleDownOnce(ctx context.Context, databaseURL string, q *queries.Queries, deploymentReconciler *reconciler.Scheduler, idleSeconds int64) {
+	leaderConn, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		slog.Debug("idle scaler: db connect", "error", err)
+		return
+	}
+	defer leaderConn.Close(context.Background())
+
+	qLeader := queries.New(leaderConn)
+	acquired, err := qLeader.TrySessionAdvisoryLock(ctx, "kindling_idle_scaler")
+	if err != nil || !acquired {
+		return
+	}
+	// Lock released when connection closes (defer).
+
+	projects, err := q.ProjectsFindForIdleScaleDown(ctx, idleSeconds)
+	if err != nil {
+		slog.Warn("idle scaler: list projects", "error", err)
+		return
+	}
+	for _, p := range projects {
+		if err := q.ProjectMarkScaledToZero(ctx, p.ID); err != nil {
+			slog.Warn("idle scaler: mark scaled", "project_id", p.ID, "error", err)
+			continue
+		}
+		dep, err := q.DeploymentLatestRunningByProjectID(ctx, p.ID)
+		if err != nil {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				slog.Warn("idle scaler: latest deployment", "project_id", p.ID, "error", err)
+			}
+			continue
+		}
+		deploymentReconciler.ScheduleNow(uuid.UUID(dep.ID.Bytes))
+		slog.Info("idle scale-to-zero", "project_id", p.ID, "deployment_id", dep.ID)
+	}
 }
 
 func seedPublicBaseURLIfUnset(ctx context.Context, q *queries.Queries, fromFlag string) error {

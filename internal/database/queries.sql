@@ -105,6 +105,36 @@ SET desired_instance_count = $2, updated_at = NOW()
 WHERE id = $1
 RETURNING *;
 
+-- name: ProjectUpdateScaleToZeroEnabled :one
+UPDATE projects
+SET scale_to_zero_enabled = $2, updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: ProjectUpdateLastRequestAt :exec
+UPDATE projects SET last_request_at = NOW(), updated_at = NOW() WHERE id = $1;
+
+-- name: ProjectClearScaledToZero :exec
+UPDATE projects SET scaled_to_zero = false, updated_at = NOW() WHERE id = $1;
+
+-- name: ProjectMarkScaledToZero :exec
+UPDATE projects
+SET scaled_to_zero = true, updated_at = NOW()
+WHERE id = $1
+  AND scale_to_zero_enabled = true
+  AND desired_instance_count > 0
+  AND scaled_to_zero = false;
+
+-- name: ProjectsFindForIdleScaleDown :many
+SELECT * FROM projects
+WHERE scale_to_zero_enabled = true
+  AND desired_instance_count > 0
+  AND scaled_to_zero = false
+  AND last_request_at IS NOT NULL
+  AND last_request_at < NOW() - ($1::bigint * INTERVAL '1 second')
+ORDER BY last_request_at ASC
+LIMIT 100;
+
 -- Deployment instances (horizontal scaling) --
 
 -- name: DeploymentInstanceCreate :one
@@ -258,6 +288,15 @@ UPDATE deployments SET vm_id = $2, updated_at = NOW() WHERE id = $1 RETURNING *;
 -- name: DeploymentMarkRunning :exec
 UPDATE deployments SET running_at = NOW(), updated_at = NOW() WHERE id = $1;
 
+-- name: DeploymentRequestWake :one
+UPDATE deployments
+SET wake_requested_at = COALESCE(wake_requested_at, NOW()), updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL AND failed_at IS NULL AND stopped_at IS NULL
+RETURNING *;
+
+-- name: DeploymentClearWakeRequested :exec
+UPDATE deployments SET wake_requested_at = NULL, updated_at = NOW() WHERE id = $1;
+
 -- name: DeploymentMarkStopped :exec
 UPDATE deployments SET stopped_at = NOW(), updated_at = NOW() WHERE id = $1;
 
@@ -314,6 +353,7 @@ SELECT
     d.stopped_at,
     d.failed_at,
     d.deleted_at,
+    d.wake_requested_at,
     d.created_at,
     d.updated_at,
     p.name AS project_name,
@@ -350,8 +390,24 @@ WHERE deployment_id = $1
   AND verified_at IS NOT NULL
 ORDER BY domain_name ASC;
 
+-- name: DomainEdgeLookup :one
+SELECT
+    d.id AS domain_id,
+    d.project_id,
+    d.deployment_id,
+    d.redirect_to,
+    d.redirect_status_code,
+    dep.wake_requested_at AS deployment_wake_requested_at,
+    (SELECT COUNT(*)::bigint FROM deployment_instances di
+     INNER JOIN vms vm ON di.vm_id = vm.id AND vm.deleted_at IS NULL AND vm.status = 'running'
+     WHERE di.deployment_id = d.deployment_id AND di.deleted_at IS NULL AND di.status = 'running') AS running_backend_count
+FROM domains d
+LEFT JOIN deployments dep ON d.deployment_id = dep.id AND dep.deleted_at IS NULL
+WHERE d.domain_name = $1 AND d.verified_at IS NOT NULL;
+
 -- name: RouteFindActive :many
 SELECT d.domain_name,
+       d.project_id,
        d.redirect_to,
        d.redirect_status_code,
        v.ip_address AS vm_ip,

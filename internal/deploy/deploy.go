@@ -45,6 +45,27 @@ func (d *Deployer) SetReconciler(r *reconciler.Scheduler) {
 	d.deploymentReconciler = r
 }
 
+// effectiveReplicaCount returns how many instances the deployment reconciler
+// should converge to. Scale-to-zero uses projects.scaled_to_zero; cold start
+// uses deployments.wake_requested_at to temporarily raise the count.
+func effectiveReplicaCount(proj queries.Project, dep queries.Deployment) int32 {
+	if dep.WakeRequestedAt.Valid {
+		d := proj.DesiredInstanceCount
+		if d < 1 {
+			return 1
+		}
+		return d
+	}
+	if proj.ScaledToZero {
+		return 0
+	}
+	d := proj.DesiredInstanceCount
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
 // ReconcileDeployment is the reconcile function for deployments.
 func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UUID) error {
 	dep, err := d.q.DeploymentFirstByID(ctx, uuidToPgtype(deploymentID))
@@ -56,12 +77,9 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 	if err != nil {
 		return fmt.Errorf("fetch project: %w", err)
 	}
-	desired := proj.DesiredInstanceCount
-	if desired < 1 {
-		desired = 1
-	}
+	desired := effectiveReplicaCount(proj, dep)
 
-	logger := slog.With("deployment_id", deploymentID, "desired_instances", desired)
+	logger := slog.With("deployment_id", deploymentID, "effective_instances", desired, "desired_instance_count", proj.DesiredInstanceCount, "scaled_to_zero", proj.ScaledToZero, "wake", dep.WakeRequestedAt.Valid)
 
 	if dep.DeletedAt.Valid || dep.FailedAt.Valid || dep.StoppedAt.Valid {
 		logger.Info("deployment in terminal state")
@@ -152,6 +170,26 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 		return fmt.Errorf("list deployment instances: %w", err)
 	}
 
+	// Scale-to-zero: converge to zero instances; still promote the deployment
+	// so domains and routing metadata point at this revision.
+	if desired == 0 {
+		if err := d.scaleDownInstances(ctx, instList, 0, logger); err != nil {
+			return err
+		}
+		if !dep.RunningAt.Valid {
+			if err := d.q.DeploymentMarkRunning(ctx, dep.ID); err != nil {
+				return fmt.Errorf("mark running: %w", err)
+			}
+			logger.Info("deployment is running (scaled to zero instances)")
+			d.q.DomainUpdateDeploymentForProject(ctx, queries.DomainUpdateDeploymentForProjectParams{
+				DeploymentID: dep.ID,
+				ProjectID:    dep.ProjectID,
+			})
+			d.drainOldDeployments(ctx, dep)
+		}
+		return nil
+	}
+
 	if err := d.scaleDownInstances(ctx, instList, int(desired), logger); err != nil {
 		return err
 	}
@@ -182,6 +220,12 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 		logger.Info("waiting for instances to become ready", "ready", ready, "desired", desired)
 		d.scheduleRetry(deploymentID, 5*time.Second)
 		return nil
+	}
+
+	if dep.WakeRequestedAt.Valid {
+		if err := d.q.DeploymentClearWakeRequested(ctx, dep.ID); err != nil {
+			return fmt.Errorf("clear wake: %w", err)
+		}
 	}
 
 	if !dep.RunningAt.Valid {

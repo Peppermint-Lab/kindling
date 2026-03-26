@@ -371,11 +371,20 @@ func (q *Queries) ClusterSettingUpsert(ctx context.Context, arg ClusterSettingUp
 	return err
 }
 
+const deploymentClearWakeRequested = `-- name: DeploymentClearWakeRequested :exec
+UPDATE deployments SET wake_requested_at = NULL, updated_at = NOW() WHERE id = $1
+`
+
+func (q *Queries) DeploymentClearWakeRequested(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deploymentClearWakeRequested, id)
+	return err
+}
+
 const deploymentCreate = `-- name: DeploymentCreate :one
 
 INSERT INTO deployments (id, project_id, github_commit)
 VALUES ($1, $2, $3)
-RETURNING id, project_id, build_id, image_id, vm_id, github_commit, running_at, stopped_at, failed_at, deleted_at, created_at, updated_at
+RETURNING id, project_id, build_id, image_id, vm_id, github_commit, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at
 `
 
 type DeploymentCreateParams struct {
@@ -399,6 +408,7 @@ func (q *Queries) DeploymentCreate(ctx context.Context, arg DeploymentCreatePara
 		&i.StoppedAt,
 		&i.FailedAt,
 		&i.DeletedAt,
+		&i.WakeRequestedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -406,7 +416,7 @@ func (q *Queries) DeploymentCreate(ctx context.Context, arg DeploymentCreatePara
 }
 
 const deploymentFindByProjectID = `-- name: DeploymentFindByProjectID :many
-SELECT id, project_id, build_id, image_id, vm_id, github_commit, running_at, stopped_at, failed_at, deleted_at, created_at, updated_at FROM deployments WHERE project_id = $1 ORDER BY created_at DESC
+SELECT id, project_id, build_id, image_id, vm_id, github_commit, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments WHERE project_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) DeploymentFindByProjectID(ctx context.Context, projectID pgtype.UUID) ([]Deployment, error) {
@@ -429,6 +439,7 @@ func (q *Queries) DeploymentFindByProjectID(ctx context.Context, projectID pgtyp
 			&i.StoppedAt,
 			&i.FailedAt,
 			&i.DeletedAt,
+			&i.WakeRequestedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -443,7 +454,7 @@ func (q *Queries) DeploymentFindByProjectID(ctx context.Context, projectID pgtyp
 }
 
 const deploymentFindByVMID = `-- name: DeploymentFindByVMID :one
-SELECT d.id, d.project_id, d.build_id, d.image_id, d.vm_id, d.github_commit, d.running_at, d.stopped_at, d.failed_at, d.deleted_at, d.created_at, d.updated_at FROM deployments d
+SELECT d.id, d.project_id, d.build_id, d.image_id, d.vm_id, d.github_commit, d.running_at, d.stopped_at, d.failed_at, d.deleted_at, d.wake_requested_at, d.created_at, d.updated_at FROM deployments d
 JOIN deployment_instances di ON di.deployment_id = d.id AND di.deleted_at IS NULL
 WHERE di.vm_id = $1 AND d.deleted_at IS NULL
 `
@@ -462,6 +473,7 @@ func (q *Queries) DeploymentFindByVMID(ctx context.Context, vmID pgtype.UUID) (D
 		&i.StoppedAt,
 		&i.FailedAt,
 		&i.DeletedAt,
+		&i.WakeRequestedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -480,6 +492,7 @@ SELECT
     d.stopped_at,
     d.failed_at,
     d.deleted_at,
+    d.wake_requested_at,
     d.created_at,
     d.updated_at,
     p.name AS project_name,
@@ -493,20 +506,21 @@ LIMIT $1
 `
 
 type DeploymentFindRecentWithProjectRow struct {
-	ID           pgtype.UUID        `json:"id"`
-	ProjectID    pgtype.UUID        `json:"project_id"`
-	BuildID      pgtype.UUID        `json:"build_id"`
-	ImageID      pgtype.UUID        `json:"image_id"`
-	VmID         pgtype.UUID        `json:"vm_id"`
-	GithubCommit string             `json:"github_commit"`
-	RunningAt    pgtype.Timestamptz `json:"running_at"`
-	StoppedAt    pgtype.Timestamptz `json:"stopped_at"`
-	FailedAt     pgtype.Timestamptz `json:"failed_at"`
-	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	ProjectName  string             `json:"project_name"`
-	BuildStatus  pgtype.Text        `json:"build_status"`
+	ID              pgtype.UUID        `json:"id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	BuildID         pgtype.UUID        `json:"build_id"`
+	ImageID         pgtype.UUID        `json:"image_id"`
+	VmID            pgtype.UUID        `json:"vm_id"`
+	GithubCommit    string             `json:"github_commit"`
+	RunningAt       pgtype.Timestamptz `json:"running_at"`
+	StoppedAt       pgtype.Timestamptz `json:"stopped_at"`
+	FailedAt        pgtype.Timestamptz `json:"failed_at"`
+	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
+	WakeRequestedAt pgtype.Timestamptz `json:"wake_requested_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ProjectName     string             `json:"project_name"`
+	BuildStatus     pgtype.Text        `json:"build_status"`
 }
 
 func (q *Queries) DeploymentFindRecentWithProject(ctx context.Context, limit int32) ([]DeploymentFindRecentWithProjectRow, error) {
@@ -529,6 +543,7 @@ func (q *Queries) DeploymentFindRecentWithProject(ctx context.Context, limit int
 			&i.StoppedAt,
 			&i.FailedAt,
 			&i.DeletedAt,
+			&i.WakeRequestedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ProjectName,
@@ -545,7 +560,7 @@ func (q *Queries) DeploymentFindRecentWithProject(ctx context.Context, limit int
 }
 
 const deploymentFindRunningAndOlder = `-- name: DeploymentFindRunningAndOlder :many
-SELECT id, project_id, build_id, image_id, vm_id, github_commit, running_at, stopped_at, failed_at, deleted_at, created_at, updated_at FROM deployments
+SELECT id, project_id, build_id, image_id, vm_id, github_commit, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
 WHERE project_id = $1
   AND running_at IS NOT NULL
   AND stopped_at IS NULL
@@ -580,6 +595,7 @@ func (q *Queries) DeploymentFindRunningAndOlder(ctx context.Context, arg Deploym
 			&i.StoppedAt,
 			&i.FailedAt,
 			&i.DeletedAt,
+			&i.WakeRequestedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -594,7 +610,7 @@ func (q *Queries) DeploymentFindRunningAndOlder(ctx context.Context, arg Deploym
 }
 
 const deploymentFindRunningByServerID = `-- name: DeploymentFindRunningByServerID :many
-SELECT DISTINCT d.id, d.project_id, d.build_id, d.image_id, d.vm_id, d.github_commit, d.running_at, d.stopped_at, d.failed_at, d.deleted_at, d.created_at, d.updated_at FROM deployments d
+SELECT DISTINCT d.id, d.project_id, d.build_id, d.image_id, d.vm_id, d.github_commit, d.running_at, d.stopped_at, d.failed_at, d.deleted_at, d.wake_requested_at, d.created_at, d.updated_at FROM deployments d
 JOIN deployment_instances di ON di.deployment_id = d.id AND di.deleted_at IS NULL
 JOIN vms v ON di.vm_id = v.id AND v.deleted_at IS NULL
 WHERE v.server_id = $1
@@ -624,6 +640,7 @@ func (q *Queries) DeploymentFindRunningByServerID(ctx context.Context, serverID 
 			&i.StoppedAt,
 			&i.FailedAt,
 			&i.DeletedAt,
+			&i.WakeRequestedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -638,7 +655,7 @@ func (q *Queries) DeploymentFindRunningByServerID(ctx context.Context, serverID 
 }
 
 const deploymentFirstByID = `-- name: DeploymentFirstByID :one
-SELECT id, project_id, build_id, image_id, vm_id, github_commit, running_at, stopped_at, failed_at, deleted_at, created_at, updated_at FROM deployments WHERE id = $1
+SELECT id, project_id, build_id, image_id, vm_id, github_commit, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments WHERE id = $1
 `
 
 func (q *Queries) DeploymentFirstByID(ctx context.Context, id pgtype.UUID) (Deployment, error) {
@@ -655,6 +672,7 @@ func (q *Queries) DeploymentFirstByID(ctx context.Context, id pgtype.UUID) (Depl
 		&i.StoppedAt,
 		&i.FailedAt,
 		&i.DeletedAt,
+		&i.WakeRequestedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -906,7 +924,7 @@ func (q *Queries) DeploymentInstanceVMIDsByServerID(ctx context.Context, serverI
 }
 
 const deploymentLatestRunningByProjectID = `-- name: DeploymentLatestRunningByProjectID :one
-SELECT id, project_id, build_id, image_id, vm_id, github_commit, running_at, stopped_at, failed_at, deleted_at, created_at, updated_at FROM deployments
+SELECT id, project_id, build_id, image_id, vm_id, github_commit, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
 WHERE project_id = $1
   AND running_at IS NOT NULL
   AND stopped_at IS NULL
@@ -930,6 +948,7 @@ func (q *Queries) DeploymentLatestRunningByProjectID(ctx context.Context, projec
 		&i.StoppedAt,
 		&i.FailedAt,
 		&i.DeletedAt,
+		&i.WakeRequestedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -954,8 +973,36 @@ func (q *Queries) DeploymentMarkStopped(ctx context.Context, id pgtype.UUID) err
 	return err
 }
 
+const deploymentRequestWake = `-- name: DeploymentRequestWake :one
+UPDATE deployments
+SET wake_requested_at = COALESCE(wake_requested_at, NOW()), updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL AND failed_at IS NULL AND stopped_at IS NULL
+RETURNING id, project_id, build_id, image_id, vm_id, github_commit, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at
+`
+
+func (q *Queries) DeploymentRequestWake(ctx context.Context, id pgtype.UUID) (Deployment, error) {
+	row := q.db.QueryRow(ctx, deploymentRequestWake, id)
+	var i Deployment
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.BuildID,
+		&i.ImageID,
+		&i.VmID,
+		&i.GithubCommit,
+		&i.RunningAt,
+		&i.StoppedAt,
+		&i.FailedAt,
+		&i.DeletedAt,
+		&i.WakeRequestedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const deploymentUpdateBuild = `-- name: DeploymentUpdateBuild :one
-UPDATE deployments SET build_id = $2, updated_at = NOW() WHERE id = $1 RETURNING id, project_id, build_id, image_id, vm_id, github_commit, running_at, stopped_at, failed_at, deleted_at, created_at, updated_at
+UPDATE deployments SET build_id = $2, updated_at = NOW() WHERE id = $1 RETURNING id, project_id, build_id, image_id, vm_id, github_commit, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at
 `
 
 type DeploymentUpdateBuildParams struct {
@@ -977,6 +1024,7 @@ func (q *Queries) DeploymentUpdateBuild(ctx context.Context, arg DeploymentUpdat
 		&i.StoppedAt,
 		&i.FailedAt,
 		&i.DeletedAt,
+		&i.WakeRequestedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -993,7 +1041,7 @@ func (q *Queries) DeploymentUpdateFailedAt(ctx context.Context, id pgtype.UUID) 
 }
 
 const deploymentUpdateImage = `-- name: DeploymentUpdateImage :one
-UPDATE deployments SET image_id = $2, updated_at = NOW() WHERE id = $1 RETURNING id, project_id, build_id, image_id, vm_id, github_commit, running_at, stopped_at, failed_at, deleted_at, created_at, updated_at
+UPDATE deployments SET image_id = $2, updated_at = NOW() WHERE id = $1 RETURNING id, project_id, build_id, image_id, vm_id, github_commit, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at
 `
 
 type DeploymentUpdateImageParams struct {
@@ -1015,6 +1063,7 @@ func (q *Queries) DeploymentUpdateImage(ctx context.Context, arg DeploymentUpdat
 		&i.StoppedAt,
 		&i.FailedAt,
 		&i.DeletedAt,
+		&i.WakeRequestedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -1022,7 +1071,7 @@ func (q *Queries) DeploymentUpdateImage(ctx context.Context, arg DeploymentUpdat
 }
 
 const deploymentUpdateVM = `-- name: DeploymentUpdateVM :one
-UPDATE deployments SET vm_id = $2, updated_at = NOW() WHERE id = $1 RETURNING id, project_id, build_id, image_id, vm_id, github_commit, running_at, stopped_at, failed_at, deleted_at, created_at, updated_at
+UPDATE deployments SET vm_id = $2, updated_at = NOW() WHERE id = $1 RETURNING id, project_id, build_id, image_id, vm_id, github_commit, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at
 `
 
 type DeploymentUpdateVMParams struct {
@@ -1044,6 +1093,7 @@ func (q *Queries) DeploymentUpdateVM(ctx context.Context, arg DeploymentUpdateVM
 		&i.StoppedAt,
 		&i.FailedAt,
 		&i.DeletedAt,
+		&i.WakeRequestedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -1077,6 +1127,47 @@ func (q *Queries) DomainCreate(ctx context.Context, arg DomainCreateParams) (Dom
 		&i.RedirectStatusCode,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const domainEdgeLookup = `-- name: DomainEdgeLookup :one
+SELECT
+    d.id AS domain_id,
+    d.project_id,
+    d.deployment_id,
+    d.redirect_to,
+    d.redirect_status_code,
+    dep.wake_requested_at AS deployment_wake_requested_at,
+    (SELECT COUNT(*)::bigint FROM deployment_instances di
+     INNER JOIN vms vm ON di.vm_id = vm.id AND vm.deleted_at IS NULL AND vm.status = 'running'
+     WHERE di.deployment_id = d.deployment_id AND di.deleted_at IS NULL AND di.status = 'running') AS running_backend_count
+FROM domains d
+LEFT JOIN deployments dep ON d.deployment_id = dep.id AND dep.deleted_at IS NULL
+WHERE d.domain_name = $1 AND d.verified_at IS NOT NULL
+`
+
+type DomainEdgeLookupRow struct {
+	DomainID                  pgtype.UUID        `json:"domain_id"`
+	ProjectID                 pgtype.UUID        `json:"project_id"`
+	DeploymentID              pgtype.UUID        `json:"deployment_id"`
+	RedirectTo                pgtype.Text        `json:"redirect_to"`
+	RedirectStatusCode        pgtype.Int4        `json:"redirect_status_code"`
+	DeploymentWakeRequestedAt pgtype.Timestamptz `json:"deployment_wake_requested_at"`
+	RunningBackendCount       int64              `json:"running_backend_count"`
+}
+
+func (q *Queries) DomainEdgeLookup(ctx context.Context, domainName string) (DomainEdgeLookupRow, error) {
+	row := q.db.QueryRow(ctx, domainEdgeLookup, domainName)
+	var i DomainEdgeLookupRow
+	err := row.Scan(
+		&i.DomainID,
+		&i.ProjectID,
+		&i.DeploymentID,
+		&i.RedirectTo,
+		&i.RedirectStatusCode,
+		&i.DeploymentWakeRequestedAt,
+		&i.RunningBackendCount,
 	)
 	return i, err
 }
@@ -1270,11 +1361,20 @@ func (q *Queries) ImageFindOrCreate(ctx context.Context, arg ImageFindOrCreatePa
 	return i, err
 }
 
+const projectClearScaledToZero = `-- name: ProjectClearScaledToZero :exec
+UPDATE projects SET scaled_to_zero = false, updated_at = NOW() WHERE id = $1
+`
+
+func (q *Queries) ProjectClearScaledToZero(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, projectClearScaledToZero, id)
+	return err
+}
+
 const projectCreate = `-- name: ProjectCreate :one
 
 INSERT INTO projects (id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, created_at, updated_at
+RETURNING id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, created_at, updated_at
 `
 
 type ProjectCreateParams struct {
@@ -1310,6 +1410,9 @@ func (q *Queries) ProjectCreate(ctx context.Context, arg ProjectCreateParams) (P
 		&i.RootDirectory,
 		&i.DockerfilePath,
 		&i.DesiredInstanceCount,
+		&i.LastRequestAt,
+		&i.ScaledToZero,
+		&i.ScaleToZeroEnabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -1326,7 +1429,7 @@ func (q *Queries) ProjectDelete(ctx context.Context, id pgtype.UUID) error {
 }
 
 const projectFindAll = `-- name: ProjectFindAll :many
-SELECT id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, created_at, updated_at FROM projects ORDER BY created_at DESC
+SELECT id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, created_at, updated_at FROM projects ORDER BY created_at DESC
 `
 
 func (q *Queries) ProjectFindAll(ctx context.Context) ([]Project, error) {
@@ -1347,6 +1450,9 @@ func (q *Queries) ProjectFindAll(ctx context.Context) ([]Project, error) {
 			&i.RootDirectory,
 			&i.DockerfilePath,
 			&i.DesiredInstanceCount,
+			&i.LastRequestAt,
+			&i.ScaledToZero,
+			&i.ScaleToZeroEnabled,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -1361,7 +1467,7 @@ func (q *Queries) ProjectFindAll(ctx context.Context) ([]Project, error) {
 }
 
 const projectFindByGitHubRepo = `-- name: ProjectFindByGitHubRepo :one
-SELECT id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, created_at, updated_at FROM projects WHERE github_repository = $1
+SELECT id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, created_at, updated_at FROM projects WHERE github_repository = $1
 `
 
 func (q *Queries) ProjectFindByGitHubRepo(ctx context.Context, githubRepository string) (Project, error) {
@@ -1376,6 +1482,9 @@ func (q *Queries) ProjectFindByGitHubRepo(ctx context.Context, githubRepository 
 		&i.RootDirectory,
 		&i.DockerfilePath,
 		&i.DesiredInstanceCount,
+		&i.LastRequestAt,
+		&i.ScaledToZero,
+		&i.ScaleToZeroEnabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -1383,7 +1492,7 @@ func (q *Queries) ProjectFindByGitHubRepo(ctx context.Context, githubRepository 
 }
 
 const projectFirstByID = `-- name: ProjectFirstByID :one
-SELECT id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, created_at, updated_at FROM projects WHERE id = $1
+SELECT id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, created_at, updated_at FROM projects WHERE id = $1
 `
 
 func (q *Queries) ProjectFirstByID(ctx context.Context, id pgtype.UUID) (Project, error) {
@@ -1398,17 +1507,34 @@ func (q *Queries) ProjectFirstByID(ctx context.Context, id pgtype.UUID) (Project
 		&i.RootDirectory,
 		&i.DockerfilePath,
 		&i.DesiredInstanceCount,
+		&i.LastRequestAt,
+		&i.ScaledToZero,
+		&i.ScaleToZeroEnabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
+const projectMarkScaledToZero = `-- name: ProjectMarkScaledToZero :exec
+UPDATE projects
+SET scaled_to_zero = true, updated_at = NOW()
+WHERE id = $1
+  AND scale_to_zero_enabled = true
+  AND desired_instance_count > 0
+  AND scaled_to_zero = false
+`
+
+func (q *Queries) ProjectMarkScaledToZero(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, projectMarkScaledToZero, id)
+	return err
+}
+
 const projectUpdateDesiredInstanceCount = `-- name: ProjectUpdateDesiredInstanceCount :one
 UPDATE projects
 SET desired_instance_count = $2, updated_at = NOW()
 WHERE id = $1
-RETURNING id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, created_at, updated_at
+RETURNING id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, created_at, updated_at
 `
 
 type ProjectUpdateDesiredInstanceCountParams struct {
@@ -1428,6 +1554,51 @@ func (q *Queries) ProjectUpdateDesiredInstanceCount(ctx context.Context, arg Pro
 		&i.RootDirectory,
 		&i.DockerfilePath,
 		&i.DesiredInstanceCount,
+		&i.LastRequestAt,
+		&i.ScaledToZero,
+		&i.ScaleToZeroEnabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const projectUpdateLastRequestAt = `-- name: ProjectUpdateLastRequestAt :exec
+UPDATE projects SET last_request_at = NOW(), updated_at = NOW() WHERE id = $1
+`
+
+func (q *Queries) ProjectUpdateLastRequestAt(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, projectUpdateLastRequestAt, id)
+	return err
+}
+
+const projectUpdateScaleToZeroEnabled = `-- name: ProjectUpdateScaleToZeroEnabled :one
+UPDATE projects
+SET scale_to_zero_enabled = $2, updated_at = NOW()
+WHERE id = $1
+RETURNING id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, created_at, updated_at
+`
+
+type ProjectUpdateScaleToZeroEnabledParams struct {
+	ID                 pgtype.UUID `json:"id"`
+	ScaleToZeroEnabled bool        `json:"scale_to_zero_enabled"`
+}
+
+func (q *Queries) ProjectUpdateScaleToZeroEnabled(ctx context.Context, arg ProjectUpdateScaleToZeroEnabledParams) (Project, error) {
+	row := q.db.QueryRow(ctx, projectUpdateScaleToZeroEnabled, arg.ID, arg.ScaleToZeroEnabled)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.GithubRepository,
+		&i.GithubInstallationID,
+		&i.GithubWebhookSecret,
+		&i.RootDirectory,
+		&i.DockerfilePath,
+		&i.DesiredInstanceCount,
+		&i.LastRequestAt,
+		&i.ScaledToZero,
+		&i.ScaleToZeroEnabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -1438,7 +1609,7 @@ const projectUpdateWebhookSecret = `-- name: ProjectUpdateWebhookSecret :one
 UPDATE projects
 SET github_webhook_secret = $2, updated_at = NOW()
 WHERE id = $1
-RETURNING id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, created_at, updated_at
+RETURNING id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, created_at, updated_at
 `
 
 type ProjectUpdateWebhookSecretParams struct {
@@ -1458,14 +1629,63 @@ func (q *Queries) ProjectUpdateWebhookSecret(ctx context.Context, arg ProjectUpd
 		&i.RootDirectory,
 		&i.DockerfilePath,
 		&i.DesiredInstanceCount,
+		&i.LastRequestAt,
+		&i.ScaledToZero,
+		&i.ScaleToZeroEnabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
+const projectsFindForIdleScaleDown = `-- name: ProjectsFindForIdleScaleDown :many
+SELECT id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, created_at, updated_at FROM projects
+WHERE scale_to_zero_enabled = true
+  AND desired_instance_count > 0
+  AND scaled_to_zero = false
+  AND last_request_at IS NOT NULL
+  AND last_request_at < NOW() - ($1::bigint * INTERVAL '1 second')
+ORDER BY last_request_at ASC
+LIMIT 100
+`
+
+func (q *Queries) ProjectsFindForIdleScaleDown(ctx context.Context, dollar_1 int64) ([]Project, error) {
+	rows, err := q.db.Query(ctx, projectsFindForIdleScaleDown, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Project{}
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.GithubRepository,
+			&i.GithubInstallationID,
+			&i.GithubWebhookSecret,
+			&i.RootDirectory,
+			&i.DockerfilePath,
+			&i.DesiredInstanceCount,
+			&i.LastRequestAt,
+			&i.ScaledToZero,
+			&i.ScaleToZeroEnabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const routeFindActive = `-- name: RouteFindActive :many
 SELECT d.domain_name,
+       d.project_id,
        d.redirect_to,
        d.redirect_status_code,
        v.ip_address AS vm_ip,
@@ -1483,6 +1703,7 @@ WHERE d.verified_at IS NOT NULL
 
 type RouteFindActiveRow struct {
 	DomainName         string      `json:"domain_name"`
+	ProjectID          pgtype.UUID `json:"project_id"`
 	RedirectTo         pgtype.Text `json:"redirect_to"`
 	RedirectStatusCode pgtype.Int4 `json:"redirect_status_code"`
 	VmIp               *netip.Addr `json:"vm_ip"`
@@ -1502,6 +1723,7 @@ func (q *Queries) RouteFindActive(ctx context.Context) ([]RouteFindActiveRow, er
 		var i RouteFindActiveRow
 		if err := rows.Scan(
 			&i.DomainName,
+			&i.ProjectID,
 			&i.RedirectTo,
 			&i.RedirectStatusCode,
 			&i.VmIp,

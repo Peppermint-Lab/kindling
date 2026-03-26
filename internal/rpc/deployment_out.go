@@ -30,6 +30,9 @@ type deploymentOut struct {
 	Phase                string                     `json:"phase"`
 	DesiredInstanceCount int                        `json:"desired_instance_count,omitempty"`
 	RunningInstanceCount int                        `json:"running_instance_count,omitempty"`
+	ScaledToZero         bool                       `json:"scaled_to_zero,omitempty"`
+	ScaleToZeroEnabled   bool                       `json:"scale_to_zero_enabled,omitempty"`
+	WakeRequestedAt      *string                    `json:"wake_requested_at,omitempty"`
 	Reachable            *deploymentReachabilityOut `json:"reachable,omitempty"`
 }
 
@@ -104,8 +107,11 @@ func (a *API) deploymentToOutCtx(ctx context.Context, dep queries.Deployment) de
 		}
 	}
 	out := deploymentToOut(dep, build, a.deploymentReachability(ctx, dep))
+	out.WakeRequestedAt = formatTS(dep.WakeRequestedAt)
 	if proj, err := a.q.ProjectFirstByID(ctx, dep.ProjectID); err == nil {
 		out.DesiredInstanceCount = int(proj.DesiredInstanceCount)
+		out.ScaledToZero = proj.ScaledToZero
+		out.ScaleToZeroEnabled = proj.ScaleToZeroEnabled
 	}
 	insts, err := a.q.DeploymentInstanceFindByDeploymentID(ctx, dep.ID)
 	if err == nil {
@@ -138,22 +144,26 @@ func (a *API) listRowToOutCtx(ctx context.Context, row queries.DeploymentFindRec
 		buildPtr = &queries.Build{Status: st}
 	}
 	dep := queries.Deployment{
-		ID:           row.ID,
-		ProjectID:    row.ProjectID,
-		BuildID:      row.BuildID,
-		ImageID:      row.ImageID,
-		VmID:         row.VmID,
-		GithubCommit: row.GithubCommit,
-		RunningAt:    row.RunningAt,
-		StoppedAt:    row.StoppedAt,
-		FailedAt:     row.FailedAt,
-		DeletedAt:    row.DeletedAt,
-		CreatedAt:    row.CreatedAt,
-		UpdatedAt:    row.UpdatedAt,
+		ID:              row.ID,
+		ProjectID:       row.ProjectID,
+		BuildID:         row.BuildID,
+		ImageID:         row.ImageID,
+		VmID:            row.VmID,
+		GithubCommit:    row.GithubCommit,
+		RunningAt:       row.RunningAt,
+		StoppedAt:       row.StoppedAt,
+		FailedAt:        row.FailedAt,
+		DeletedAt:       row.DeletedAt,
+		WakeRequestedAt: row.WakeRequestedAt,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
 	}
 	out := deploymentToOut(dep, buildPtr, a.deploymentReachability(ctx, dep))
+	out.WakeRequestedAt = formatTS(dep.WakeRequestedAt)
 	if proj, err := a.q.ProjectFirstByID(ctx, dep.ProjectID); err == nil {
 		out.DesiredInstanceCount = int(proj.DesiredInstanceCount)
+		out.ScaledToZero = proj.ScaledToZero
+		out.ScaleToZeroEnabled = proj.ScaleToZeroEnabled
 	}
 	if insts, err := a.q.DeploymentInstanceFindByDeploymentID(ctx, dep.ID); err == nil {
 		rc := 0

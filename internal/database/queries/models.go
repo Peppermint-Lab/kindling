@@ -46,18 +46,19 @@ type ClusterSetting struct {
 }
 
 type Deployment struct {
-	ID           pgtype.UUID        `json:"id"`
-	ProjectID    pgtype.UUID        `json:"project_id"`
-	BuildID      pgtype.UUID        `json:"build_id"`
-	ImageID      pgtype.UUID        `json:"image_id"`
-	VmID         pgtype.UUID        `json:"vm_id"`
-	GithubCommit string             `json:"github_commit"`
-	RunningAt    pgtype.Timestamptz `json:"running_at"`
-	StoppedAt    pgtype.Timestamptz `json:"stopped_at"`
-	FailedAt     pgtype.Timestamptz `json:"failed_at"`
-	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	ID              pgtype.UUID        `json:"id"`
+	ProjectID       pgtype.UUID        `json:"project_id"`
+	BuildID         pgtype.UUID        `json:"build_id"`
+	ImageID         pgtype.UUID        `json:"image_id"`
+	VmID            pgtype.UUID        `json:"vm_id"`
+	GithubCommit    string             `json:"github_commit"`
+	RunningAt       pgtype.Timestamptz `json:"running_at"`
+	StoppedAt       pgtype.Timestamptz `json:"stopped_at"`
+	FailedAt        pgtype.Timestamptz `json:"failed_at"`
+	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
+	WakeRequestedAt pgtype.Timestamptz `json:"wake_requested_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 type DeploymentInstance struct {
@@ -109,6 +110,9 @@ type Project struct {
 	RootDirectory        string             `json:"root_directory"`
 	DockerfilePath       string             `json:"dockerfile_path"`
 	DesiredInstanceCount int32              `json:"desired_instance_count"`
+	LastRequestAt        pgtype.Timestamptz `json:"last_request_at"`
+	ScaledToZero         bool               `json:"scaled_to_zero"`
+	ScaleToZeroEnabled   bool               `json:"scale_to_zero_enabled"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
