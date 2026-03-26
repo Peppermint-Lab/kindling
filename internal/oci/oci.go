@@ -61,16 +61,18 @@ func ExportImageRootfs(ctx context.Context, imageRef, destDir string, auth *Auth
 
 // PullToOCILayout copies imageRef into an OCI layout directory at ociLayoutDir (tag :latest).
 // Tries containers-storage first, then docker:// (with auth for registry pulls).
+// Each attempt starts from an empty layout directory so a failed first pull cannot break the second.
 func PullToOCILayout(ctx context.Context, imageRef, ociLayoutDir string, auth *Auth) error {
-	if err := os.RemoveAll(ociLayoutDir); err != nil {
-		return fmt.Errorf("reset oci layout dir: %w", err)
-	}
-	if err := os.MkdirAll(ociLayoutDir, 0o755); err != nil {
-		return fmt.Errorf("mkdir oci layout: %w", err)
-	}
 	ociTagged := "oci:" + ociLayoutDir + ":latest"
 	var lastErr error
 	for _, src := range []string{"containers-storage:" + imageRef, "docker://" + imageRef} {
+		// A failed containers-storage pull can leave a partial layout; always reset before each try.
+		if err := os.RemoveAll(ociLayoutDir); err != nil {
+			return fmt.Errorf("reset oci layout dir: %w", err)
+		}
+		if err := os.MkdirAll(ociLayoutDir, 0o755); err != nil {
+			return fmt.Errorf("mkdir oci layout: %w", err)
+		}
 		lastErr = skopeoCopy(ctx, src, ociTagged, src == "docker://"+imageRef, auth)
 		if lastErr == nil {
 			return nil
@@ -125,21 +127,10 @@ func skopeoCopy(ctx context.Context, src, dest string, useSrcAuth bool, auth *Au
 	return nil
 }
 
-// copyRootfsPreservingMetadata copies unpacked OCI rootfs into destDir, preserving
-// symlinks and mode bits (matches prior docker cp semantics closely).
+// copyRootfsPreservingMetadata copies unpacked OCI rootfs into destDir.
+// Uses os.CopyFS so behavior does not depend on which cp (GNU vs busybox) appears first on PATH when invoked from Go.
 func copyRootfsPreservingMetadata(srcRoot, dstRoot string) error {
-	// cp -a is GNU; macOS uses cp -Rp for recursive preserve.
-	args := []string{"-a", filepath.Join(srcRoot, ".") + string(filepath.Separator), dstRoot + string(filepath.Separator)}
-	cmdPath := "cp"
-	if runtime.GOOS == "darwin" {
-		args = []string{"-Rp", filepath.Join(srcRoot, ".") + string(filepath.Separator), dstRoot + string(filepath.Separator)}
-	}
-	cmd := exec.Command(cmdPath, args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("cp %v: %s: %w", args, string(out), err)
-	}
-	return nil
+	return os.CopyFS(dstRoot, os.DirFS(srcRoot))
 }
 
 // BuildEngine names the CLI used for image builds.
