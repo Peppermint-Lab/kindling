@@ -1,9 +1,11 @@
-.PHONY: build dev db db-down migrate sqlc vet clean \
+.PHONY: build dev db db-down migrate sqlc vet clean e2e-drain \
        landing-dev landing-build \
        install-deps remote-provision remote-sync remote-build remote-initramfs remote-run \
        dev-up dev-down dashboard-build remote-dashboard remote-restart
 
 DATABASE_URL ?= postgres://kindling:kindling@localhost:5432/kindling?sslmode=disable
+# Empty database recommended (e.g. `createdb kindling_e2e` once). See `contrib/e2e-drain.sh`.
+E2E_DATABASE_URL ?= postgres://kindling:kindling@127.0.0.1:5432/kindling_e2e?sslmode=disable
 REMOTE_HOST ?= kindling-dev
 REMOTE_DIR ?= /home/ubuntu/kindling
 # Optional: OVH public IPv4 so runtime_url uses it (passed to kindling serve --advertise-host)
@@ -83,6 +85,10 @@ sqlc:
 # Lint
 vet:
 	go vet ./...
+
+# End-to-end drain API + server reconciler (Postgres required; not run in default `go test ./...`).
+e2e-drain:
+	KINDLING_E2E_DATABASE_URL="$(E2E_DATABASE_URL)" go test -tags=integration -v ./internal/e2e/... -count=1
 
 # Clean build artifacts
 clean:

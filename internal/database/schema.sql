@@ -165,16 +165,6 @@ DO $$ BEGIN
     END IF;
 END $$;
 
--- Wake signal from edge proxy (cold start)
-DO $$ BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'deployments' AND column_name = 'wake_requested_at'
-    ) THEN
-        ALTER TABLE deployments ADD COLUMN wake_requested_at TIMESTAMPTZ;
-    END IF;
-END $$;
-
 -- Environment variables per project (values are encrypted)
 CREATE TABLE IF NOT EXISTS environment_variables (
     id          UUID PRIMARY KEY,
@@ -240,6 +230,16 @@ CREATE TABLE IF NOT EXISTS deployments (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Upgrade path: DBs created before wake_requested_at existed
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'deployments' AND column_name = 'wake_requested_at'
+    ) THEN
+        ALTER TABLE deployments ADD COLUMN wake_requested_at TIMESTAMPTZ;
+    END IF;
+END $$;
 
 -- Deployment instances: one row per replica (horizontal scale) for a deployment revision
 CREATE TABLE IF NOT EXISTS deployment_instances (
