@@ -24,6 +24,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
+    credentials: "include",
     headers,
   })
   const bodyText = await res.text()
@@ -45,6 +46,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export type Project = {
   id: string
+  org_id?: string
   name: string
   github_repository: string
   dockerfile_path: string
@@ -53,6 +55,28 @@ export type Project = {
   created_at: string
   updated_at: string
 }
+
+export type AuthUser = {
+  id: string
+  email: string
+  display_name: string
+}
+
+export type AuthOrganization = {
+  id: string
+  name: string
+  slug: string
+}
+
+export type AuthSession =
+  | { authenticated: false }
+  | {
+      authenticated: true
+      user: AuthUser
+      organization: AuthOrganization
+      role: string
+      organizations: AuthOrganization[]
+    }
 
 export type Deployment = {
   id: string
@@ -157,6 +181,56 @@ export type ProjectDomain = {
 }
 
 export const api = {
+  authBootstrapStatus: () => request<{ needs_bootstrap: boolean }>("/api/auth/bootstrap-status"),
+  authSession: () => request<AuthSession>("/api/auth/session"),
+  authBootstrap: (data: { email: string; password: string; display_name?: string }) =>
+    request<AuthSession>("/api/auth/bootstrap", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  authLogin: (data: { email: string; password: string }) =>
+    request<AuthSession>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  authLogout: () =>
+    request<{ ok: boolean }>("/api/auth/logout", {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  authSwitchOrg: (organization_id: string) =>
+    request<AuthSession>("/api/auth/switch-org", {
+      method: "POST",
+      body: JSON.stringify({ organization_id }),
+    }),
+
+  listOrgProviderConnections: () =>
+    request<
+      {
+        id: string
+        provider: string
+        external_slug: string
+        display_label: string
+        has_credentials: boolean
+        metadata: unknown
+        created_at: string
+        updated_at: string
+      }[]
+    >("/api/org/provider-connections"),
+  createOrgProviderConnection: (data: {
+    provider: "github" | "gitlab"
+    external_slug: string
+    display_label?: string
+    token?: string
+    metadata?: unknown
+  }) =>
+    request<unknown>("/api/org/provider-connections", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  deleteOrgProviderConnection: (id: string) =>
+    request<void>(`/api/org/provider-connections/${id}`, { method: "DELETE" }),
+
   getMeta: () => request<APIMeta>("/api/meta"),
   updateMeta: (data: { public_base_url?: string; dashboard_public_host?: string }) =>
     request<APIMeta>("/api/meta", {
@@ -245,7 +319,7 @@ export function subscribeDeploymentStream(
     onError?: (e: Event) => void
   },
 ): () => void {
-  const es = new EventSource(deploymentStreamURL(deploymentId))
+  const es = new EventSource(deploymentStreamURL(deploymentId), { withCredentials: true })
 
   es.addEventListener("deployment", (e) => {
     try {

@@ -20,6 +20,10 @@ func terminalPhase(phase string) bool {
 }
 
 func (a *API) streamDeployment(w http.ResponseWriter, r *http.Request) {
+	principal, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid deployment id")
@@ -52,6 +56,13 @@ func (a *API) streamDeployment(w http.ResponseWriter, r *http.Request) {
 
 	dep, err := a.q.DeploymentFirstByID(r.Context(), id)
 	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "not_found", "deployment not found")
+		return
+	}
+	if _, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+		ID:    dep.ProjectID,
+		OrgID: principal.OrganizationID,
+	}); err != nil {
 		writeAPIError(w, http.StatusNotFound, "not_found", "deployment not found")
 		return
 	}

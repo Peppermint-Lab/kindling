@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom"
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { AppSidebar } from "@/components/app-sidebar"
 import {
   Breadcrumb,
@@ -18,7 +18,10 @@ import { ProjectDetailPage } from "@/pages/ProjectDetailPage"
 import { DeploymentDetailPage } from "@/pages/DeploymentDetailPage"
 import { DeploymentsPage } from "@/pages/DeploymentsPage"
 import { SettingsPage } from "@/pages/SettingsPage"
+import { LoginPage } from "@/pages/LoginPage"
+import { BootstrapPage } from "@/pages/BootstrapPage"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { AuthProvider, useAuth } from "@/contexts/AuthContext"
 
 function pageName(pathname: string): string {
   if (pathname.startsWith("/deployments/")) return "Deployment"
@@ -30,6 +33,7 @@ function pageName(pathname: string): string {
 
 function Layout() {
   const location = useLocation()
+  const { session } = useAuth()
 
   return (
     <SidebarProvider>
@@ -48,6 +52,11 @@ function Layout() {
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
+            {session && session.authenticated ? (
+              <span className="text-muted-foreground hidden md:inline text-xs truncate ml-2">
+                {session.organization.name}
+              </span>
+            ) : null}
           </div>
           <ThemeToggle />
         </header>
@@ -66,11 +75,32 @@ function Layout() {
   )
 }
 
+function PrivateRoutes() {
+  const { session, loading } = useAuth()
+  if (loading) {
+    return (
+      <div className="flex min-h-svh items-center justify-center text-muted-foreground text-sm">
+        Loading…
+      </div>
+    )
+  }
+  if (!session || !session.authenticated) {
+    return <Navigate to="/login" replace />
+  }
+  return <Layout />
+}
+
 export default function App() {
   return (
     <TooltipProvider>
       <BrowserRouter>
-        <Layout />
+        <AuthProvider>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/bootstrap" element={<BootstrapPage />} />
+            <Route path="/*" element={<PrivateRoutes />} />
+          </Routes>
+        </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>
   )

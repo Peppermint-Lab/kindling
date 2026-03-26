@@ -134,6 +134,26 @@ func (a *API) deploymentToOutCtx(ctx context.Context, dep queries.Deployment) de
 	return out
 }
 
+func (a *API) listRowForOrgToOutCtx(ctx context.Context, row queries.DeploymentFindRecentWithProjectForOrgRow) deploymentListItemOut {
+	return a.listRowToOutCtx(ctx, queries.DeploymentFindRecentWithProjectRow{
+		ID:              row.ID,
+		ProjectID:       row.ProjectID,
+		BuildID:         row.BuildID,
+		ImageID:         row.ImageID,
+		VmID:            row.VmID,
+		GithubCommit:    row.GithubCommit,
+		RunningAt:       row.RunningAt,
+		StoppedAt:       row.StoppedAt,
+		FailedAt:        row.FailedAt,
+		DeletedAt:       row.DeletedAt,
+		WakeRequestedAt: row.WakeRequestedAt,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+		ProjectName:     row.ProjectName,
+		BuildStatus:     row.BuildStatus,
+	})
+}
+
 func (a *API) listRowToOutCtx(ctx context.Context, row queries.DeploymentFindRecentWithProjectRow) deploymentListItemOut {
 	st := pgTextString(row.BuildStatus)
 	if row.BuildID.Valid && st == "" {

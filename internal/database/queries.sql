@@ -105,38 +105,41 @@ SELECT * FROM images WHERE id = $1;
 -- Projects --
 
 -- name: ProjectCreate :one
-INSERT INTO projects (id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO projects (id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING *;
 
 -- name: ProjectFirstByID :one
 SELECT * FROM projects WHERE id = $1;
 
--- name: ProjectFindAll :many
-SELECT * FROM projects ORDER BY created_at DESC;
+-- name: ProjectFirstByIDAndOrg :one
+SELECT * FROM projects WHERE id = $1 AND org_id = $2;
+
+-- name: ProjectFindAllByOrgID :many
+SELECT * FROM projects WHERE org_id = $1 ORDER BY created_at DESC;
 
 -- name: ProjectFindByGitHubRepo :one
 SELECT * FROM projects WHERE github_repository = $1;
 
--- name: ProjectDelete :exec
-DELETE FROM projects WHERE id = $1;
+-- name: ProjectDeleteByIDAndOrg :exec
+DELETE FROM projects WHERE id = $1 AND org_id = $2;
 
 -- name: ProjectUpdateWebhookSecret :one
 UPDATE projects
 SET github_webhook_secret = $2, updated_at = NOW()
-WHERE id = $1
+WHERE id = $1 AND org_id = $3
 RETURNING *;
 
 -- name: ProjectUpdateDesiredInstanceCount :one
 UPDATE projects
 SET desired_instance_count = $2, updated_at = NOW()
-WHERE id = $1
+WHERE id = $1 AND org_id = $3
 RETURNING *;
 
 -- name: ProjectUpdateScaleToZeroEnabled :one
 UPDATE projects
 SET scale_to_zero_enabled = $2, updated_at = NOW()
-WHERE id = $1
+WHERE id = $1 AND org_id = $3
 RETURNING *;
 
 -- name: ProjectUpdateLastRequestAt :exec
@@ -393,6 +396,31 @@ WHERE d.deleted_at IS NULL
 ORDER BY d.created_at DESC
 LIMIT $1;
 
+-- name: DeploymentFindRecentWithProjectForOrg :many
+SELECT
+    d.id,
+    d.project_id,
+    d.build_id,
+    d.image_id,
+    d.vm_id,
+    d.github_commit,
+    d.running_at,
+    d.stopped_at,
+    d.failed_at,
+    d.deleted_at,
+    d.wake_requested_at,
+    d.created_at,
+    d.updated_at,
+    p.name AS project_name,
+    b.status AS build_status
+FROM deployments d
+JOIN projects p ON p.id = d.project_id
+LEFT JOIN builds b ON d.build_id = b.id
+WHERE d.deleted_at IS NULL
+  AND p.org_id = $2
+ORDER BY d.created_at DESC
+LIMIT $1;
+
 -- name: BuildLogsAfterCreatedAt :many
 SELECT * FROM build_logs
 WHERE build_id = $1 AND created_at > $2
@@ -492,3 +520,105 @@ SELECT EXISTS(SELECT 1 FROM certmagic_data WHERE key = $1);
 
 -- name: CertMagicList :many
 SELECT key FROM certmagic_data WHERE key LIKE $1 ORDER BY key;
+
+-- Auth & organizations --
+
+-- name: UserCount :one
+SELECT COUNT(*)::bigint FROM users;
+
+-- name: UserCreate :one
+INSERT INTO users (id, email, password_hash, display_name)
+VALUES ($1, $2, $3, $4)
+RETURNING *;
+
+-- name: UserByEmail :one
+SELECT * FROM users WHERE LOWER(email) = LOWER($1);
+
+-- name: UserByID :one
+SELECT * FROM users WHERE id = $1;
+
+-- name: OrganizationByID :one
+SELECT * FROM organizations WHERE id = $1;
+
+-- name: OrganizationCreate :one
+INSERT INTO organizations (id, name, slug)
+VALUES ($1, $2, $3)
+RETURNING *;
+
+-- name: OrganizationMembershipCreate :one
+INSERT INTO organization_memberships (id, organization_id, user_id, role)
+VALUES ($1, $2, $3, $4)
+RETURNING *;
+
+-- name: OrganizationMembershipByUserAndOrg :one
+SELECT * FROM organization_memberships
+WHERE user_id = $1 AND organization_id = $2;
+
+-- name: OrganizationsForUser :many
+SELECT o.* FROM organizations o
+INNER JOIN organization_memberships m ON m.organization_id = o.id
+WHERE m.user_id = $1
+ORDER BY o.name ASC;
+
+-- name: OrganizationsListAll :many
+SELECT * FROM organizations ORDER BY name ASC;
+
+-- name: OrganizationMembershipUpsertOwner :exec
+INSERT INTO organization_memberships (id, organization_id, user_id, role)
+VALUES ($1, $2, $3, 'owner')
+ON CONFLICT (organization_id, user_id) DO UPDATE SET role = EXCLUDED.role;
+
+-- name: UserUpdatePasswordHash :exec
+UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: UserUpdateDisplayName :exec
+UPDATE users SET display_name = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: UserSessionCreate :one
+INSERT INTO user_sessions (id, user_id, token_hash, current_organization_id, expires_at)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING *;
+
+-- name: UserSessionByTokenHash :one
+SELECT * FROM user_sessions
+WHERE token_hash = $1 AND expires_at > NOW();
+
+-- name: UserSessionDelete :exec
+DELETE FROM user_sessions WHERE id = $1;
+
+-- name: UserSessionDeleteAllForUser :exec
+DELETE FROM user_sessions WHERE user_id = $1;
+
+-- name: UserSessionUpdateCurrentOrg :one
+UPDATE user_sessions
+SET current_organization_id = $2
+WHERE id = $1
+RETURNING *;
+
+-- name: OrgProviderConnectionListByOrg :many
+SELECT * FROM org_provider_connections
+WHERE organization_id = $1
+ORDER BY provider ASC, display_label ASC;
+
+-- name: OrgProviderConnectionCreate :one
+INSERT INTO org_provider_connections (
+    id, organization_id, provider, external_slug, display_label, credentials_ciphertext, metadata
+) VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING *;
+
+-- name: OrgProviderConnectionByIDAndOrg :one
+SELECT * FROM org_provider_connections
+WHERE id = $1 AND organization_id = $2;
+
+-- name: OrgProviderConnectionDeleteByIDAndOrg :exec
+DELETE FROM org_provider_connections WHERE id = $1 AND organization_id = $2;
+
+-- name: OrgProviderConnectionUpdate :one
+UPDATE org_provider_connections
+SET display_label = $2,
+    external_slug = $3,
+    credentials_ciphertext = $4,
+    metadata = $5,
+    updated_at = NOW()
+WHERE id = $1 AND organization_id = $6
+RETURNING *;

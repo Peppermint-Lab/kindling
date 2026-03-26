@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/kindlingvm/kindling/internal/auth"
 	"github.com/kindlingvm/kindling/internal/bootstrap"
 	"github.com/kindlingvm/kindling/internal/builder"
 	"github.com/kindlingvm/kindling/internal/config"
@@ -376,16 +377,19 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		return fmt.Errorf("read dashboard hostname: %w", err)
 	}
 
+	corsOrigins := corsBuildAllowList(ctx, q, dashHostStr)
+
 	distDir := strings.TrimSpace(os.Getenv("KINDLING_DASHBOARD_DIST"))
 	if distDir == "" {
 		distDir = "web/dashboard/dist"
 	}
 
+	protectedAPI := auth.Middleware(q, apiMux)
 	var handler http.Handler
 	if dashHostStr != "" {
-		handler = hostBasedHandler(corsMiddleware(apiMux), dashboardSPAHandler(distDir), dashHostStr)
+		handler = hostBasedHandler(corsMiddleware(corsOrigins, protectedAPI), dashboardSPAHandler(distDir), dashHostStr)
 	} else {
-		handler = corsMiddleware(apiMux)
+		handler = corsMiddleware(corsOrigins, protectedAPI)
 	}
 
 	srv := &http.Server{Addr: listenAddr, Handler: handler}
@@ -714,10 +718,51 @@ func loadServerID() uuid.UUID {
 	return id
 }
 
-func corsMiddleware(next http.Handler) http.Handler {
+func corsBuildAllowList(ctx context.Context, q *queries.Queries, dashHost string) []string {
+	var out []string
+	for _, o := range strings.Split(os.Getenv("KINDLING_CORS_ORIGINS"), ",") {
+		if t := strings.TrimSpace(o); t != "" {
+			out = append(out, t)
+		}
+	}
+	if dashHost != "" {
+		dh := strings.ToLower(strings.TrimSpace(dashHost))
+		out = append(out, "https://"+dh, "http://"+dh)
+	}
+	if v, err := q.ClusterSettingGet(ctx, rpc.ClusterSettingKeyPublicBaseURL); err == nil {
+		if u := rpc.NormalizePublicBaseURL(v); u != "" {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+func corsOriginAllowed(origin string, allow []string) bool {
+	if origin == "" {
+		return false
+	}
+	origin = strings.TrimRight(origin, "/")
+	for _, a := range allow {
+		if strings.EqualFold(origin, strings.TrimRight(strings.TrimSpace(a), "/")) {
+			return true
+		}
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	h := strings.ToLower(u.Hostname())
+	return h == "localhost" || h == "127.0.0.1"
+}
+
+func corsMiddleware(allow []string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		origin := r.Header.Get("Origin")
+		if origin != "" && corsOriginAllowed(origin, allow) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+		}
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 		if r.Method == http.MethodOptions {

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/kindlingvm/kindling/internal/auth"
 	"github.com/kindlingvm/kindling/internal/bootstrap"
 	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database/queries"
@@ -75,6 +76,7 @@ func projectCreateCmd() *cobra.Command {
 			}
 			project, err := q.ProjectCreate(cmd.Context(), queries.ProjectCreateParams{
 				ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				OrgID:                pgtype.UUID{Bytes: auth.BootstrapOrganizationID, Valid: true},
 				Name:                 name,
 				GithubRepository:     repo,
 				GithubInstallationID: 0,
@@ -121,7 +123,7 @@ func projectListCmd() *cobra.Command {
 			defer pool.Close()
 
 			q := queries.New(pool)
-			projects, err := q.ProjectFindAll(cmd.Context())
+			projects, err := q.ProjectFindAllByOrgID(cmd.Context(), pgtype.UUID{Bytes: auth.BootstrapOrganizationID, Valid: true})
 			if err != nil {
 				return err
 			}
@@ -169,7 +171,10 @@ func projectDeleteCmd() *cobra.Command {
 			}
 
 			q := queries.New(pool)
-			if err := q.ProjectDelete(cmd.Context(), pgtype.UUID{Bytes: id, Valid: true}); err != nil {
+			if err := q.ProjectDeleteByIDAndOrg(cmd.Context(), queries.ProjectDeleteByIDAndOrgParams{
+				ID:    pgtype.UUID{Bytes: id, Valid: true},
+				OrgID: pgtype.UUID{Bytes: auth.BootstrapOrganizationID, Valid: true},
+			}); err != nil {
 				return fmt.Errorf("delete project: %w", err)
 			}
 

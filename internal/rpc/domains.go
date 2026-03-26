@@ -126,12 +126,19 @@ func isPgUniqueViolation(err error) bool {
 }
 
 func (a *API) listProjectDomains(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
 	projectID, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
 		return
 	}
-	if _, err := a.q.ProjectFirstByID(r.Context(), projectID); err != nil {
+	if _, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+		ID:    projectID,
+		OrgID: p.OrganizationID,
+	}); err != nil {
 		writeAPIError(w, http.StatusNotFound, "not_found", "project not found")
 		return
 	}
@@ -148,12 +155,19 @@ func (a *API) listProjectDomains(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) createProjectDomain(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
 	projectID, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
 		return
 	}
-	if _, err := a.q.ProjectFirstByID(r.Context(), projectID); err != nil {
+	if _, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+		ID:    projectID,
+		OrgID: p.OrganizationID,
+	}); err != nil {
 		writeAPIError(w, http.StatusNotFound, "not_found", "project not found")
 		return
 	}
@@ -192,9 +206,20 @@ func (a *API) createProjectDomain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) deleteProjectDomain(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
 	projectID, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
+		return
+	}
+	if _, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+		ID:    projectID,
+		OrgID: p.OrganizationID,
+	}); err != nil {
+		writeAPIError(w, http.StatusNotFound, "not_found", "project not found")
 		return
 	}
 	domainID, err := parseUUID(r.PathValue("domain_id"))
@@ -224,9 +249,20 @@ func (a *API) deleteProjectDomain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) verifyProjectDomain(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
 	projectID, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
+		return
+	}
+	if _, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+		ID:    projectID,
+		OrgID: p.OrganizationID,
+	}); err != nil {
+		writeAPIError(w, http.StatusNotFound, "not_found", "project not found")
 		return
 	}
 	domainID, err := parseUUID(r.PathValue("domain_id"))
@@ -255,12 +291,12 @@ func (a *API) verifyProjectDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	recordName := domainChallengeRecordName(d.DomainName)
-	ok, err := challengeTXTFound(r.Context(), recordName, d.VerificationToken)
+	txtOk, err := challengeTXTFound(r.Context(), recordName, d.VerificationToken)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "dns_lookup_failed", "could not resolve DNS: "+err.Error())
 		return
 	}
-	if !ok {
+	if !txtOk {
 		writeAPIError(w, http.StatusBadRequest, "verification_failed", "TXT record "+recordName+" not found or value does not match")
 		return
 	}

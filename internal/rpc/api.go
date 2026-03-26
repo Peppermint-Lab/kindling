@@ -58,9 +58,14 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/projects/{id}/deploy", a.triggerDeploy)
 	mux.HandleFunc("POST /api/deployments/{id}/cancel", a.cancelDeployment)
 	mux.HandleFunc("GET /api/servers", a.listServers)
+	a.registerAuthRoutes(mux)
+	a.registerProviderRoutes(mux)
 }
 
 func (a *API) getMeta(w http.ResponseWriter, r *http.Request) {
+	if _, ok := mustPrincipal(w, r); !ok {
+		return
+	}
 	base, err := a.publicBaseURL(r.Context())
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
@@ -83,6 +88,14 @@ func (a *API) getMeta(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) putMeta(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if p.OrgRole != "owner" && p.OrgRole != "admin" {
+		writeAPIError(w, http.StatusForbidden, "forbidden", "owner or admin role required")
+		return
+	}
 	var req struct {
 		PublicBaseURL       *string `json:"public_base_url"`
 		DashboardPublicHost *string `json:"dashboard_public_host"`
@@ -130,7 +143,11 @@ func projectStripSecret(p queries.Project) queries.Project {
 }
 
 func (a *API) listProjects(w http.ResponseWriter, r *http.Request) {
-	projects, err := a.q.ProjectFindAll(r.Context())
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	projects, err := a.q.ProjectFindAllByOrgID(r.Context(), p.OrganizationID)
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "list_projects", err)
 		return
@@ -143,6 +160,10 @@ func (a *API) listProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		Name                 string `json:"name"`
 		GithubRepository     string `json:"github_repository"`
@@ -191,6 +212,7 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	params := queries.ProjectCreateParams{
 		ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		OrgID:                p.OrganizationID,
 		Name:                 req.Name,
 		GithubRepository:     req.GithubRepository,
 		GithubInstallationID: 0,
@@ -208,6 +230,7 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		project, err = a.q.ProjectUpdateScaleToZeroEnabled(r.Context(), queries.ProjectUpdateScaleToZeroEnabledParams{
 			ID:                 project.ID,
 			ScaleToZeroEnabled: true,
+			OrgID:              p.OrganizationID,
 		})
 		if err != nil {
 			writeAPIErrorFromErr(w, http.StatusInternalServerError, "create_project", err)
@@ -218,6 +241,10 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
@@ -235,7 +262,10 @@ func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "validation_error", "provide desired_instance_count and/or scale_to_zero_enabled")
 		return
 	}
-	if _, err := a.q.ProjectFirstByID(r.Context(), id); err != nil {
+	if _, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+		ID:    id,
+		OrgID: p.OrganizationID,
+	}); err != nil {
 		writeAPIError(w, http.StatusNotFound, "not_found", "project not found")
 		return
 	}
@@ -248,6 +278,7 @@ func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
 		project, err = a.q.ProjectUpdateDesiredInstanceCount(r.Context(), queries.ProjectUpdateDesiredInstanceCountParams{
 			ID:                   id,
 			DesiredInstanceCount: *req.DesiredInstanceCount,
+			OrgID:                p.OrganizationID,
 		})
 		if err != nil {
 			writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
@@ -257,7 +288,10 @@ func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
 			_ = a.q.ProjectClearScaledToZero(r.Context(), id)
 		}
 	} else {
-		project, err = a.q.ProjectFirstByID(r.Context(), id)
+		project, err = a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+			ID:    id,
+			OrgID: p.OrganizationID,
+		})
 		if err != nil {
 			writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
 			return
@@ -267,6 +301,7 @@ func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
 		project, err = a.q.ProjectUpdateScaleToZeroEnabled(r.Context(), queries.ProjectUpdateScaleToZeroEnabledParams{
 			ID:                 id,
 			ScaleToZeroEnabled: *req.ScaleToZeroEnabled,
+			OrgID:              p.OrganizationID,
 		})
 		if err != nil {
 			writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
@@ -276,7 +311,10 @@ func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
 			_ = a.q.ProjectClearScaledToZero(r.Context(), id)
 		}
 	}
-	project, err = a.q.ProjectFirstByID(r.Context(), id)
+	project, err = a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+		ID:    id,
+		OrgID: p.OrganizationID,
+	})
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
 		return
@@ -285,12 +323,19 @@ func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) getProject(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
 		return
 	}
-	project, err := a.q.ProjectFirstByID(r.Context(), id)
+	project, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+		ID:    id,
+		OrgID: p.OrganizationID,
+	})
 	if err != nil {
 		writeAPIError(w, http.StatusNotFound, "not_found", "project not found")
 		return
@@ -299,12 +344,19 @@ func (a *API) getProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) deleteProject(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
 		return
 	}
-	if err := a.q.ProjectDelete(r.Context(), id); err != nil {
+	if err := a.q.ProjectDeleteByIDAndOrg(r.Context(), queries.ProjectDeleteByIDAndOrgParams{
+		ID:    id,
+		OrgID: p.OrganizationID,
+	}); err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "delete_project", err)
 		return
 	}
@@ -312,12 +364,19 @@ func (a *API) deleteProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) getGitHubSetup(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
 		return
 	}
-	project, err := a.q.ProjectFirstByID(r.Context(), id)
+	project, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+		ID:    id,
+		OrgID: p.OrganizationID,
+	})
 	if err != nil {
 		writeAPIError(w, http.StatusNotFound, "not_found", "project not found")
 		return
@@ -342,12 +401,19 @@ func (a *API) getGitHubSetup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) rotateWebhookSecret(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
 		return
 	}
-	if _, err := a.q.ProjectFirstByID(r.Context(), id); err != nil {
+	if _, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+		ID:    id,
+		OrgID: p.OrganizationID,
+	}); err != nil {
 		writeAPIError(w, http.StatusNotFound, "not_found", "project not found")
 		return
 	}
@@ -359,6 +425,7 @@ func (a *API) rotateWebhookSecret(w http.ResponseWriter, r *http.Request) {
 	project, err := a.q.ProjectUpdateWebhookSecret(r.Context(), queries.ProjectUpdateWebhookSecretParams{
 		ID:                  id,
 		GithubWebhookSecret: secret,
+		OrgID:               p.OrganizationID,
 	})
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_secret", err)
@@ -380,9 +447,20 @@ func (a *API) rotateWebhookSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) listDeployments(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
+		return
+	}
+	if _, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+		ID:    id,
+		OrgID: p.OrganizationID,
+	}); err != nil {
+		writeAPIError(w, http.StatusNotFound, "not_found", "project not found")
 		return
 	}
 	deployments, err := a.q.DeploymentFindByProjectID(r.Context(), id)
@@ -398,25 +476,36 @@ func (a *API) listDeployments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) listAllDeployments(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
 	limit := int32(50)
 	if q := r.URL.Query().Get("limit"); q != "" {
 		if n, err := strconv.Atoi(q); err == nil && n > 0 && n <= 200 {
 			limit = int32(n)
 		}
 	}
-	rows, err := a.q.DeploymentFindRecentWithProject(r.Context(), limit)
+	rows, err := a.q.DeploymentFindRecentWithProjectForOrg(r.Context(), queries.DeploymentFindRecentWithProjectForOrgParams{
+		Limit: limit,
+		OrgID: p.OrganizationID,
+	})
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "list_deployments", err)
 		return
 	}
 	out := make([]deploymentListItemOut, len(rows))
 	for i := range rows {
-		out[i] = a.listRowToOutCtx(r.Context(), rows[i])
+		out[i] = a.listRowForOrgToOutCtx(r.Context(), rows[i])
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 func (a *API) getDeployment(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid deployment id")
@@ -427,10 +516,21 @@ func (a *API) getDeployment(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "not_found", "deployment not found")
 		return
 	}
+	if _, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+		ID:    dep.ProjectID,
+		OrgID: p.OrganizationID,
+	}); err != nil {
+		writeAPIError(w, http.StatusNotFound, "not_found", "deployment not found")
+		return
+	}
 	writeJSON(w, http.StatusOK, a.deploymentToOutCtx(r.Context(), dep))
 }
 
 func (a *API) getDeploymentLogs(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid deployment id")
@@ -439,6 +539,13 @@ func (a *API) getDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 
 	dep, err := a.q.DeploymentFirstByID(r.Context(), id)
 	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "not_found", "deployment not found")
+		return
+	}
+	if _, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+		ID:    dep.ProjectID,
+		OrgID: p.OrganizationID,
+	}); err != nil {
 		writeAPIError(w, http.StatusNotFound, "not_found", "deployment not found")
 		return
 	}
@@ -457,6 +564,10 @@ func (a *API) getDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) triggerDeploy(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
 	projectID, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
@@ -471,7 +582,10 @@ func (a *API) triggerDeploy(w http.ResponseWriter, r *http.Request) {
 		req.Commit = "main"
 	}
 
-	if _, err := a.q.ProjectFirstByID(r.Context(), projectID); err != nil {
+	if _, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+		ID:    projectID,
+		OrgID: p.OrganizationID,
+	}); err != nil {
 		writeAPIError(w, http.StatusNotFound, "not_found", "project not found")
 		return
 	}
@@ -490,9 +604,25 @@ func (a *API) triggerDeploy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) cancelDeployment(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid deployment id")
+		return
+	}
+	dep, err := a.q.DeploymentFirstByID(r.Context(), id)
+	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "not_found", "deployment not found")
+		return
+	}
+	if _, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+		ID:    dep.ProjectID,
+		OrgID: p.OrganizationID,
+	}); err != nil {
+		writeAPIError(w, http.StatusNotFound, "not_found", "deployment not found")
 		return
 	}
 
@@ -505,6 +635,9 @@ func (a *API) cancelDeployment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) listServers(w http.ResponseWriter, r *http.Request) {
+	if _, ok := mustPrincipal(w, r); !ok {
+		return
+	}
 	servers, err := a.q.ServerFindAll(r.Context())
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "list_servers", err)

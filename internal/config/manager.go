@@ -53,6 +53,22 @@ func (m *Manager) Queries() *queries.Queries {
 	return m.q
 }
 
+// EncryptBytes encrypts arbitrary bytes with the cluster master key (AES-GCM).
+func (m *Manager) EncryptBytes(plaintext []byte) ([]byte, error) {
+	if len(plaintext) == 0 {
+		return nil, nil
+	}
+	return EncryptClusterSecret(m.masterKey, plaintext)
+}
+
+// DecryptBytes decrypts a blob produced by EncryptBytes.
+func (m *Manager) DecryptBytes(ciphertext []byte) ([]byte, error) {
+	if len(ciphertext) == 0 {
+		return nil, nil
+	}
+	return DecryptClusterSecret(m.masterKey, ciphertext)
+}
+
 // RunListen blocks, listening for pg_notify on kindling_config and calling Reload.
 // Use a dedicated context cancellation to stop.
 func (m *Manager) RunListen(ctx context.Context) error {

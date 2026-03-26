@@ -24,6 +24,9 @@ import (
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
 
+// edgeProxyRetryKey marks a request so we only reload-and-retry once per client request.
+type edgeProxyRetryKey struct{}
+
 // Config holds edge proxy configuration.
 type Config struct {
 	// HTTPAddr is the HTTP listen address (default ":80").
@@ -513,7 +516,26 @@ func (s *Service) reverseProxy(w http.ResponseWriter, r *http.Request, host stri
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		slog.Warn("proxy error", "host", host, "target", targetURL, "error", err)
-		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		if r.Context().Value(edgeProxyRetryKey{}) != nil {
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+		// Stale route after redeploy / scale: DB already points at new backends but the in-memory
+		// map (or round-robin pick) may still target a dead port. Reload once and retry.
+		if loadErr := s.loadRoutes(r.Context()); loadErr != nil {
+			slog.Warn("reload routes after proxy error", "host", host, "error", loadErr)
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+		s.mu.RLock()
+		newRoute, ok := s.routes[host]
+		s.mu.RUnlock()
+		if !ok || len(newRoute.Backends) == 0 {
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+		ctx := context.WithValue(r.Context(), edgeProxyRetryKey{}, true)
+		s.reverseProxy(w, r.WithContext(ctx), host, newRoute)
 	}
 
 	proxy.ServeHTTP(w, r)

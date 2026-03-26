@@ -23,9 +23,81 @@ CREATE TABLE IF NOT EXISTS images (
     UNIQUE (registry, repository, tag)
 );
 
+-- Organizations & identity (before projects: projects.org_id FK)
+CREATE TABLE IF NOT EXISTS organizations (
+    id          UUID PRIMARY KEY,
+    name        TEXT NOT NULL,
+    slug        TEXT NOT NULL UNIQUE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO organizations (id, name, slug, created_at, updated_at)
+VALUES ('c0000000-0000-4000-a000-000000000001', 'Default', 'default', NOW(), NOW())
+ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS users (
+    id             UUID PRIMARY KEY,
+    email          TEXT NOT NULL UNIQUE,
+    password_hash  TEXT NOT NULL,
+    display_name   TEXT NOT NULL DEFAULT '',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS organization_memberships (
+    id                UUID PRIMARY KEY,
+    organization_id   UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role              TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'member')),
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (organization_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS teams (
+    id                UUID PRIMARY KEY,
+    organization_id   UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name              TEXT NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (organization_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS team_memberships (
+    team_id   UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    user_id   UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (team_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+    id                       UUID PRIMARY KEY,
+    user_id                  UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash               BYTEA NOT NULL,
+    current_organization_id  UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    expires_at               TIMESTAMPTZ NOT NULL,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_sessions_token_hash ON user_sessions (token_hash);
+
+CREATE TABLE IF NOT EXISTS org_provider_connections (
+    id                     UUID PRIMARY KEY,
+    organization_id        UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    provider               TEXT NOT NULL CHECK (provider IN ('github', 'gitlab')),
+    external_slug          TEXT NOT NULL DEFAULT '',
+    display_label          TEXT NOT NULL DEFAULT '',
+    credentials_ciphertext BYTEA,
+    metadata               JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_org_provider_connections_org ON org_provider_connections (organization_id);
+
 -- Projects: a git-connected application
 CREATE TABLE IF NOT EXISTS projects (
     id                      UUID PRIMARY KEY,
+    org_id                  UUID NOT NULL REFERENCES organizations(id),
     name                    TEXT NOT NULL,
     github_repository       TEXT NOT NULL DEFAULT '',
     github_installation_id  BIGINT NOT NULL DEFAULT 0,
@@ -272,6 +344,30 @@ CREATE TABLE IF NOT EXISTS cluster_secrets (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Existing deployments: add projects.org_id, backfill to bootstrap org, enforce NOT NULL
+DO $$
+DECLARE
+    bootstrap_org UUID := 'c0000000-0000-4000-a000-000000000001';
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'projects' AND column_name = 'org_id'
+    ) THEN
+        ALTER TABLE projects ADD COLUMN org_id UUID REFERENCES organizations(id);
+    END IF;
+
+    UPDATE projects SET org_id = bootstrap_org WHERE org_id IS NULL;
+
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'projects' AND column_name = 'org_id'
+    ) THEN
+        IF NOT EXISTS (SELECT 1 FROM projects WHERE org_id IS NULL) THEN
+            ALTER TABLE projects ALTER COLUMN org_id SET NOT NULL;
+        END IF;
+    END IF;
+END $$;
+
 -- NOTIFY for runtime config reload (LISTEN kindling_config)
 CREATE OR REPLACE FUNCTION kindling_notify_config_change()
 RETURNS TRIGGER AS $$
@@ -310,3 +406,4 @@ CREATE INDEX IF NOT EXISTS idx_vm_logs_vm_id ON vm_logs(vm_id);
 CREATE INDEX IF NOT EXISTS idx_domains_project_id ON domains(project_id);
 CREATE INDEX IF NOT EXISTS idx_domains_deployment_id ON domains(deployment_id);
 CREATE INDEX IF NOT EXISTS idx_environment_variables_project_id ON environment_variables(project_id);
+CREATE INDEX IF NOT EXISTS idx_projects_org_id ON projects(org_id);

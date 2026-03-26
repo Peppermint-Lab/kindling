@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/githubapi"
 )
 
@@ -34,13 +35,20 @@ func shortGitSHA(sha string) string {
 
 // GET /api/projects/{id}/git-head?ref=optional-branch-or-tag
 func (a *API) gitHead(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
 		return
 	}
 
-	project, err := a.q.ProjectFirstByID(r.Context(), id)
+	project, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+		ID:    id,
+		OrgID: p.OrganizationID,
+	})
 	if err != nil {
 		writeAPIError(w, http.StatusNotFound, "not_found", "project not found")
 		return
