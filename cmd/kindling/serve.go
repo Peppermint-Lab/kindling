@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -202,6 +203,24 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 
 	go usage.RunResourcePoller(ctx, q, serverID, rt, 15*time.Second)
 
+	var buildRunner builder.BuildRunner = builder.NewLocalBuildRunner()
+	if runtime.GOOS == "darwin" {
+		home, herr := os.UserHomeDir()
+		if herr == nil {
+			ar, err := builder.NewAppleVZBuildRunner(builder.AppleVZBuildRunnerConfig{
+				KernelPath:       filepath.Join(home, ".kindling", "vmlinuz.bin"),
+				InitramfsPath:    filepath.Join(home, ".kindling", "initramfs.cpio.gz"),
+				BuilderRootfsDir: filepath.Join(home, ".kindling", "builder-rootfs"),
+			})
+			if err != nil {
+				slog.Warn("apple vz oci build runner disabled", "error", err)
+			} else {
+				buildRunner = ar
+				slog.Info("using Apple VZ builder VM for OCI builds")
+			}
+		}
+	}
+
 	bldr := builder.New(func(c context.Context) (builder.Config, error) {
 		s := cfgMgr.Snapshot()
 		if s == nil {
@@ -213,7 +232,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 			RegistryUsername: s.RegistryUsername,
 			RegistryPassword: s.RegistryPassword,
 		}, nil
-	}, q, serverID)
+	}, q, serverID, buildRunner)
 
 	deployer := deploy.New(q, db.Pool, serverID)
 	deployer.SetRuntime(rt)

@@ -19,6 +19,7 @@ func main() {
 	root.AddCommand(logsCmd())
 	root.AddCommand(configCmd())
 	root.AddCommand(authCmd())
+	root.AddCommand(debugCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)

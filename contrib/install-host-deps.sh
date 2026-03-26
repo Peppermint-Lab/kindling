@@ -147,6 +147,10 @@ install_darwin_brew() {
   echo ""
   echo "macOS: use Apple Virtualization Framework for dev (Cloud Hypervisor is Linux+KVM)."
   echo "Install Go 1.26+ and Postgres locally (e.g. brew install postgresql@17) or use contrib/dev-postgres.sh"
+  echo ""
+  echo "OCI image builds use buildah, which is not packaged in Homebrew on macOS."
+  echo "Install buildah on your Linux Kindling server: sudo ./contrib/install-host-deps.sh (core includes buildah)."
+  echo "Remote dev: make remote-provision"
 }
 
 # --- main ---

@@ -2,9 +2,10 @@
 
 package main
 
-func mountEssentialFS() {
-	// no-op on non-Linux
-}
+func mountGuestBootstrap()   {}
+func mountWorkloadVirtioApp() {}
+
+func mountEssentialFS() {}
 
 func setHostname(name string) {
 	// no-op on non-Linux

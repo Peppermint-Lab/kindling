@@ -39,6 +39,8 @@ const (
 
 // ConfigResponse is the JSON payload from the host's config endpoint.
 type ConfigResponse struct {
+	// Mode is "" or "app" for normal workloads; "builder" for the macOS OCI build microVM.
+	Mode     string   `json:"mode"`
 	Env      []string `json:"env"`
 	IPAddr   string   `json:"ip_addr"`
 	IPGW     string   `json:"ip_gw"`
@@ -57,15 +59,23 @@ func main() {
 
 	log.Println("starting guest agent (PID 1)")
 
-	// Mount essential filesystems.
-	mountEssentialFS()
+	mountGuestBootstrap()
 
-	// Fetch config from host via vsock.
 	cfg, err := fetchConfig()
 	if err != nil {
 		log.Fatalf("failed to fetch config: %v", err)
 	}
-	log.Printf("config received: hostname=%s ip=%s env_count=%d", cfg.Hostname, cfg.IPAddr, len(cfg.Env))
+	log.Printf("config received: mode=%s hostname=%s ip=%s env_count=%d", cfg.Mode, cfg.Hostname, cfg.IPAddr, len(cfg.Env))
+
+	if cfg.Mode == "builder" {
+		log.Println("builder mode: starting build executor")
+		if err := runBuilderMode(cfg); err != nil {
+			log.Fatalf("builder mode: %v", err)
+		}
+		return
+	}
+
+	mountWorkloadVirtioApp()
 
 	// Configure networking.
 	if err := configureNetwork(cfg); err != nil {

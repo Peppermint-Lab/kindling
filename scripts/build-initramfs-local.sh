@@ -19,7 +19,9 @@ else
 fi
 
 GOARCH_TARGET="amd64"
-if [ "$(uname -m)" = "arm64" ]; then GOARCH_TARGET="arm64"; fi
+case "$(uname -m)" in
+  arm64|aarch64) GOARCH_TARGET="arm64" ;;
+esac
 
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
@@ -51,7 +53,7 @@ if [ "$busybox_copied" -eq 1 ]; then
   chmod +x "$TMPDIR/rootfs/bin/busybox"
 fi
 if [ "$busybox_copied" -eq 1 ]; then
-  for cmd in sh ip ifconfig route ping cat ls mkdir mount umount; do
+  for cmd in sh ip ifconfig route ping cat ls mkdir mount umount chroot; do
     ln -sf busybox "$TMPDIR/rootfs/bin/$cmd"
   done
 else

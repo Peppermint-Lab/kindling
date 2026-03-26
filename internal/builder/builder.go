@@ -20,7 +20,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/githubapi"
-	"github.com/kindlingvm/kindling/internal/oci"
 )
 
 // Config holds builder configuration.
@@ -44,11 +43,16 @@ type Builder struct {
 	getConfig func(context.Context) (Config, error)
 	q         *queries.Queries
 	serverID  uuid.UUID
+	runner    BuildRunner
 }
 
 // New creates a new builder. getConfig is called on each reconcile to read DB-backed settings.
-func New(getConfig func(context.Context) (Config, error), q *queries.Queries, serverID uuid.UUID) *Builder {
-	return &Builder{getConfig: getConfig, q: q, serverID: serverID}
+// If runner is nil, NewLocalBuildRunner() is used (host buildah on Linux).
+func New(getConfig func(context.Context) (Config, error), q *queries.Queries, serverID uuid.UUID, runner BuildRunner) *Builder {
+	if runner == nil {
+		runner = NewLocalBuildRunner()
+	}
+	return &Builder{getConfig: getConfig, q: q, serverID: serverID, runner: runner}
 }
 
 func (b *Builder) pullConfig(ctx context.Context) (Config, error) {
@@ -152,36 +156,23 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 	}
 	imageRef := fmt.Sprintf("%s/%s:%s", cfg.RegistryURL, ociRepo, imageTag)
 
-	engine, err := oci.DetectBuildEngine()
-	if err != nil {
-		b.log(ctx, build.ID, "error", fmt.Sprintf("No OCI builder in PATH: %v", err))
-		return b.q.BuildMarkFailed(ctx, build.ID)
-	}
-	b.log(ctx, build.ID, "info", fmt.Sprintf("Building image with %s: %s", engine, imageRef))
-
 	dockerfilePath := project.DockerfilePath
 	if dockerfilePath == "" {
 		dockerfilePath = "Dockerfile"
 	}
 
 	logLine := func(line string) { b.log(ctx, build.ID, "info", line) }
-	if err := oci.BuildDockerfile(ctx, engine, buildDir, imageRef, dockerfilePath, logLine); err != nil {
+	run := BuildRun{
+		BuildDir:         buildDir,
+		ImageRef:         imageRef,
+		DockerfilePath:   dockerfilePath,
+		RegistryUsername: cfg.RegistryUsername,
+		RegistryPassword: cfg.RegistryPassword,
+		LogLine:          logLine,
+	}
+	if err := b.runner.BuildAndPush(ctx, run); err != nil {
 		b.log(ctx, build.ID, "error", fmt.Sprintf("OCI build failed: %v", err))
 		return b.q.BuildMarkFailed(ctx, build.ID)
-	}
-
-	b.log(ctx, build.ID, "info", "OCI build completed")
-
-	// Push to registry if credentials are configured.
-	if cfg.RegistryUsername != "" {
-		b.log(ctx, build.ID, "info", "Pushing image to registry...")
-		auth := &oci.Auth{Username: cfg.RegistryUsername, Password: cfg.RegistryPassword}
-		if err := oci.PushImage(ctx, engine, imageRef, auth); err != nil {
-			b.log(ctx, build.ID, "error", fmt.Sprintf("Push failed: %v", err))
-			// Don't fail the build — image is still available locally (containers-storage).
-		} else {
-			b.log(ctx, build.ID, "info", "Image pushed successfully")
-		}
 	}
 
 	// Create image record.

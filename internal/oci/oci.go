@@ -163,16 +163,31 @@ func DetectBuildEngine() (BuildEngine, error) {
 	if _, err := exec.LookPath("buildah"); err == nil {
 		return EngineBuildah, nil
 	}
-	return "", fmt.Errorf("buildah not found in PATH (install it for OCI image builds)")
+	if runtime.GOOS == "darwin" {
+		return "", fmt.Errorf("buildah not on PATH: OCI image builds need Linux + buildah (not available from Homebrew on macOS); install on a Kindling Linux host via sudo ./contrib/install-host-deps.sh or use make remote-provision")
+	}
+	return "", fmt.Errorf("buildah not on PATH: install with sudo ./contrib/install-host-deps.sh or your distro package manager (e.g. apt install buildah)")
 }
 
 // BuildDockerfile runs an OCI image build in buildDir, tagging the result as imageRef.
 // dockerfilePath is relative to buildDir. logLine is called for each stdout/stderr line.
+// It enables host-local layer caching for buildah (--layers) so repeated builds on the same host can reuse layers.
 func BuildDockerfile(ctx context.Context, engine BuildEngine, buildDir, imageRef, dockerfilePath string, logLine func(string)) error {
+	return BuildDockerfileWithOpts(ctx, engine, buildDir, imageRef, dockerfilePath, BuildDockerfileOpts{LocalLayerCache: true}, logLine)
+}
+
+// BuildDockerfileOpts configures image build behavior.
+type BuildDockerfileOpts struct {
+	// LocalLayerCache enables buildah --layers for intermediate layer reuse on the build host.
+	LocalLayerCache bool
+}
+
+// BuildDockerfileWithOpts is like BuildDockerfile but allows tuning build behavior.
+func BuildDockerfileWithOpts(ctx context.Context, engine BuildEngine, buildDir, imageRef, dockerfilePath string, opts BuildDockerfileOpts, logLine func(string)) error {
 	var cmd *exec.Cmd
 	switch engine {
 	case EngineBuildah:
-		cmd = exec.CommandContext(ctx, "buildah", "bud", "-t", imageRef, "-f", dockerfilePath, ".")
+		cmd = exec.CommandContext(ctx, "buildah", BuildahBudArgs(imageRef, dockerfilePath, opts.LocalLayerCache)...)
 	default:
 		return fmt.Errorf("unsupported build engine: %q", engine)
 	}
@@ -212,14 +227,13 @@ func BuildDockerfile(ctx context.Context, engine BuildEngine, buildDir, imageRef
 
 // PushImage pushes a local tag to docker://imageRef using registry credentials when set.
 func PushImage(ctx context.Context, engine BuildEngine, imageRef string, auth *Auth) error {
-	dest := "docker://" + imageRef
 	switch engine {
 	case EngineBuildah:
-		args := []string{"push"}
+		creds := ""
 		if auth != nil && auth.Username != "" {
-			args = append(args, "--creds", auth.Username+":"+auth.Password)
+			creds = auth.Username + ":" + auth.Password
 		}
-		args = append(args, imageRef, dest)
+		args := BuildahPushArgs(imageRef, creds)
 		out, err := exec.CommandContext(ctx, "buildah", args...).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("buildah push: %s: %w", string(out), err)
