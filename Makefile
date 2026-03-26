@@ -5,6 +5,8 @@
 DATABASE_URL ?= postgres://kindling:kindling@localhost:5432/kindling?sslmode=disable
 REMOTE_HOST ?= kindling-dev
 REMOTE_DIR ?= /home/ubuntu/kindling
+# Optional: public IP or DNS of the host so API/dashboard show a browser-openable runtime_url (docker/crun publish 0.0.0.0:port).
+KINDLING_RUNTIME_ADVERTISE_HOST ?=
 
 # === Local ===
 
@@ -128,7 +130,10 @@ remote-networking:
 
 # Run kindling on remote
 remote-run: remote-build
-	ssh $(REMOTE_HOST) 'cd $(REMOTE_DIR) && DATABASE_URL=$(DATABASE_URL) ./bin/kindling serve'
+	ssh $(REMOTE_HOST) 'cd $(REMOTE_DIR) && \
+		DATABASE_URL=$(DATABASE_URL) \
+		$(if $(KINDLING_RUNTIME_ADVERTISE_HOST),KINDLING_RUNTIME_ADVERTISE_HOST=$(KINDLING_RUNTIME_ADVERTISE_HOST),) \
+		./bin/kindling serve'
 
 # Full dev setup: sync, build, run API + dashboard
 dev-up: remote-build
@@ -141,6 +146,7 @@ dev-up: remote-build
 	@echo "Starting kindling API on $(REMOTE_HOST)..."
 	@ssh $(REMOTE_HOST) 'cd $(REMOTE_DIR) && \
 		DATABASE_URL=$(DATABASE_URL) \
+		$(if $(KINDLING_RUNTIME_ADVERTISE_HOST),KINDLING_RUNTIME_ADVERTISE_HOST=$(KINDLING_RUNTIME_ADVERTISE_HOST),) \
 		nohup ./bin/kindling serve > /tmp/kindling.log 2>&1 &'
 	@sleep 2
 	@echo "Starting dashboard..."

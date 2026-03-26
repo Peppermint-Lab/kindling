@@ -5,10 +5,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -101,12 +103,23 @@ func (r *CrunRuntime) startDocker(ctx context.Context, inst Instance) (string, e
 	go r.captureOutput(ci, stdout)
 	go r.captureOutput(ci, stderr)
 
-	// Get the assigned host port.
-	ip, err := r.getDockerIP(containerName, port)
+	// docker port may fail immediately after container start; wait briefly.
+	var ip string
+	var err error
+	for attempt := 0; attempt < 25; attempt++ {
+		time.Sleep(120 * time.Millisecond)
+		ip, err = r.getDockerIP(containerName, port)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
-		// Container might still be starting, use localhost.
 		ip = fmt.Sprintf("127.0.0.1:%d", port)
 		slog.Warn("could not get docker port, using default", "error", err)
+	}
+	ip, err = applyAdvertisedHost(ip)
+	if err != nil {
+		return "", err
 	}
 	ci.ip = ip
 
@@ -159,13 +172,20 @@ func (r *CrunRuntime) startCrun(ctx context.Context, inst Instance) (string, err
 		return "", fmt.Errorf("umoci unpack: %s: %w", string(out), err)
 	}
 
-	// Write env vars to the bundle config.
-	// crun reads config.json from the bundle directory.
-	// For now, pass env via the process environment.
+	if err := patchBundleHostNetwork(bundleDir); err != nil {
+		return "", fmt.Errorf("host-network oci patch: %w", err)
+	}
 
-	port := inst.Port
-	if port == 0 {
-		port = 3000
+	// One free port on the host loopback; with host networking the app must bind
+	// this PORT (same idea as docker -p 0:containerPort).
+	hostPort, err := pickFreeTCPPort()
+	if err != nil {
+		return "", fmt.Errorf("allocate local port: %w", err)
+	}
+	rawAddr := fmt.Sprintf("127.0.0.1:%d", hostPort)
+	listenAddr, err := applyAdvertisedHost(rawAddr)
+	if err != nil {
+		return "", err
 	}
 
 	containerID := fmt.Sprintf("kindling-%s", inst.ID)
@@ -173,11 +193,19 @@ func (r *CrunRuntime) startCrun(ctx context.Context, inst Instance) (string, err
 
 	args := []string{"run", "--bundle", bundleDir, containerID}
 	cmd := exec.CommandContext(runCtx, "crun", args...)
-	cmd.Env = append(inst.Env, fmt.Sprintf("PORT=%d", port))
+	env := make([]string, 0, len(inst.Env)+1)
+	for _, e := range inst.Env {
+		if strings.HasPrefix(e, "PORT=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	env = append(env, fmt.Sprintf("PORT=%d", hostPort))
+	cmd.Env = env
 
 	ci := &crunInstance{
 		cmd:    cmd,
-		ip:     fmt.Sprintf("127.0.0.1:%d", port),
+		ip:     listenAddr,
 		cancel: cancel,
 	}
 
@@ -212,9 +240,19 @@ func (r *CrunRuntime) startCrun(ctx context.Context, inst Instance) (string, err
 		"id", inst.ID,
 		"image", inst.ImageRef,
 		"runtime", "crun",
+		"localhost", listenAddr,
 	)
 
 	return ci.ip, nil
+}
+
+func pickFreeTCPPort() (int, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port, nil
 }
 
 func (r *CrunRuntime) Stop(ctx context.Context, id uuid.UUID) error {
@@ -283,13 +321,39 @@ func (r *CrunRuntime) getDockerIP(containerName string, containerPort int) (stri
 	if err != nil {
 		return "", err
 	}
-	// Output is like "0.0.0.0:32768" or ":::32768"
+	// Output is like "0.0.0.0:32768" and/or "[::]:32768" — prefer IPv4 for SplitHostPort + browsers.
 	line := strings.TrimSpace(string(out))
+	for _, part := range strings.Split(line, "\n") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, "0.0.0.0:") {
+			return part, nil
+		}
+	}
 	parts := strings.Split(line, "\n")
-	if len(parts) > 0 {
+	if len(parts) > 0 && strings.TrimSpace(parts[0]) != "" {
 		return strings.TrimSpace(parts[0]), nil
 	}
 	return "", fmt.Errorf("no port mapping found")
+}
+
+// applyAdvertisedHost rewrites 0.0.0.0 / loopback to KINDLING_RUNTIME_ADVERTISE_HOST when set
+// (bare-metal / cloud: browsers reach the public IP, not docker’s "0.0.0.0" or crun’s 127.0.0.1).
+func applyAdvertisedHost(hostPort string) (string, error) {
+	host, port, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		return hostPort, fmt.Errorf("split host/port %q: %w", hostPort, err)
+	}
+	adv := strings.TrimSpace(os.Getenv("KINDLING_RUNTIME_ADVERTISE_HOST"))
+	if adv == "" {
+		return hostPort, nil
+	}
+	if host == "0.0.0.0" || host == "127.0.0.1" || host == "localhost" {
+		return net.JoinHostPort(adv, port), nil
+	}
+	if host == "::" || host == "[::]" {
+		return net.JoinHostPort(adv, port), nil
+	}
+	return hostPort, nil
 }
 
 // StopAll kills all running instances. Called during graceful shutdown.
