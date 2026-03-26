@@ -65,7 +65,13 @@ func ExportImageRootfs(ctx context.Context, imageRef, destDir string, auth *Auth
 func PullToOCILayout(ctx context.Context, imageRef, ociLayoutDir string, auth *Auth) error {
 	ociTagged := "oci:" + ociLayoutDir + ":latest"
 	var lastErr error
-	for _, src := range []string{"containers-storage:" + imageRef, "docker://" + imageRef} {
+	// buildah tags images as localhost/<ref> when given a short name (see `buildah images`).
+	candidates := []string{
+		"containers-storage:" + imageRef,
+		"containers-storage:localhost/" + imageRef,
+		"docker://" + imageRef,
+	}
+	for _, src := range candidates {
 		// A failed containers-storage pull can leave a partial layout; always reset before each try.
 		if err := os.RemoveAll(ociLayoutDir); err != nil {
 			return fmt.Errorf("reset oci layout dir: %w", err)
@@ -73,7 +79,8 @@ func PullToOCILayout(ctx context.Context, imageRef, ociLayoutDir string, auth *A
 		if err := os.MkdirAll(ociLayoutDir, 0o755); err != nil {
 			return fmt.Errorf("mkdir oci layout: %w", err)
 		}
-		lastErr = skopeoCopy(ctx, src, ociTagged, src == "docker://"+imageRef, auth)
+		isDocker := strings.HasPrefix(src, "docker://")
+		lastErr = skopeoCopy(ctx, src, ociTagged, isDocker, auth)
 		if lastErr == nil {
 			return nil
 		}
