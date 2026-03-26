@@ -131,9 +131,13 @@ export type Server = {
   id: string
   hostname: string
   internal_ip: string
+  ip_range?: string
   status: string
   last_heartbeat_at: string
   created_at: string
+  updated_at?: string
+  /** Non-deleted deployment_instances with this server_id */
+  instance_count?: number
 }
 
 export type UsageInstance = {
@@ -393,6 +397,12 @@ export const api = {
     request<void>(`/api/deployments/${id}/cancel`, { method: "POST" }),
 
   listServers: () => request<Server[]>("/api/servers"),
+
+  drainServer: (id: string) =>
+    request<{ status: string }>(`/api/servers/${id}/drain`, { method: "POST", body: JSON.stringify({}) }),
+
+  activateServer: (id: string) =>
+    request<{ status: string }>(`/api/servers/${id}/activate`, { method: "POST", body: JSON.stringify({}) }),
 
   getProjectUsageCurrent: (projectId: string) =>
     request<unknown>(`/api/projects/${projectId}/usage/current`).then(parseUsageCurrent),

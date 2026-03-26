@@ -31,6 +31,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/oci"
 	"github.com/kindlingvm/kindling/internal/reconciler"
 	"github.com/kindlingvm/kindling/internal/rpc"
+	"github.com/kindlingvm/kindling/internal/serverreconcile"
 	crunrt "github.com/kindlingvm/kindling/internal/runtime"
 	"github.com/kindlingvm/kindling/internal/usage"
 	"github.com/kindlingvm/kindling/internal/webhook"
@@ -256,14 +257,12 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		},
 	})
 
+	serverDrainHandler := serverreconcile.NewHandler(q, deploymentReconciler, notifyRouteChange)
 	serverReconciler := reconciler.New(reconciler.Config{
-		Name: "server",
-		Reconcile: func(ctx context.Context, id uuid.UUID) error {
-			slog.Info("reconciling server", "id", id)
-			notifyRouteChange()
-			return nil
-		},
+		Name:      "server",
+		Reconcile: serverDrainHandler.Reconcile,
 	})
+	deployer.SetServerScheduler(serverReconciler)
 
 	// Start reconcilers
 	go deploymentReconciler.Start(ctx)

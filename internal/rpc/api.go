@@ -58,6 +58,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/projects/{id}/deploy", a.triggerDeploy)
 	mux.HandleFunc("POST /api/deployments/{id}/cancel", a.cancelDeployment)
 	mux.HandleFunc("GET /api/servers", a.listServers)
+	mux.HandleFunc("POST /api/servers/{id}/drain", a.postServerDrain)
+	mux.HandleFunc("POST /api/servers/{id}/activate", a.postServerActivate)
 	a.registerUsageRoutes(mux)
 	a.registerAuthRoutes(mux)
 	a.registerProviderRoutes(mux)
@@ -644,7 +646,88 @@ func (a *API) listServers(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "list_servers", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, servers)
+	type serverRow struct {
+		queries.Server
+		InstanceCount int64 `json:"instance_count"`
+	}
+	out := make([]serverRow, len(servers))
+	for i := range servers {
+		n, err := a.q.DeploymentInstanceCountByServerID(r.Context(), servers[i].ID)
+		if err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "list_servers", err)
+			return
+		}
+		out[i] = serverRow{Server: servers[i], InstanceCount: n}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (a *API) postServerDrain(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if p.OrgRole != "owner" && p.OrgRole != "admin" {
+		writeAPIError(w, http.StatusForbidden, "forbidden", "owner or admin role required")
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
+		return
+	}
+	id, err := parseUUID(r.PathValue("id"))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid server id")
+		return
+	}
+	srv, err := a.q.ServerFindByID(r.Context(), id)
+	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "not_found", "server not found")
+		return
+	}
+	if srv.Status != "active" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_state", "only active servers can be drained")
+		return
+	}
+	if err := a.q.ServerSetDraining(r.Context(), id); err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "server_drain", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "draining"})
+}
+
+func (a *API) postServerActivate(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if p.OrgRole != "owner" && p.OrgRole != "admin" {
+		writeAPIError(w, http.StatusForbidden, "forbidden", "owner or admin role required")
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
+		return
+	}
+	id, err := parseUUID(r.PathValue("id"))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid server id")
+		return
+	}
+	srv, err := a.q.ServerFindByID(r.Context(), id)
+	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "not_found", "server not found")
+		return
+	}
+	if srv.Status != "draining" && srv.Status != "drained" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_state", "only draining or drained servers can be reactivated")
+		return
+	}
+	if err := a.q.ServerSetActive(r.Context(), id); err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "server_activate", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "active"})
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {

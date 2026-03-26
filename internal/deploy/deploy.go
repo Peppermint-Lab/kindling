@@ -26,6 +26,7 @@ type Deployer struct {
 	pool                 *pgxpool.Pool
 	serverID             uuid.UUID
 	deploymentReconciler *reconciler.Scheduler
+	serverScheduler      *reconciler.Scheduler
 	rt                   runtime.Runtime
 }
 
@@ -43,6 +44,11 @@ func (d *Deployer) SetRuntime(rt runtime.Runtime) {
 // SetReconciler sets the deployment reconciler for re-scheduling.
 func (d *Deployer) SetReconciler(r *reconciler.Scheduler) {
 	d.deploymentReconciler = r
+}
+
+// SetServerScheduler schedules the server reconciler when instances leave a draining host.
+func (d *Deployer) SetServerScheduler(r *reconciler.Scheduler) {
+	d.serverScheduler = r
 }
 
 // effectiveReplicaCount returns how many instances the deployment reconciler
@@ -190,11 +196,19 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 		return nil
 	}
 
-	if err := d.scaleDownInstances(ctx, instList, int(desired), logger); err != nil {
+	statusMap, err := d.serverStatusByIDs(ctx, instList)
+	if err != nil {
+		return fmt.Errorf("load server statuses: %w", err)
+	}
+	onDraining := d.countInstancesOnDrainingServers(instList, statusMap)
+	surgeTarget := int(desired) + onDraining
+
+	instList, err = d.scaleDownExcess(ctx, dep.ID, instList, surgeTarget, statusMap, logger)
+	if err != nil {
 		return err
 	}
 
-	if err := d.ensureInstanceCountUp(ctx, dep.ID, desired); err != nil {
+	if err := d.ensureInstanceCountUp(ctx, dep.ID, int32(surgeTarget)); err != nil {
 		return err
 	}
 
@@ -208,6 +222,33 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 			logger.Info("instance reconcile deferred", "instance_id", uuidFromPgtype(inst.ID), "error", err)
 			d.scheduleRetry(deploymentID, 5*time.Second)
 			return nil
+		}
+	}
+
+	instList, err = d.q.DeploymentInstanceFindByDeploymentID(ctx, dep.ID)
+	if err != nil {
+		return fmt.Errorf("list deployment instances: %w", err)
+	}
+	statusMap, err = d.serverStatusByIDs(ctx, instList)
+	if err != nil {
+		return fmt.Errorf("load server statuses: %w", err)
+	}
+	onDraining = d.countInstancesOnDrainingServers(instList, statusMap)
+	if d.countReadyOffDrainingServers(ctx, instList, statusMap) >= int(desired) && onDraining > 0 {
+		instList, err = d.removeInstancesOnDrainingServers(ctx, dep.ID, instList, statusMap, desired, logger)
+		if err != nil {
+			return err
+		}
+		statusMap, err = d.serverStatusByIDs(ctx, instList)
+		if err != nil {
+			return fmt.Errorf("load server statuses: %w", err)
+		}
+		onDraining = d.countInstancesOnDrainingServers(instList, statusMap)
+	}
+	if onDraining == 0 && len(instList) > int(desired) {
+		instList, err = d.scaleDownExcess(ctx, dep.ID, instList, int(desired), statusMap, logger)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -368,6 +409,18 @@ func (d *Deployer) reconcileOneInstance(
 	env []string,
 	logger *slog.Logger,
 ) error {
+	if inst.ServerID.Valid {
+		srv, err := d.q.ServerFindByID(ctx, inst.ServerID)
+		if err == nil && srv.Status == "draining" {
+			if inst.Status != "running" || !inst.VmID.Valid {
+				if _, err := d.q.DeploymentInstancePrepareRetry(ctx, inst.ID); err != nil {
+					return fmt.Errorf("release instance from draining server: %w", err)
+				}
+				inst, _ = d.q.DeploymentInstanceFirstByID(ctx, inst.ID)
+			}
+		}
+	}
+
 	if inst.Status == "running" && inst.VmID.Valid {
 		vm, err := d.q.VMFirstByID(ctx, inst.VmID)
 		if err == nil && !vm.DeletedAt.Valid && vm.Status == "running" {

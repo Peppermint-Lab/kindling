@@ -4,7 +4,10 @@ VALUES ($1, $2, $3, $4, 'active', NOW())
 ON CONFLICT (id) DO UPDATE SET
     hostname = EXCLUDED.hostname,
     internal_ip = EXCLUDED.internal_ip,
-    status = 'active',
+    status = CASE
+        WHEN servers.status IN ('draining', 'drained', 'dead') THEN servers.status
+        ELSE 'active'
+    END,
     last_heartbeat_at = NOW(),
     updated_at = NOW()
 RETURNING *;
@@ -17,7 +20,7 @@ UPDATE servers SET last_heartbeat_at = NOW(), updated_at = NOW() WHERE id = $1;
 
 -- name: ServerFindDead :many
 SELECT * FROM servers
-WHERE status = 'active'
+WHERE status IN ('active', 'draining')
   AND last_heartbeat_at < NOW() - INTERVAL '30 seconds';
 
 -- name: ServerUpdateStatus :exec
@@ -25,6 +28,14 @@ UPDATE servers SET status = $2, updated_at = NOW() WHERE id = $1;
 
 -- name: ServerSetDrained :exec
 UPDATE servers SET status = 'drained', updated_at = NOW() WHERE id = $1;
+
+-- name: ServerSetDraining :exec
+UPDATE servers SET status = 'draining', updated_at = NOW()
+WHERE id = $1 AND status = 'active';
+
+-- name: ServerSetActive :exec
+UPDATE servers SET status = 'active', updated_at = NOW()
+WHERE id = $1 AND status IN ('draining', 'drained');
 
 -- name: ServerFindLeastLoaded :one
 SELECT s.* FROM servers s
@@ -217,6 +228,14 @@ UPDATE deployment_instances
 SET server_id = NULL, vm_id = NULL, status = 'pending', updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
+
+-- name: DeploymentInstanceCountByServerID :one
+SELECT COUNT(*)::bigint AS count FROM deployment_instances
+WHERE server_id = $1 AND deleted_at IS NULL;
+
+-- name: DeploymentIDsForInstancesOnServer :many
+SELECT DISTINCT deployment_id FROM deployment_instances
+WHERE server_id = $1 AND deleted_at IS NULL;
 
 -- Environment Variables --
 

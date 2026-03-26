@@ -32,12 +32,16 @@ export function SettingsPage() {
   const [error, setError] = useState<string | null>(null)
   const [providers, setProviders] = useState<ProviderRow[]>([])
   const [provBusy, setProvBusy] = useState(false)
+  const [serverActionId, setServerActionId] = useState<string | null>(null)
   const [newProv, setNewProv] = useState({
     provider: "github" as "github" | "gitlab",
     external_slug: "",
     display_label: "",
     token: "",
   })
+
+  const canManageServers =
+    session?.authenticated && (session.role === "owner" || session.role === "admin")
 
   const load = () =>
     Promise.all([api.listServers(), api.getMeta(), api.listOrgProviderConnections()]).then(([s, m, p]) => {
@@ -303,6 +307,9 @@ export function SettingsPage() {
                         <p className="font-mono text-sm font-medium truncate">{server.hostname || server.id}</p>
                         <p className="text-xs text-muted-foreground mt-0.5 truncate">
                           {server.internal_ip || "No IP"}
+                          {server.instance_count != null && server.instance_count > 0
+                            ? ` · ${server.instance_count} instance${server.instance_count === 1 ? "" : "s"}`
+                            : ""}
                         </p>
                       </div>
                       <div className="flex flex-wrap items-center gap-2 sm:gap-3">
@@ -310,6 +317,52 @@ export function SettingsPage() {
                           Last heartbeat: {new Date(server.last_heartbeat_at).toLocaleTimeString()}
                         </span>
                         <Badge variant={server.status === "active" ? "default" : "secondary"}>{server.status}</Badge>
+                        {canManageServers && server.status === "active" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={serverActionId === server.id}
+                            onClick={() => {
+                              void (async () => {
+                                setServerActionId(server.id)
+                                setError(null)
+                                try {
+                                  await api.drainServer(server.id)
+                                  await load()
+                                } catch (e) {
+                                  setError(e instanceof APIError ? e.message : String(e))
+                                } finally {
+                                  setServerActionId(null)
+                                }
+                              })()
+                            }}
+                          >
+                            Drain
+                          </Button>
+                        )}
+                        {canManageServers && (server.status === "draining" || server.status === "drained") && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={serverActionId === server.id}
+                            onClick={() => {
+                              void (async () => {
+                                setServerActionId(server.id)
+                                setError(null)
+                                try {
+                                  await api.activateServer(server.id)
+                                  await load()
+                                } catch (e) {
+                                  setError(e instanceof APIError ? e.message : String(e))
+                                } finally {
+                                  setServerActionId(null)
+                                }
+                              })()
+                            }}
+                          >
+                            Activate
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ))}
