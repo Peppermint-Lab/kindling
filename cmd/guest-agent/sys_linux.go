@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -126,10 +128,55 @@ func mountPersistentVolume(root, mountPath string) {
 	for _, dev := range []string{"/dev/vdb", "/dev/vdb1"} {
 		if err := syscall.Mount(dev, target, "ext4", 0, ""); err == nil {
 			log.Printf("mounted persistent volume %s at %s", dev, target)
+			if err := growPersistentVolumeFilesystem(dev); err != nil {
+				log.Printf("persistent volume grow skipped for %s: %v", dev, err)
+			}
 			return
 		}
 	}
 	log.Printf("persistent volume mount failed for %s", clean)
+}
+
+func growPersistentVolumeFilesystem(device string) error {
+	device = strings.TrimSpace(device)
+	if device == "" {
+		return nil
+	}
+	if parent, partition, ok := splitBlockDevicePartition(device); ok {
+		if out, err := exec.Command("growpart", parent, partition).CombinedOutput(); err != nil {
+			log.Printf("growpart %s %s failed: %s (%v)", parent, partition, strings.TrimSpace(string(out)), err)
+		}
+	}
+	if out, err := exec.Command("resize2fs", device).CombinedOutput(); err != nil {
+		return fmt.Errorf("resize2fs %s: %s: %w", device, strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func splitBlockDevicePartition(device string) (string, string, bool) {
+	device = strings.TrimSpace(device)
+	if device == "" {
+		return "", "", false
+	}
+	cut := len(device)
+	for cut > 0 {
+		ch := device[cut-1]
+		if ch < '0' || ch > '9' {
+			break
+		}
+		cut--
+	}
+	if cut == len(device) {
+		return "", "", false
+	}
+	parent := device[:cut]
+	if strings.HasSuffix(parent, "p") {
+		parent = strings.TrimSuffix(parent, "p")
+	}
+	if parent == "" {
+		return "", "", false
+	}
+	return parent, device[cut:], true
 }
 
 func pathExistsMap(candidates []string) map[string]bool {

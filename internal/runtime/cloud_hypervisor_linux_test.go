@@ -3,6 +3,10 @@
 package runtime
 
 import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -72,6 +76,28 @@ func TestCloudHypervisorDiskArgsAddsPersistentVolumeAsSecondDisk(t *testing.T) {
 	}
 }
 
+func TestEnsurePersistentVolumeSizeResizesQcow2(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "qemu-img.log")
+	writeRuntimeExecutable(t, filepath.Join(tmp, "qemu-img"), "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  printf '{\"virtual-size\":1073741824}'\n  exit 0\nfi\nprintf '%s %s %s\\n' \"$1\" \"$2\" \"$3\" > \""+logPath+"\"\n")
+	t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	volumePath := filepath.Join(tmp, "volume.qcow2")
+	if err := os.WriteFile(volumePath, []byte("qcow2"), 0o644); err != nil {
+		t.Fatalf("write volume: %v", err)
+	}
+
+	if err := ensurePersistentVolumeSize(context.Background(), volumePath, 2); err != nil {
+		t.Fatalf("ensurePersistentVolumeSize: %v", err)
+	}
+
+	if got := strings.TrimSpace(readRuntimeFile(t, logPath)); got != "resize "+volumePath+" 2G" {
+		t.Fatalf("resize args = %q", got)
+	}
+}
+
 func TestSharedRootfsPathHelpers(t *testing.T) {
 	id := mustUUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 	got := sharedRootfsPathForID("/shared/rootfs", id)
@@ -93,4 +119,20 @@ func mustUUID(s string) uuid.UUID {
 		panic(err)
 	}
 	return id
+}
+
+func writeRuntimeExecutable(t *testing.T, path, contents string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(contents), 0o755); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func readRuntimeFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
 }

@@ -208,7 +208,7 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 		resolvedVolume, err := d.ensureProjectVolumeServer(ctx, *projectVolume)
 		if err != nil {
 			logger.Warn("project volume unavailable", "project_id", uuidFromPgtype(dep.ProjectID), "error", err)
-			d.scheduleRetry(deploymentID, 5*time.Second)
+			d.scheduleRetry(deploymentID, projectVolumeRetryDelay(err))
 			return nil
 		}
 		projectVolume = &resolvedVolume
@@ -514,6 +514,7 @@ func (d *Deployer) cleanupInstance(ctx context.Context, inst queries.DeploymentI
 		_ = d.rt.Stop(ctx, iid)
 	}
 	if inst.VmID.Valid {
+		_ = d.detachProjectVolumeForInstance(ctx, inst, "available", "")
 		_ = d.q.VMSoftDelete(ctx, inst.VmID)
 	}
 	_ = d.q.DeploymentInstanceSoftDelete(ctx, inst.ID)
@@ -525,6 +526,7 @@ func (d *Deployer) deleteInstancePermanently(ctx context.Context, inst queries.D
 		_ = d.rt.Stop(ctx, iid)
 	}
 	if inst.VmID.Valid {
+		_ = d.detachProjectVolumeForInstance(ctx, inst, "available", "")
 		_ = d.q.VMSoftDelete(ctx, inst.VmID)
 	}
 	_ = d.q.DeploymentInstanceSoftDelete(ctx, inst.ID)
@@ -547,6 +549,12 @@ func (d *Deployer) repairInstancesOnBadServers(ctx context.Context, instList []q
 			_ = d.rt.Stop(ctx, uuidFromPgtype(inst.ID))
 		}
 		if inst.VmID.Valid {
+			handledUnavailable, volumeErr := d.markProjectVolumeUnavailableForInstance(ctx, inst, srv.Status)
+			if volumeErr != nil {
+				logger.Warn("mark project volume unavailable failed", "instance_id", uuidFromPgtype(inst.ID), "error", volumeErr)
+			} else if !handledUnavailable {
+				_ = d.detachProjectVolumeForInstance(ctx, inst, "available", "")
+			}
 			_ = d.q.VMSoftDelete(ctx, inst.VmID)
 		}
 		if _, err := d.q.DeploymentInstancePrepareRetry(ctx, inst.ID); err != nil {

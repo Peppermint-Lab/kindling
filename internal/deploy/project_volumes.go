@@ -17,6 +17,30 @@ import (
 	"github.com/kindlingvm/kindling/internal/runtime"
 )
 
+type projectVolumeUnavailableError struct {
+	message string
+}
+
+func (e *projectVolumeUnavailableError) Error() string {
+	return e.message
+}
+
+func isProjectVolumeUnavailableError(err error) bool {
+	var target *projectVolumeUnavailableError
+	return errors.As(err, &target)
+}
+
+func projectVolumeRetryDelay(err error) time.Duration {
+	if isProjectVolumeUnavailableError(err) {
+		return 30 * time.Second
+	}
+	return 5 * time.Second
+}
+
+func projectVolumeServerStatusMessage(serverID pgtype.UUID, status string) string {
+	return fmt.Sprintf("pinned server %s is %s", uuidFromPgtype(serverID), status)
+}
+
 func (d *Deployer) projectVolumeForProject(ctx context.Context, projectID pgtype.UUID) (*queries.ProjectVolume, *runtime.PersistentVolumeMount, error) {
 	vol, err := d.q.ProjectVolumeFindByProjectID(ctx, projectID)
 	if err != nil {
@@ -45,7 +69,7 @@ func (d *Deployer) ensureProjectVolumeServer(ctx context.Context, vol queries.Pr
 			return d.markProjectVolumeUnavailable(ctx, vol.ProjectID, fmt.Sprintf("pinned server lookup failed: %v", err))
 		}
 		if srv.Status != "active" {
-			return d.markProjectVolumeUnavailable(ctx, vol.ProjectID, fmt.Sprintf("pinned server %s is %s", uuidFromPgtype(srv.ID), srv.Status))
+			return d.markProjectVolumeUnavailable(ctx, vol.ProjectID, projectVolumeServerStatusMessage(srv.ID, srv.Status))
 		}
 		if !d.serverSupportsCloudHypervisor(ctx, srv.ID) {
 			return d.markProjectVolumeUnavailable(ctx, vol.ProjectID, fmt.Sprintf("pinned server %s is not a cloud-hypervisor worker", uuidFromPgtype(srv.ID)))
@@ -86,15 +110,28 @@ func (d *Deployer) ensureProjectVolumeServer(ctx context.Context, vol queries.Pr
 }
 
 func (d *Deployer) markProjectVolumeUnavailable(ctx context.Context, projectID pgtype.UUID, message string) (queries.ProjectVolume, error) {
-	vol, err := d.q.ProjectVolumeUpdateStatus(ctx, queries.ProjectVolumeUpdateStatusParams{
-		ProjectID: projectID,
-		Status:    "unavailable",
-		LastError: strings.TrimSpace(message),
-	})
+	message = strings.TrimSpace(message)
+	vol, err := d.q.ProjectVolumeFindByProjectID(ctx, projectID)
 	if err != nil {
 		return queries.ProjectVolume{}, err
 	}
-	return vol, fmt.Errorf("%s", strings.TrimSpace(message))
+	if vol.AttachedVmID.Valid {
+		vol, err = d.q.ProjectVolumeDetachVM(ctx, queries.ProjectVolumeDetachVMParams{
+			ProjectID: projectID,
+			Status:    "unavailable",
+			LastError: message,
+		})
+	} else {
+		vol, err = d.q.ProjectVolumeUpdateStatus(ctx, queries.ProjectVolumeUpdateStatusParams{
+			ProjectID: projectID,
+			Status:    "unavailable",
+			LastError: message,
+		})
+	}
+	if err != nil {
+		return queries.ProjectVolume{}, err
+	}
+	return vol, &projectVolumeUnavailableError{message: message}
 }
 
 func (d *Deployer) serverSupportsCloudHypervisor(ctx context.Context, serverID pgtype.UUID) bool {
@@ -204,6 +241,39 @@ func (d *Deployer) detachProjectVolumeIfAttached(ctx context.Context, projectID,
 	return err
 }
 
+func (d *Deployer) detachProjectVolumeForInstance(ctx context.Context, inst queries.DeploymentInstance, status, lastError string) error {
+	if !inst.VmID.Valid {
+		return nil
+	}
+	dep, err := d.q.DeploymentFirstByID(ctx, inst.DeploymentID)
+	if err != nil {
+		return err
+	}
+	return d.detachProjectVolumeIfAttached(ctx, dep.ProjectID, inst.VmID, status, lastError)
+}
+
+func (d *Deployer) markProjectVolumeUnavailableForInstance(ctx context.Context, inst queries.DeploymentInstance, serverStatus string) (bool, error) {
+	if !inst.ServerID.Valid {
+		return false, nil
+	}
+	dep, err := d.q.DeploymentFirstByID(ctx, inst.DeploymentID)
+	if err != nil {
+		return false, err
+	}
+	vol, err := d.q.ProjectVolumeFindByProjectID(ctx, dep.ProjectID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if !vol.ServerID.Valid || vol.ServerID != inst.ServerID {
+		return false, nil
+	}
+	_, err = d.markProjectVolumeUnavailable(ctx, dep.ProjectID, projectVolumeServerStatusMessage(inst.ServerID, serverStatus))
+	return true, err
+}
+
 func (d *Deployer) stopOldDeploymentsForVolume(ctx context.Context, current queries.Deployment, logger *slog.Logger) (bool, error) {
 	old, err := d.q.DeploymentFindRunningAndOlder(ctx, queries.DeploymentFindRunningAndOlderParams{
 		ProjectID: current.ProjectID,
@@ -219,9 +289,6 @@ func (d *Deployer) stopOldDeploymentsForVolume(ctx context.Context, current quer
 			return true, listErr
 		}
 		for _, inst := range instList {
-			if inst.VmID.Valid {
-				_ = d.detachProjectVolumeIfAttached(ctx, current.ProjectID, inst.VmID, "available", "")
-			}
 			d.deleteInstancePermanently(ctx, inst)
 		}
 		if dep.VmID.Valid {
