@@ -1,0 +1,28 @@
+{
+  "featureId": "fix-structural-blocking",
+  "reviewedAt": "2026-03-27T23:54:32Z",
+  "commitId": "90ae89c",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The fix correctly resolves the linux compile error (`runCtx.Err()`), restores SSE event names (`deployment`/`logs`), and removes the empty-initial-log polling gate. However, one prior blocking regression from `str-split-rpc-package` remains unresolved: `logs` events are still emitted as single `BuildLog` objects instead of `BuildLog[]` batches expected by the dashboard consumer.",
+    "issues": [
+      {
+        "file": "internal/rpc/deployments/handlers.go",
+        "line": 306,
+        "severity": "blocking",
+        "description": "The SSE `logs` payload shape is still incompatible with the existing client contract: the handler emits one event per row via `writeEvent(\"logs\", l)` (also in the polling path at line 349), but the dashboard expects `logs` events to contain `BuildLog[]` (`web/dashboard/src/lib/api.ts:804,821`) and processes them as arrays (`web/dashboard/src/pages/DeploymentDetailPage.tsx:48-54`). This leaves live log streaming broken even though event names were restored."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The refactor-worker procedure and this feature's verification focused on compile/tests and event-name grep checks, but not on API payload-shape compatibility with known consumers, allowing a contract regression to remain.",
+      "evidence": "Transcript skeleton shows verification steps for `runCtx.Err` and `\"state\"|\"log\"` only; no consumer contract check was run. Remaining mismatch is visible at internal/rpc/deployments/handlers.go:306,349 vs web/dashboard/src/lib/api.ts:804,821 and web/dashboard/src/pages/DeploymentDetailPage.tsx:48-54."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/structural/scrutiny/reviews/str-split-cloud-hypervisor.json, .factory/validation/structural/scrutiny/reviews/str-split-rpc-package.json",
+  "summary": "Fail: this fix commit (`90ae89c`) addresses 2/3 intended blocking items and resolves the linux-only runtime compile error, but it does not fully resolve the original deployment SSE contract failure because `logs` payloads are still sent as single objects rather than `BuildLog[]` batches expected by the dashboard."
+}

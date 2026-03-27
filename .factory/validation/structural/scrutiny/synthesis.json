@@ -1,6 +1,6 @@
 {
   "milestone": "structural",
-  "round": 1,
+  "round": 2,
   "status": "fail",
   "validatorsRun": {
     "test": {
@@ -17,60 +17,37 @@
       "passed": true,
       "command": "go vet ./...",
       "exitCode": 0
+    },
+    "build_linux": {
+      "passed": true,
+      "command": "env GOOS=linux GOARCH=amd64 go build ./...",
+      "exitCode": 0
     }
   },
   "reviewsSummary": {
-    "total": 4,
-    "passed": 2,
-    "failed": 2,
+    "total": 2,
+    "passed": 1,
+    "failed": 1,
     "failedFeatures": [
-      "str-split-cloud-hypervisor",
-      "str-split-rpc-package"
+      "fix-structural-blocking"
     ]
   },
   "blockingIssues": [
     {
-      "featureId": "str-split-cloud-hypervisor",
+      "featureId": "fix-structural-blocking",
       "severity": "blocking",
-      "description": "internal/runtime/cloud_hypervisor_linux.go:223 returns runCtx.Err (method value) where error is required, causing a linux-target compile-time type mismatch."
-    },
-    {
-      "featureId": "str-split-rpc-package",
-      "severity": "blocking",
-      "description": "internal/rpc/deployments/handlers.go changed deployment SSE event contract from deployment/logs to state/log, breaking existing dashboard listeners expecting deployment/logs."
-    },
-    {
-      "featureId": "str-split-rpc-package",
-      "severity": "blocking",
-      "description": "internal/rpc/deployments/handlers.go gates incremental log polling on lastLogTS.Valid, so deployments with no initial logs never stream subsequent logs."
+      "description": "internal/rpc/deployments/handlers.go still emits `logs` SSE payloads as single BuildLog objects (`writeEvent(\"logs\", l)`), while the dashboard consumer expects `logs` payloads as BuildLog[] (`web/dashboard/src/lib/api.ts` and `web/dashboard/src/pages/DeploymentDetailPage.tsx`), so live log streaming remains broken."
     }
   ],
-  "appliedUpdates": [
-    {
-      "target": "services.yaml",
-      "description": "Added commands.build_linux (GOOS=linux go build ./...) for linux-target validation of platform-specific files.",
-      "sourceFeature": "str-split-cloud-hypervisor"
-    },
-    {
-      "target": "library",
-      "description": "Updated .factory/library/architecture.md RPC package map entry to reflect domain sub-package split.",
-      "sourceFeature": "str-split-rpc-package"
-    }
-  ],
+  "appliedUpdates": [],
   "suggestedGuidanceUpdates": [
     {
       "target": "refactor-worker skill",
-      "suggestion": "Require GOOS=linux build validation when a feature edits *_linux.go files or linux-tagged code.",
-      "evidence": "str-split-cloud-hypervisor introduced a linux-only compile error in internal/runtime/cloud_hypervisor_linux.go:223 that host-only build/vet/test did not catch.",
-      "isSystemic": true
-    },
-    {
-      "target": "refactor-worker skill",
-      "suggestion": "For API/RPC refactors, add an explicit contract verification step against known consumers (routes, payloads, SSE event names).",
-      "evidence": "str-split-rpc-package introduced deployment SSE contract drift in internal/rpc/deployments/handlers.go versus dashboard expectations in web/dashboard/src/lib/api.ts.",
+      "suggestion": "For API/RPC refactors and follow-up fixes, require explicit payload-shape compatibility checks against known consumers (not only event names/routes/status codes).",
+      "evidence": "fix-structural-blocking restored SSE event names but still shipped an incompatible `logs` payload shape in internal/rpc/deployments/handlers.go:306,349 versus dashboard expectations in web/dashboard/src/lib/api.ts:804,821 and web/dashboard/src/pages/DeploymentDetailPage.tsx:48-54.",
       "isSystemic": true
     }
   ],
   "rejectedObservations": [],
-  "previousRound": null
+  "previousRound": ".factory/validation/structural/scrutiny/synthesis.round1.json"
 }
