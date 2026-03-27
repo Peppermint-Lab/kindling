@@ -291,17 +291,33 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	go serverReconciler.Start(ctx)
 	slog.Info("reconcilers started")
 
+	dashboardEvents := rpc.NewDashboardEventBroker()
+	publishDeploymentScopes := func(projectID uuid.UUID) {
+		dashboardEvents.PublishMany(
+			rpc.TopicDeployments,
+			rpc.TopicProject(projectID),
+			rpc.TopicProjectDeployments(projectID),
+		)
+	}
+
 	// Start WAL listener
 	wal := listener.New(listener.Config{
 		DatabaseURL: databaseURL,
 		OnDeployment: func(ctx context.Context, id uuid.UUID) {
 			deploymentReconciler.ScheduleNow(id)
+			if dep, err := q.DeploymentFirstByID(ctx, pgtype.UUID{Bytes: id, Valid: true}); err == nil {
+				publishDeploymentScopes(uuid.UUID(dep.ProjectID.Bytes))
+			}
 		},
 		OnDeploymentInstance: func(ctx context.Context, instanceID uuid.UUID) {
 			inst, err := q.DeploymentInstanceFirstByID(ctx, pgtype.UUID{Bytes: instanceID, Valid: true})
 			if err == nil && inst.DeploymentID.Valid {
 				deploymentReconciler.ScheduleNow(uuid.UUID(inst.DeploymentID.Bytes))
+				if dep, err2 := q.DeploymentFirstByID(ctx, inst.DeploymentID); err2 == nil {
+					publishDeploymentScopes(uuid.UUID(dep.ProjectID.Bytes))
+				}
 			}
+			dashboardEvents.Publish(rpc.TopicServers)
 			notifyRouteChange()
 		},
 		OnProject: func(ctx context.Context, projectID uuid.UUID) {
@@ -309,23 +325,37 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 			if err == nil {
 				deploymentReconciler.ScheduleNow(uuid.UUID(dep.ID.Bytes))
 			}
+			dashboardEvents.PublishMany(
+				rpc.TopicProjects,
+				rpc.TopicProject(projectID),
+				rpc.TopicProjectDeployments(projectID),
+			)
 		},
 		OnBuild: func(ctx context.Context, id uuid.UUID) {
 			buildReconciler.ScheduleNow(id)
+			if b, err := q.BuildFirstByID(ctx, pgtype.UUID{Bytes: id, Valid: true}); err == nil {
+				publishDeploymentScopes(uuid.UUID(b.ProjectID.Bytes))
+			}
 		},
 		OnVM: func(ctx context.Context, id uuid.UUID) {
 			vmReconciler.ScheduleNow(id)
 			dep, err := q.DeploymentFindByVMID(ctx, pgtype.UUID{Bytes: id, Valid: true})
 			if err == nil {
 				deploymentReconciler.ScheduleNow(uuid.UUID(dep.ID.Bytes))
+				publishDeploymentScopes(uuid.UUID(dep.ProjectID.Bytes))
 			}
+			dashboardEvents.Publish(rpc.TopicServers)
 			notifyRouteChange()
 		},
 		OnDomain: func(ctx context.Context, id uuid.UUID) {
 			domainReconciler.ScheduleNow(id)
+			if projID, err := q.DomainProjectIDByDomainID(ctx, pgtype.UUID{Bytes: id, Valid: true}); err == nil && projID.Valid {
+				publishDeploymentScopes(uuid.UUID(projID.Bytes))
+			}
 		},
 		OnServer: func(ctx context.Context, id uuid.UUID) {
 			serverReconciler.ScheduleNow(id)
+			dashboardEvents.Publish(rpc.TopicServers)
 		},
 	})
 
@@ -379,7 +409,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	go runIdleScaleDownLoop(ctx, databaseURL, q, deploymentReconciler, cfgMgr)
 
 	// API server
-	api := rpc.NewAPI(q, cfgMgr)
+	api := rpc.NewAPI(q, cfgMgr, dashboardEvents)
 	webhookHandler := webhook.NewHandler(q)
 
 	apiMux := http.NewServeMux()

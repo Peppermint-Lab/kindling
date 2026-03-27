@@ -14,13 +14,15 @@ import (
 
 // API provides REST endpoints for the dashboard.
 type API struct {
-	q   *queries.Queries
-	cfg *config.Manager
+	q               *queries.Queries
+	cfg             *config.Manager
+	dashboardEvents *DashboardEventBroker
 }
 
 // NewAPI creates a new API handler. cfg supplies DB-backed secrets (e.g. GitHub token).
-func NewAPI(q *queries.Queries, cfg *config.Manager) *API {
-	return &API{q: q, cfg: cfg}
+// dashboardEvents may be nil; in that case GET /api/events returns 503.
+func NewAPI(q *queries.Queries, cfg *config.Manager, dashboardEvents *DashboardEventBroker) *API {
+	return &API{q: q, cfg: cfg, dashboardEvents: dashboardEvents}
 }
 
 func (a *API) gitHubToken() string {
@@ -55,6 +57,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/deployments/{id}", a.getDeployment)
 	mux.HandleFunc("GET /api/deployments/{id}/logs", a.getDeploymentLogs)
 	mux.HandleFunc("GET /api/deployments/{id}/stream", a.streamDeployment)
+	mux.HandleFunc("GET /api/events", a.streamDashboardEvents)
 	mux.HandleFunc("POST /api/projects/{id}/deploy", a.triggerDeploy)
 	mux.HandleFunc("POST /api/deployments/{id}/cancel", a.cancelDeployment)
 	mux.HandleFunc("GET /api/servers", a.listServers)

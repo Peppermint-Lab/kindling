@@ -413,6 +413,52 @@ export const api = {
     ).then(parseUsageHistory),
 }
 
+/** Topics for GET /api/events (must match server `internal/rpc` dashboard invalidation names). */
+export const dashboardEventTopics = {
+  projects: "projects",
+  deployments: "deployments",
+  servers: "servers",
+  project: (id: string) => `project:${id}`,
+  projectDeployments: (id: string) => `project_deployments:${id}`,
+} as const
+
+export type DashboardInvalidatePayload = {
+  topic: string
+  at?: string
+}
+
+/** Multiplexed dashboard SSE: refetch REST when you receive `invalidate` events. */
+export function subscribeDashboardEvents(options: {
+  topics: string[]
+  onInvalidate?: (topic: string) => void
+  onError?: (e: Event) => void
+}): () => void {
+  const topics = options.topics.filter((t) => t.trim() !== "")
+  if (topics.length === 0) {
+    return () => {}
+  }
+  const qs = new URLSearchParams()
+  qs.set("topics", topics.join(","))
+  const url = `${API_BASE}/api/events?${qs.toString()}`
+  const es = new EventSource(url, { withCredentials: true })
+
+  es.addEventListener("invalidate", (e) => {
+    try {
+      const d = JSON.parse((e as MessageEvent).data) as DashboardInvalidatePayload
+      if (d.topic) options.onInvalidate?.(d.topic)
+    } catch {
+      /* ignore */
+    }
+  })
+
+  es.onerror = (err) => {
+    options.onError?.(err)
+    // Let the browser reconnect (do not close).
+  }
+
+  return () => es.close()
+}
+
 /** SSE url for live deployment updates (use with EventSource). */
 export function deploymentStreamURL(deploymentId: string): string {
   return `${API_BASE}/api/deployments/${deploymentId}/stream`

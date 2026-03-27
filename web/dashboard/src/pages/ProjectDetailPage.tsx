@@ -10,6 +10,8 @@ import {
   type UsageCurrent,
   type UsageHistory,
   APIError,
+  dashboardEventTopics,
+  subscribeDashboardEvents,
 } from "@/lib/api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -172,21 +174,57 @@ export function ProjectDetailPage() {
     }
   }, [])
 
+  const loadProjectPage = useCallback(
+    (opts?: { initial?: boolean }) => {
+      if (!id) return Promise.resolve()
+      const initial = opts?.initial ?? false
+      if (initial) {
+        setLoading(true)
+        setError(null)
+      }
+      return Promise.all([api.getProject(id), api.listDeployments(id)])
+        .then(([p, d]) => {
+          setProject(p)
+          setDeployments(d)
+          const di = p.desired_instance_count
+          setDesiredInstances(typeof di === "number" && di >= 1 ? di : 1)
+          void loadGitHubSetup(id, Boolean(p.github_repository?.trim()))
+          void loadDomains(id)
+        })
+        .catch((e) => setError(e instanceof APIError ? e.message : String(e)))
+        .finally(() => {
+          if (initial) setLoading(false)
+        })
+    },
+    [id, loadGitHubSetup, loadDomains],
+  )
+
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      void loadProjectPage({ initial: true })
+    }, 0)
+    return () => clearTimeout(id)
+  }, [loadProjectPage])
+
   useEffect(() => {
     if (!id) return
-    setError(null)
-    Promise.all([api.getProject(id), api.listDeployments(id)])
-      .then(([p, d]) => {
-        setProject(p)
-        setDeployments(d)
-        const di = p.desired_instance_count
-        setDesiredInstances(typeof di === "number" && di >= 1 ? di : 1)
-        void loadGitHubSetup(id, Boolean(p.github_repository?.trim()))
-        void loadDomains(id)
-      })
-      .catch((e) => setError(e instanceof APIError ? e.message : String(e)))
-      .finally(() => setLoading(false))
-  }, [id, loadGitHubSetup, loadDomains])
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+    const scheduleReload = () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null
+        void loadProjectPage()
+      }, 400)
+    }
+    const unsub = subscribeDashboardEvents({
+      topics: [dashboardEventTopics.project(id), dashboardEventTopics.projectDeployments(id)],
+      onInvalidate: scheduleReload,
+    })
+    return () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      unsub()
+    }
+  }, [id, loadProjectPage])
 
   const handleDeploy = async () => {
     if (!id) return

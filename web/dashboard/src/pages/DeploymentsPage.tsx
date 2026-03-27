@@ -1,6 +1,12 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Link } from "react-router-dom"
-import { api, type DeploymentListItem, APIError } from "@/lib/api"
+import {
+  api,
+  type DeploymentListItem,
+  APIError,
+  dashboardEventTopics,
+  subscribeDashboardEvents,
+} from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -12,13 +18,43 @@ export function DeploymentsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    api
+  const loadDeployments = useCallback((opts?: { initial?: boolean }) => {
+    const initial = opts?.initial ?? false
+    if (initial) setLoading(true)
+    return api
       .listAllDeployments(100)
       .then(setItems)
       .catch((e) => setError(e instanceof APIError ? e.message : String(e)))
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (initial) setLoading(false)
+      })
   }, [])
+
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      void loadDeployments({ initial: true })
+    }, 0)
+    return () => clearTimeout(id)
+  }, [loadDeployments])
+
+  useEffect(() => {
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+    const scheduleReload = () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null
+        void loadDeployments()
+      }, 400)
+    }
+    const unsub = subscribeDashboardEvents({
+      topics: [dashboardEventTopics.deployments],
+      onInvalidate: scheduleReload,
+    })
+    return () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      unsub()
+    }
+  }, [loadDeployments])
 
   if (loading) {
     return (

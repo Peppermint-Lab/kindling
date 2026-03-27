@@ -477,6 +477,9 @@ SELECT * FROM domains WHERE project_id = $1 ORDER BY domain_name ASC;
 -- name: DomainFirstByIDAndProject :one
 SELECT * FROM domains WHERE id = $1 AND project_id = $2;
 
+-- name: DomainProjectIDByDomainID :one
+SELECT project_id FROM domains WHERE id = $1;
+
 -- name: DomainDelete :exec
 DELETE FROM domains WHERE id = $1 AND project_id = $2;
 

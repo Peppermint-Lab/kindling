@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
-import { api, type Project, APIError } from "@/lib/api"
+import { api, type Project, APIError, dashboardEventTopics, subscribeDashboardEvents } from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -32,13 +32,43 @@ export function ProjectsPage() {
     desired_instance_count: 1,
   })
 
-  useEffect(() => {
-    api
+  const loadProjects = useCallback((opts?: { initial?: boolean }) => {
+    const initial = opts?.initial ?? false
+    if (initial) setLoading(true)
+    return api
       .listProjects()
       .then(setProjects)
       .catch((e) => setError(e instanceof APIError ? e.message : String(e)))
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (initial) setLoading(false)
+      })
   }, [])
+
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      void loadProjects({ initial: true })
+    }, 0)
+    return () => clearTimeout(id)
+  }, [loadProjects])
+
+  useEffect(() => {
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+    const scheduleReload = () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null
+        void loadProjects()
+      }, 400)
+    }
+    const unsub = subscribeDashboardEvents({
+      topics: [dashboardEventTopics.projects],
+      onInvalidate: scheduleReload,
+    })
+    return () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      unsub()
+    }
+  }, [loadProjects])
 
   const handleCreate = async () => {
     if (!form.name.trim()) return

@@ -1560,6 +1560,17 @@ func (q *Queries) DomainFirstByIDAndProject(ctx context.Context, arg DomainFirst
 	return i, err
 }
 
+const domainProjectIDByDomainID = `-- name: DomainProjectIDByDomainID :one
+SELECT project_id FROM domains WHERE id = $1
+`
+
+func (q *Queries) DomainProjectIDByDomainID(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, domainProjectIDByDomainID, id)
+	var projectID pgtype.UUID
+	err := row.Scan(&projectID)
+	return projectID, err
+}
+
 const domainListByProjectID = `-- name: DomainListByProjectID :many
 SELECT id, project_id, deployment_id, domain_name, verification_token, verified_at, redirect_to, redirect_status_code, created_at, updated_at FROM domains WHERE project_id = $1 ORDER BY domain_name ASC
 `

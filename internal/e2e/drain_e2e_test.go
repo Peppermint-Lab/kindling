@@ -128,7 +128,7 @@ VALUES ($1, 'e2e-drain-a', '127.0.0.1', '10.100.0.0/20'::cidr, 'active', NOW()),
 	}
 	client := &http.Client{Jar: jar, Timeout: 30 * time.Second}
 
-	api := rpc.NewAPI(q, nil)
+	api := rpc.NewAPI(q, nil, nil)
 	mux := http.NewServeMux()
 	api.Register(mux)
 	handler := auth.Middleware(q, mux)

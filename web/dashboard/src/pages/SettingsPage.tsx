@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react"
-import { api, type Server, type APIMeta, APIError } from "@/lib/api"
+import { useCallback, useEffect, useState } from "react"
+import { api, type Server, type APIMeta, APIError, dashboardEventTopics, subscribeDashboardEvents } from "@/lib/api"
 import { useAuth } from "@/contexts/AuthContext"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -43,20 +43,42 @@ export function SettingsPage() {
   const canManageServers =
     session?.authenticated && (session.role === "owner" || session.role === "admin")
 
-  const load = () =>
-    Promise.all([api.listServers(), api.getMeta(), api.listOrgProviderConnections()]).then(([s, m, p]) => {
-      setServers(s)
-      setMeta(m)
-      setPublicUrlInput(m.public_base_url || "")
-      setDashboardHostInput(m.dashboard_public_host || "")
-      setProviders(p as ProviderRow[])
-    })
+  const load = useCallback(
+    () =>
+      Promise.all([api.listServers(), api.getMeta(), api.listOrgProviderConnections()]).then(([s, m, p]) => {
+        setServers(s)
+        setMeta(m)
+        setPublicUrlInput(m.public_base_url || "")
+        setDashboardHostInput(m.dashboard_public_host || "")
+        setProviders(p as ProviderRow[])
+      }),
+    [],
+  )
 
   useEffect(() => {
-    load()
+    void load()
       .catch((e) => setError(e instanceof APIError ? e.message : String(e)))
       .finally(() => setLoading(false))
-  }, [])
+  }, [load])
+
+  useEffect(() => {
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+    const scheduleReload = () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null
+        void load().catch((e) => setError(e instanceof APIError ? e.message : String(e)))
+      }, 400)
+    }
+    const unsub = subscribeDashboardEvents({
+      topics: [dashboardEventTopics.servers],
+      onInvalidate: scheduleReload,
+    })
+    return () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      unsub()
+    }
+  }, [load])
 
   const canManageProviders =
     session?.authenticated && (session.role === "owner" || session.role === "admin")
