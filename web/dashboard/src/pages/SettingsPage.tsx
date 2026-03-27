@@ -143,21 +143,21 @@ export function SettingsPage() {
 
         {error && <PageErrorBanner message={error} />}
 
-        <Tabs defaultValue="public-url" className="min-w-0">
-          <TabsList variant="line" className="w-full min-w-0 max-w-full justify-start overflow-x-auto">
-            <TabsTrigger value="public-url" className="shrink-0">
+        <Tabs defaultValue="public-url" orientation="vertical" className="min-w-0 md:items-start gap-4 md:gap-6">
+          <TabsList variant="line" className="w-full overflow-x-auto md:w-48 shrink-0 md:sticky md:top-6">
+            <TabsTrigger value="public-url">
               <GlobeIcon className="size-4" /> Public URL
             </TabsTrigger>
-            <TabsTrigger value="cluster" className="shrink-0">
+            <TabsTrigger value="cluster">
               <ServerIcon className="size-4" /> Cluster
             </TabsTrigger>
-            <TabsTrigger value="providers" className="shrink-0">
+            <TabsTrigger value="providers">
               <PlugIcon className="size-4" /> Providers
             </TabsTrigger>
           </TabsList>
 
           {/* ── Public URL ──────────────────────────────────── */}
-          <TabsContent value="public-url" className="mt-5">
+          <TabsContent value="public-url" className="min-w-0">
             <Surface>
               <SurfaceBody className="pt-5 sm:pt-6 space-y-5 text-sm">
                 <p className="text-muted-foreground leading-relaxed">
@@ -250,7 +250,7 @@ export function SettingsPage() {
           </TabsContent>
 
           {/* ── Providers ───────────────────────────────────── */}
-          <TabsContent value="providers" className="mt-5">
+          <TabsContent value="providers" className="min-w-0">
             <Surface>
               <SurfaceHeader>
                 <SurfaceTitle>Provider Connections</SurfaceTitle>
@@ -378,7 +378,7 @@ export function SettingsPage() {
           </TabsContent>
 
           {/* ── Cluster ─────────────────────────────────────── */}
-          <TabsContent value="cluster" className="mt-5">
+          <TabsContent value="cluster" className="min-w-0">
             <Surface>
               <SurfaceHeader>
                 <SurfaceTitle>Servers</SurfaceTitle>

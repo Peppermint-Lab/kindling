@@ -513,8 +513,8 @@ export function ProjectDetailPage() {
           </PageHeader>
         </div>
 
-        <Tabs value={mainTab} onValueChange={setMainTab} orientation="vertical" className="min-w-0 items-start gap-6">
-          <TabsList variant="line" className="w-48 shrink-0 sticky top-6">
+        <Tabs value={mainTab} onValueChange={setMainTab} orientation="vertical" className="min-w-0 md:items-start gap-4 md:gap-6">
+          <TabsList variant="line" className="w-full overflow-x-auto md:w-48 shrink-0 md:sticky md:top-6">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="github">
               <FolderGitIcon className="size-4" />
