@@ -116,8 +116,8 @@ SELECT * FROM images WHERE id = $1;
 -- Projects --
 
 -- name: ProjectCreate :one
-INSERT INTO projects (id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO projects (id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, build_only_on_root_changes)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING *;
 
 -- name: ProjectFirstByID :one
@@ -150,6 +150,12 @@ RETURNING *;
 -- name: ProjectUpdateScaleToZeroEnabled :one
 UPDATE projects
 SET scale_to_zero_enabled = $2, updated_at = NOW()
+WHERE id = $1 AND org_id = $3
+RETURNING *;
+
+-- name: ProjectUpdateBuildOnlyOnRootChanges :one
+UPDATE projects
+SET build_only_on_root_changes = $2, updated_at = NOW()
 WHERE id = $1 AND org_id = $3
 RETURNING *;
 

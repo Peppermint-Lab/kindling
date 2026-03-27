@@ -176,20 +176,21 @@ type PreviewEnvironment struct {
 }
 
 type Project struct {
-	ID                   pgtype.UUID        `json:"id"`
-	OrgID                pgtype.UUID        `json:"org_id"`
-	Name                 string             `json:"name"`
-	GithubRepository     string             `json:"github_repository"`
-	GithubInstallationID int64              `json:"github_installation_id"`
-	GithubWebhookSecret  string             `json:"github_webhook_secret"`
-	RootDirectory        string             `json:"root_directory"`
-	DockerfilePath       string             `json:"dockerfile_path"`
-	DesiredInstanceCount int32              `json:"desired_instance_count"`
-	LastRequestAt        pgtype.Timestamptz `json:"last_request_at"`
-	ScaledToZero         bool               `json:"scaled_to_zero"`
-	ScaleToZeroEnabled   bool               `json:"scale_to_zero_enabled"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	ID                     pgtype.UUID        `json:"id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	Name                   string             `json:"name"`
+	GithubRepository       string             `json:"github_repository"`
+	GithubInstallationID   int64              `json:"github_installation_id"`
+	GithubWebhookSecret    string             `json:"github_webhook_secret"`
+	RootDirectory          string             `json:"root_directory"`
+	DockerfilePath         string             `json:"dockerfile_path"`
+	DesiredInstanceCount   int32              `json:"desired_instance_count"`
+	LastRequestAt          pgtype.Timestamptz `json:"last_request_at"`
+	ScaledToZero           bool               `json:"scaled_to_zero"`
+	ScaleToZeroEnabled     bool               `json:"scale_to_zero_enabled"`
+	BuildOnlyOnRootChanges bool               `json:"build_only_on_root_changes"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
 
 type ProjectHttpUsageRollup struct {

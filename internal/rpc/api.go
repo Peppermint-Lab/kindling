@@ -106,11 +106,11 @@ func (a *API) putMeta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		PublicBaseURL                    *string `json:"public_base_url"`
-		DashboardPublicHost              *string `json:"dashboard_public_host"`
-		PreviewBaseDomain                *string `json:"preview_base_domain"`
+		PublicBaseURL                     *string `json:"public_base_url"`
+		DashboardPublicHost               *string `json:"dashboard_public_host"`
+		PreviewBaseDomain                 *string `json:"preview_base_domain"`
 		PreviewRetentionAfterCloseSeconds *int64  `json:"preview_retention_after_close_seconds"`
-		PreviewIdleScaleSeconds          *int64  `json:"preview_idle_scale_seconds"`
+		PreviewIdleScaleSeconds           *int64  `json:"preview_idle_scale_seconds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
@@ -233,12 +233,13 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name                 string `json:"name"`
-		GithubRepository     string `json:"github_repository"`
-		DockerfilePath       string `json:"dockerfile_path"`
-		RootDirectory        string `json:"root_directory"`
-		DesiredInstanceCount *int32 `json:"desired_instance_count"`
-		ScaleToZeroEnabled   *bool  `json:"scale_to_zero_enabled"`
+		Name                   string `json:"name"`
+		GithubRepository       string `json:"github_repository"`
+		DockerfilePath         string `json:"dockerfile_path"`
+		RootDirectory          string `json:"root_directory"`
+		DesiredInstanceCount   *int32 `json:"desired_instance_count"`
+		ScaleToZeroEnabled     *bool  `json:"scale_to_zero_enabled"`
+		BuildOnlyOnRootChanges *bool  `json:"build_only_on_root_changes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
@@ -279,15 +280,16 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	params := queries.ProjectCreateParams{
-		ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
-		OrgID:                p.OrganizationID,
-		Name:                 req.Name,
-		GithubRepository:     req.GithubRepository,
-		GithubInstallationID: 0,
-		GithubWebhookSecret:  webhookSecret,
-		RootDirectory:        req.RootDirectory,
-		DockerfilePath:       req.DockerfilePath,
-		DesiredInstanceCount: desired,
+		ID:                     pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		OrgID:                  p.OrganizationID,
+		Name:                   req.Name,
+		GithubRepository:       req.GithubRepository,
+		GithubInstallationID:   0,
+		GithubWebhookSecret:    webhookSecret,
+		RootDirectory:          req.RootDirectory,
+		DockerfilePath:         req.DockerfilePath,
+		DesiredInstanceCount:   desired,
+		BuildOnlyOnRootChanges: req.BuildOnlyOnRootChanges != nil && *req.BuildOnlyOnRootChanges,
 	}
 	project, err := a.q.ProjectCreate(r.Context(), params)
 	if err != nil {
@@ -319,15 +321,16 @@ func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		DesiredInstanceCount *int32 `json:"desired_instance_count"`
-		ScaleToZeroEnabled   *bool  `json:"scale_to_zero_enabled"`
+		DesiredInstanceCount   *int32 `json:"desired_instance_count"`
+		ScaleToZeroEnabled     *bool  `json:"scale_to_zero_enabled"`
+		BuildOnlyOnRootChanges *bool  `json:"build_only_on_root_changes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
 		return
 	}
-	if req.DesiredInstanceCount == nil && req.ScaleToZeroEnabled == nil {
-		writeAPIError(w, http.StatusBadRequest, "validation_error", "provide desired_instance_count and/or scale_to_zero_enabled")
+	if req.DesiredInstanceCount == nil && req.ScaleToZeroEnabled == nil && req.BuildOnlyOnRootChanges == nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", "provide desired_instance_count and/or scale_to_zero_enabled and/or build_only_on_root_changes")
 		return
 	}
 	if _, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
@@ -377,6 +380,17 @@ func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
 		}
 		if !*req.ScaleToZeroEnabled {
 			_ = a.q.ProjectClearScaledToZero(r.Context(), id)
+		}
+	}
+	if req.BuildOnlyOnRootChanges != nil {
+		project, err = a.q.ProjectUpdateBuildOnlyOnRootChanges(r.Context(), queries.ProjectUpdateBuildOnlyOnRootChangesParams{
+			ID:                     id,
+			BuildOnlyOnRootChanges: *req.BuildOnlyOnRootChanges,
+			OrgID:                  p.OrganizationID,
+		})
+		if err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
+			return
 		}
 	}
 	project, err = a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{

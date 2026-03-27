@@ -134,6 +134,7 @@ export function ProjectDetailPage() {
 
   const [desiredInstances, setDesiredInstances] = useState(1)
   const [scalingSaving, setScalingSaving] = useState(false)
+  const [buildRuleSaving, setBuildRuleSaving] = useState(false)
 
   const [domains, setDomains] = useState<ProjectDomain[]>([])
   const [domainsLoading, setDomainsLoading] = useState(false)
@@ -382,6 +383,20 @@ export function ProjectDetailPage() {
     }
   }
 
+  const handleBuildOnlyOnRootChangesChange = async (checked: boolean) => {
+    if (!id) return
+    setBuildRuleSaving(true)
+    setError(null)
+    try {
+      const p = await api.patchProject(id, { build_only_on_root_changes: checked })
+      setProject(p)
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not update build rules")
+    } finally {
+      setBuildRuleSaving(false)
+    }
+  }
+
   const handleAddDomain = async () => {
     if (!id) return
     const name = newDomainName.trim()
@@ -449,7 +464,7 @@ export function ProjectDetailPage() {
 
   if (loading) {
     return (
-      <PageContainer>
+      <PageContainer size="wide">
         <div className="space-y-4">
           <Skeleton className="h-5 w-24" />
           <Skeleton className="h-8 w-48" />
@@ -462,7 +477,7 @@ export function ProjectDetailPage() {
 
   if (error && !project) {
     return (
-      <PageContainer>
+      <PageContainer size="wide">
         <PageErrorBanner message={error} className="max-w-xl" />
       </PageContainer>
     )
@@ -473,7 +488,7 @@ export function ProjectDetailPage() {
   const latestRunningDeployment = selectLatestRunningDeployment(deployments)
 
   return (
-    <PageContainer>
+    <PageContainer size="wide">
       <PageSection>
         {error && <PageErrorBanner message={error} />}
 
@@ -498,33 +513,33 @@ export function ProjectDetailPage() {
           </PageHeader>
         </div>
 
-        <Tabs value={mainTab} onValueChange={setMainTab} className="min-w-0">
-          <TabsList variant="line" className="w-full min-w-0 max-w-full justify-start overflow-x-auto">
-            <TabsTrigger value="overview" className="shrink-0">Overview</TabsTrigger>
-            <TabsTrigger value="github" className="shrink-0">
+        <Tabs value={mainTab} onValueChange={setMainTab} orientation="vertical" className="min-w-0 items-start gap-6">
+          <TabsList variant="line" className="w-48 shrink-0 sticky top-6">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="github">
               <FolderGitIcon className="size-4" />
               GitHub
             </TabsTrigger>
-            <TabsTrigger value="deployments" className="shrink-0">
+            <TabsTrigger value="deployments">
               <LayoutListIcon className="size-4" />
               Deployments
             </TabsTrigger>
-            <TabsTrigger value="previews" className="shrink-0">
+            <TabsTrigger value="previews">
               <GitPullRequestIcon className="size-4" />
               Previews
             </TabsTrigger>
-            <TabsTrigger value="usage" className="shrink-0">
+            <TabsTrigger value="usage">
               <BarChart3Icon className="size-4" />
               Usage
             </TabsTrigger>
-            <TabsTrigger value="domains" className="shrink-0">
+            <TabsTrigger value="domains">
               <GlobeIcon className="size-4" />
               Domains
             </TabsTrigger>
           </TabsList>
 
           {/* ── Overview ────────────────────────────────────── */}
-          <TabsContent value="overview" className="mt-5 space-y-4">
+          <TabsContent value="overview" className="space-y-4 min-w-0">
             <Surface>
               <SurfaceHeader>
                 <SurfaceTitle>Project</SurfaceTitle>
@@ -590,6 +605,33 @@ export function ProjectDetailPage() {
                   </Button>
                 </div>
               </SurfaceBody>
+              <SurfaceSeparator />
+              <SurfaceBody className="space-y-3">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Smart builds</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    When enabled, GitHub push deploys are skipped unless the push changes files under{" "}
+                    <span className="font-mono">{project.root_directory}</span>.
+                  </p>
+                </div>
+                <label className="flex items-start gap-3 rounded-lg border p-3">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 size-4"
+                    checked={Boolean(project.build_only_on_root_changes)}
+                    disabled={buildRuleSaving}
+                    onChange={(e) => void handleBuildOnlyOnRootChangesChange(e.target.checked)}
+                  />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">Only build when root directory changes</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Useful for monorepos like this landing site: commits outside the hosted root directory will not
+                      trigger a production deploy.
+                    </p>
+                    {buildRuleSaving && <p className="text-xs text-muted-foreground mt-2">Saving…</p>}
+                  </div>
+                </label>
+              </SurfaceBody>
             </Surface>
 
             {latestRunningDeployment && (
@@ -617,7 +659,7 @@ export function ProjectDetailPage() {
           </TabsContent>
 
           {/* ── Domains ─────────────────────────────────────── */}
-          <TabsContent value="domains" className="mt-5 space-y-4">
+          <TabsContent value="domains" className="space-y-4 min-w-0">
             <Surface>
               <SurfaceHeader>
                 <SurfaceTitle>Custom domain</SurfaceTitle>
@@ -755,7 +797,7 @@ export function ProjectDetailPage() {
           </TabsContent>
 
           {/* ── GitHub ──────────────────────────────────────── */}
-          <TabsContent value="github" className="mt-5">
+          <TabsContent value="github" className="min-w-0">
             {!project.github_repository ? (
               <Surface>
                 <EmptyState
@@ -860,7 +902,7 @@ export function ProjectDetailPage() {
           </TabsContent>
 
           {/* ── Deployments ─────────────────────────────────── */}
-          <TabsContent value="deployments" className="mt-5">
+          <TabsContent value="deployments" className="min-w-0">
             {deployments.length === 0 ? (
               <Surface>
                 <EmptyState
@@ -896,7 +938,7 @@ export function ProjectDetailPage() {
           </TabsContent>
 
           {/* ── PR previews ─────────────────────────────────── */}
-          <TabsContent value="previews" className="mt-5 space-y-4">
+          <TabsContent value="previews" className="space-y-4 min-w-0">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-muted-foreground max-w-xl">
                 <span className="font-medium text-foreground">PR preview</span> URLs are created from GitHub{" "}
@@ -1048,7 +1090,7 @@ export function ProjectDetailPage() {
           </TabsContent>
 
           {/* ── Usage ───────────────────────────────────────── */}
-          <TabsContent value="usage" className="mt-5 space-y-4">
+          <TabsContent value="usage" className="space-y-4 min-w-0">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-muted-foreground max-w-xl">
                 CPU, memory, and disk from workload instances; HTTP requests and edge traffic require TLS edge on :443.

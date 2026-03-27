@@ -52,6 +52,7 @@ export type Project = {
   dockerfile_path: string
   root_directory: string
   desired_instance_count?: number
+  build_only_on_root_changes?: boolean
   created_at: string
   updated_at: string
 }
@@ -371,11 +372,19 @@ export const api = {
     dockerfile_path?: string
     root_directory?: string
     desired_instance_count?: number
+    build_only_on_root_changes?: boolean
   }) => request<Project>("/api/projects", { method: "POST", body: JSON.stringify(data) }),
 
   getProject: (id: string) => request<Project>(`/api/projects/${id}`),
 
-  patchProject: (id: string, data: { desired_instance_count: number }) =>
+  patchProject: (
+    id: string,
+    data: {
+      desired_instance_count?: number
+      scale_to_zero_enabled?: boolean
+      build_only_on_root_changes?: boolean
+    },
+  ) =>
     request<Project>(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteProject: (id: string) => request<void>(`/api/projects/${id}`, { method: "DELETE" }),
 

@@ -36,18 +36,29 @@ func NewHandler(q *queries.Queries) *Handler {
 
 // pushEvent is the relevant subset of GitHub's push event payload.
 type pushEvent struct {
-	Ref        string `json:"ref"`
-	After      string `json:"after"`
+	Ref        string       `json:"ref"`
+	After      string       `json:"after"`
+	Commits    []pushCommit `json:"commits"`
 	Repository struct {
 		FullName string `json:"full_name"`
 	} `json:"repository"`
 }
 
+type pushCommit struct {
+	Added    []string `json:"added"`
+	Modified []string `json:"modified"`
+	Removed  []string `json:"removed"`
+}
+
+// GitHub push webhooks include at most 2048 commits. A full slice is ambiguous,
+// so we avoid skipping builds based on an incomplete changed-file set.
+const maxPushCommitsInWebhook = 2048
+
 type pullRequestEvent struct {
-	Action       string `json:"action"`
-	Number       int    `json:"number"`
-	PullRequest  prBody `json:"pull_request"`
-	Repository   repo   `json:"repository"`
+	Action      string `json:"action"`
+	Number      int    `json:"number"`
+	PullRequest prBody `json:"pull_request"`
+	Repository  repo   `json:"repository"`
 }
 
 type prBody struct {
@@ -83,6 +94,59 @@ func previewRetentionSeconds(ctx context.Context, q *queries.Queries) int64 {
 		return 3600
 	}
 	return n
+}
+
+func pushChangedFiles(push pushEvent) ([]string, bool) {
+	if len(push.Commits) == 0 {
+		return nil, false
+	}
+	if len(push.Commits) >= maxPushCommitsInWebhook {
+		return nil, false
+	}
+	files := make([]string, 0, len(push.Commits)*3)
+	for _, commit := range push.Commits {
+		files = append(files, commit.Added...)
+		files = append(files, commit.Modified...)
+		files = append(files, commit.Removed...)
+	}
+	if len(files) == 0 {
+		return nil, false
+	}
+	return files, true
+}
+
+func rootDirectoryMatchesChangedFiles(rootDir string, files []string) bool {
+	rootDir = strings.TrimSpace(rootDir)
+	if rootDir == "" || rootDir == "/" {
+		return len(files) > 0
+	}
+
+	prefix := strings.TrimPrefix(rootDir, "/")
+	prefix = strings.TrimSuffix(prefix, "/")
+	if prefix == "" {
+		return len(files) > 0
+	}
+	prefix += "/"
+
+	for _, file := range files {
+		file = strings.TrimSpace(file)
+		file = strings.TrimPrefix(file, "/")
+		if file == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(file, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldCreateDeploymentForPush(project queries.Project, push pushEvent) bool {
+	if !project.BuildOnlyOnRootChanges {
+		return true
+	}
+	changedFiles, ok := pushChangedFiles(push)
+	if !ok {
+		return true
+	}
+	return rootDirectoryMatchesChangedFiles(project.RootDirectory, changedFiles)
 }
 
 // ServeHTTP handles POST /webhooks/github.
@@ -147,6 +211,24 @@ func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request, body []byte
 			http.Error(w, "invalid signature", http.StatusUnauthorized)
 			return
 		}
+	}
+
+	if !shouldCreateDeploymentForPush(project, push) {
+		slog.Info("deployment skipped from webhook: no root directory changes",
+			"project", project.Name,
+			"repo", repo,
+			"branch", branch,
+			"commit", commit,
+			"root_directory", project.RootDirectory,
+		)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{
+			"project":        project.Name,
+			"commit":         commit,
+			"skipped":        true,
+			"root_directory": project.RootDirectory,
+		})
+		return
 	}
 
 	dep, err := h.q.DeploymentCreate(r.Context(), queries.DeploymentCreateParams{
@@ -271,10 +353,10 @@ func (h *Handler) handlePullRequestClosed(w http.ResponseWriter, ctx context.Con
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]any{
-		"status":       "closing",
-		"expires_at":   expires.UTC().Format(time.RFC3339Nano),
-		"deployments":  len(deps),
-		"preview_env":  pe.ID,
+		"status":      "closing",
+		"expires_at":  expires.UTC().Format(time.RFC3339Nano),
+		"deployments": len(deps),
+		"preview_env": pe.ID,
 	})
 }
 
@@ -303,11 +385,11 @@ func (h *Handler) handlePullRequestSync(w http.ResponseWriter, ctx context.Conte
 		if errors.Is(err, pgx.ErrNoRows) {
 			pe, err = h.q.PreviewEnvironmentCreate(ctx, queries.PreviewEnvironmentCreateParams{
 				ID:               pgtype.UUID{Bytes: uuid.New(), Valid: true},
-				ProjectID:      project.ID,
-				Provider:       "github",
-				PrNumber:       prNum,
-				HeadBranch:     headBranch,
-				HeadSha:        sha,
+				ProjectID:        project.ID,
+				Provider:         "github",
+				PrNumber:         prNum,
+				HeadBranch:       headBranch,
+				HeadSha:          sha,
 				StableDomainName: stableHost,
 			})
 			if err != nil {

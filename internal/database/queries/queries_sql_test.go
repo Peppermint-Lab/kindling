@@ -43,3 +43,14 @@ func TestRetryQueriesResetInstanceBackToActive(t *testing.T) {
 		t.Fatalf("dead-server reset should reset role to active, got:\n%s", deploymentInstanceResetForDeadServer)
 	}
 }
+
+func TestProjectQueriesIncludeBuildOnlyOnRootChanges(t *testing.T) {
+	t.Parallel()
+
+	if !strings.Contains(projectCreate, "build_only_on_root_changes") {
+		t.Fatalf("ProjectCreate should persist build_only_on_root_changes, got:\n%s", projectCreate)
+	}
+	if !strings.Contains(projectUpdateBuildOnlyOnRootChanges, "build_only_on_root_changes = $2") {
+		t.Fatalf("ProjectUpdateBuildOnlyOnRootChanges should update build_only_on_root_changes, got:\n%s", projectUpdateBuildOnlyOnRootChanges)
+	}
+}

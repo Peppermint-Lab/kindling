@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS projects (
     last_request_at         TIMESTAMPTZ,
     scaled_to_zero          BOOLEAN NOT NULL DEFAULT false,
     scale_to_zero_enabled   BOOLEAN NOT NULL DEFAULT false,
+    build_only_on_root_changes BOOLEAN NOT NULL DEFAULT false,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -162,6 +163,15 @@ DO $$ BEGIN
         WHERE table_schema = 'public' AND table_name = 'projects' AND column_name = 'scale_to_zero_enabled'
     ) THEN
         ALTER TABLE projects ADD COLUMN scale_to_zero_enabled BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'projects' AND column_name = 'build_only_on_root_changes'
+    ) THEN
+        ALTER TABLE projects ADD COLUMN build_only_on_root_changes BOOLEAN NOT NULL DEFAULT false;
     END IF;
 END $$;
 
