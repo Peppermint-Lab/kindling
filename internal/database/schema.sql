@@ -197,7 +197,10 @@ CREATE TABLE IF NOT EXISTS vms (
     id              UUID PRIMARY KEY,
     server_id       UUID NOT NULL REFERENCES servers(id),
     image_id        UUID NOT NULL REFERENCES images(id),
-    status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'starting', 'running', 'stopped', 'failed')),
+    status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'starting', 'running', 'stopped', 'failed', 'suspending', 'suspended', 'warming', 'template')),
+    runtime         TEXT NOT NULL DEFAULT '',
+    snapshot_ref    TEXT,
+    clone_source_vm_id UUID REFERENCES vms(id),
     vcpus           INT NOT NULL DEFAULT 1,
     memory          INT NOT NULL DEFAULT 512,  -- MB
     ip_address      INET NOT NULL,
@@ -247,6 +250,9 @@ CREATE TABLE IF NOT EXISTS deployment_instances (
     deployment_id   UUID NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
     server_id       UUID REFERENCES servers(id),
     vm_id           UUID REFERENCES vms(id),
+    role            TEXT NOT NULL DEFAULT 'active'
+        CHECK (role IN ('active', 'warm_pool', 'template')),
+    clone_source_instance_id UUID REFERENCES deployment_instances(id),
     status          TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'starting', 'running', 'failed', 'stopped')),
     deleted_at      TIMESTAMPTZ,
@@ -258,10 +264,12 @@ CREATE INDEX IF NOT EXISTS idx_deployment_instances_deployment_id
     ON deployment_instances(deployment_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_deployment_instances_server_id
     ON deployment_instances(server_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_deployment_instances_role
+    ON deployment_instances(deployment_id, role) WHERE deleted_at IS NULL;
 
 -- Backfill from legacy deployments.vm_id (one VM per deployment) into deployment_instances
-INSERT INTO deployment_instances (id, deployment_id, server_id, vm_id, status, created_at, updated_at)
-SELECT gen_random_uuid(), d.id, v.server_id, d.vm_id, 'running', NOW(), NOW()
+INSERT INTO deployment_instances (id, deployment_id, server_id, vm_id, role, status, created_at, updated_at)
+SELECT gen_random_uuid(), d.id, v.server_id, d.vm_id, 'active', 'running', NOW(), NOW()
 FROM deployments d
 JOIN vms v ON v.id = d.vm_id AND v.deleted_at IS NULL
 WHERE d.vm_id IS NOT NULL AND d.deleted_at IS NULL
@@ -269,6 +277,79 @@ WHERE d.vm_id IS NOT NULL AND d.deleted_at IS NULL
       SELECT 1 FROM deployment_instances di
       WHERE di.deployment_id = d.id AND di.deleted_at IS NULL
   );
+
+DO $$ BEGIN
+    ALTER TABLE vms DROP CONSTRAINT IF EXISTS vms_status_check;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'vms_status_check'
+    ) THEN
+        ALTER TABLE vms ADD CONSTRAINT vms_status_check
+            CHECK (status IN ('pending', 'starting', 'running', 'stopped', 'failed', 'suspending', 'suspended', 'warming', 'template'));
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'vms' AND column_name = 'runtime'
+    ) THEN
+        ALTER TABLE vms ADD COLUMN runtime TEXT NOT NULL DEFAULT '';
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'vms' AND column_name = 'snapshot_ref'
+    ) THEN
+        ALTER TABLE vms ADD COLUMN snapshot_ref TEXT;
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'vms' AND column_name = 'clone_source_vm_id'
+    ) THEN
+        ALTER TABLE vms ADD COLUMN clone_source_vm_id UUID REFERENCES vms(id);
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'deployment_instances' AND column_name = 'role'
+    ) THEN
+        ALTER TABLE deployment_instances ADD COLUMN role TEXT NOT NULL DEFAULT 'active';
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE deployment_instances DROP CONSTRAINT IF EXISTS deployment_instances_role_check;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'deployment_instances_role_check'
+    ) THEN
+        ALTER TABLE deployment_instances ADD CONSTRAINT deployment_instances_role_check
+            CHECK (role IN ('active', 'warm_pool', 'template'));
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'deployment_instances' AND column_name = 'clone_source_instance_id'
+    ) THEN
+        ALTER TABLE deployment_instances ADD COLUMN clone_source_instance_id UUID REFERENCES deployment_instances(id);
+    END IF;
+END $$;
 
 -- Domains: hostname routing
 CREATE TABLE IF NOT EXISTS domains (

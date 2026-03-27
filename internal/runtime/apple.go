@@ -34,6 +34,8 @@ const (
 type AppleRuntime struct {
 	mu        sync.Mutex
 	instances map[uuid.UUID]*appleInstance
+	suspended map[uuid.UUID]*appleSuspended
+	templates map[string]*appleTemplate
 
 	kernelPath    string
 	initramfsPath string
@@ -50,6 +52,21 @@ type appleInstance struct {
 	cancel  context.CancelFunc
 	ready   chan struct{}
 	once    sync.Once
+	inst    Instance
+	appDir  string
+	hostPort int
+	retain  bool
+	stopped chan struct{}
+}
+
+type appleSuspended struct {
+	inst     Instance
+	appDir   string
+	hostPort int
+}
+
+type appleTemplate struct {
+	appDir string
 }
 
 type guestConfig struct {
@@ -84,6 +101,8 @@ func NewAppleRuntime(cfg AppleRuntimeConfig) *AppleRuntime {
 	}
 	return &AppleRuntime{
 		instances:     make(map[uuid.UUID]*appleInstance),
+		suspended:     make(map[uuid.UUID]*appleSuspended),
+		templates:     make(map[string]*appleTemplate),
 		kernelPath:    cfg.KernelPath,
 		initramfsPath: cfg.InitramfsPath,
 		pullAuth:      cfg.PullAuth,
@@ -91,6 +110,9 @@ func NewAppleRuntime(cfg AppleRuntimeConfig) *AppleRuntime {
 }
 
 func (r *AppleRuntime) Name() string { return "apple-vz" }
+func (r *AppleRuntime) Supports(cap Capability) bool {
+	return cap == CapabilitySuspendResume || cap == CapabilityWarmClone
+}
 
 func (r *AppleRuntime) Start(ctx context.Context, inst Instance) (string, error) {
 	if _, err := os.Stat(r.kernelPath); err != nil {
@@ -110,7 +132,10 @@ func (r *AppleRuntime) startVM(ctx context.Context, inst Instance) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("export image: %w", err)
 	}
+	return r.startPreparedVM(ctx, inst, appDir, 0)
+}
 
+func (r *AppleRuntime) startPreparedVM(ctx context.Context, inst Instance, appDir string, requestedHostPort int) (string, error) {
 	// Boot Linux kernel with initramfs.
 	bootLoader, err := vz.NewLinuxBootLoader(
 		r.kernelPath,
@@ -196,9 +221,12 @@ func (r *AppleRuntime) startVM(ctx context.Context, inst Instance) (string, erro
 
 	runCtx, cancel := context.WithCancel(ctx)
 	ai := &appleInstance{
-		vm:     vm,
-		cancel: cancel,
-		ready:  make(chan struct{}),
+		vm:      vm,
+		cancel:  cancel,
+		ready:   make(chan struct{}),
+		inst:    inst,
+		appDir:  appDir,
+		stopped: make(chan struct{}),
 	}
 
 	// Set up vsock listener BEFORE starting the VM.
@@ -245,7 +273,11 @@ func (r *AppleRuntime) startVM(ctx context.Context, inst Instance) (string, erro
 		return "", fmt.Errorf("vsock device required for apple runtime")
 	}
 
-	hostTCP, err := net.Listen("tcp", "127.0.0.1:0")
+	hostListenAddr := "127.0.0.1:0"
+	if requestedHostPort > 0 {
+		hostListenAddr = net.JoinHostPort("127.0.0.1", strconv.Itoa(requestedHostPort))
+	}
+	hostTCP, err := net.Listen("tcp", hostListenAddr)
 	if err != nil {
 		cancel()
 		return "", fmt.Errorf("host tcp forward listen: %w", err)
@@ -253,6 +285,7 @@ func (r *AppleRuntime) startVM(ctx context.Context, inst Instance) (string, erro
 	hostPort := hostTCP.Addr().(*net.TCPAddr).Port
 	ai.ip = net.JoinHostPort("127.0.0.1", strconv.Itoa(hostPort))
 	ai.hostFwd = hostTCP
+	ai.hostPort = hostPort
 
 	go r.forwardHostTCP(runCtx, hostTCP, vsockDev, tcpBridgeVsockPort)
 
@@ -266,6 +299,7 @@ func (r *AppleRuntime) startVM(ctx context.Context, inst Instance) (string, erro
 		delete(r.instances, inst.ID)
 		r.mu.Unlock()
 		slog.Info("VM stopped", "id", inst.ID, "runtime", "apple-vz")
+		close(ai.stopped)
 	}()
 
 	slog.Info("VM started",
@@ -278,6 +312,91 @@ func (r *AppleRuntime) startVM(ctx context.Context, inst Instance) (string, erro
 	)
 
 	return ai.ip, nil
+}
+
+func (r *AppleRuntime) Suspend(ctx context.Context, id uuid.UUID) error {
+	r.mu.Lock()
+	ai, ok := r.instances[id]
+	if !ok {
+		r.mu.Unlock()
+		return nil
+	}
+	ai.retain = true
+	r.suspended[id] = &appleSuspended{
+		inst:     ai.inst,
+		appDir:   ai.appDir,
+		hostPort: ai.hostPort,
+	}
+	r.mu.Unlock()
+	if err := r.Stop(ctx, id); err != nil {
+		return err
+	}
+	select {
+	case <-ai.stopped:
+		return nil
+	case <-ctx.Done():
+		r.mu.Lock()
+		delete(r.suspended, id)
+		ai.retain = false
+		r.mu.Unlock()
+		return ctx.Err()
+	}
+}
+
+func (r *AppleRuntime) Resume(ctx context.Context, id uuid.UUID) (string, error) {
+	r.mu.Lock()
+	s, ok := r.suspended[id]
+	if ok {
+		delete(r.suspended, id)
+	}
+	r.mu.Unlock()
+	if !ok {
+		return "", ErrInstanceNotRunning
+	}
+	return r.startPreparedVM(ctx, s.inst, s.appDir, s.hostPort)
+}
+
+func (r *AppleRuntime) CreateTemplate(ctx context.Context, id uuid.UUID) (string, error) {
+	_ = ctx
+	r.mu.Lock()
+	var appDir string
+	if s, ok := r.suspended[id]; ok {
+		appDir = s.appDir
+	} else if ai, ok := r.instances[id]; ok {
+		appDir = ai.appDir
+	}
+	r.mu.Unlock()
+	if strings.TrimSpace(appDir) == "" {
+		return "", ErrInstanceNotRunning
+	}
+	templateRef := lifecyclePath("apple-template", id.String())
+	_ = os.RemoveAll(templateRef)
+	if err := copyDir(appDir, templateRef); err != nil {
+		return "", err
+	}
+	r.mu.Lock()
+	r.templates[templateRef] = &appleTemplate{appDir: templateRef}
+	r.mu.Unlock()
+	return templateRef, nil
+}
+
+func (r *AppleRuntime) StartClone(ctx context.Context, inst Instance, snapshotRef string, cloneSourceVMID uuid.UUID) (string, StartMetadata, error) {
+	r.mu.Lock()
+	tmpl, ok := r.templates[snapshotRef]
+	r.mu.Unlock()
+	if !ok {
+		return "", StartMetadata{}, ErrInstanceNotRunning
+	}
+	cloneDir := lifecyclePath("apple-clone", inst.ID.String())
+	_ = os.RemoveAll(cloneDir)
+	if err := copyDir(tmpl.appDir, cloneDir); err != nil {
+		return "", StartMetadata{}, err
+	}
+	ip, err := r.startPreparedVM(ctx, inst, cloneDir, 0)
+	if err != nil {
+		return "", StartMetadata{}, err
+	}
+	return ip, StartMetadata{SnapshotRef: snapshotRef, CloneSourceVMID: cloneSourceVMID}, nil
 }
 
 // forwardHostTCP accepts connections on a localhost listener and relays each to the guest app over vsock.
@@ -329,6 +448,16 @@ func (r *AppleRuntime) relayTCPOverVsock(client net.Conn, dev *vz.VirtioSocketDe
 func (r *AppleRuntime) Stop(ctx context.Context, id uuid.UUID) error {
 	r.mu.Lock()
 	ai, ok := r.instances[id]
+	if !ok {
+		if s, suspended := r.suspended[id]; suspended {
+			delete(r.suspended, id)
+			r.mu.Unlock()
+			if s.appDir != "" {
+				_ = os.RemoveAll(s.appDir)
+			}
+			return nil
+		}
+	}
 	r.mu.Unlock()
 
 	if !ok {

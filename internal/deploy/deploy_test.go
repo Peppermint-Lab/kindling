@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
@@ -64,5 +65,73 @@ func TestShouldKeepRunningVM(t *testing.T) {
 	vm.DeletedAt = pgtype.Timestamptz{Valid: true, Time: time.Now()}
 	if shouldKeepRunningVM(vm, "cloud-hypervisor", true) {
 		t.Fatal("expected deleted VM to be recycled")
+	}
+}
+
+func TestSelectLaunchModePrefersResumeThenCloneThenCold(t *testing.T) {
+	t.Parallel()
+
+	templateID := "tmpl-1"
+
+	tests := []struct {
+		name      string
+		inst      queries.DeploymentInstance
+		vm        queries.Vm
+		template  string
+		wantMode  launchMode
+		wantLaunch bool
+	}{
+		{
+			name: "resume suspended warm pool first",
+			inst: queries.DeploymentInstance{
+				Role:   deploymentInstanceRoleWarmPool,
+				Status: vmStatusSuspended,
+				VmID:   pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			},
+			vm: queries.Vm{
+				Status: vmStatusSuspended,
+			},
+			template: templateID,
+			wantMode: launchModeResume,
+			wantLaunch: true,
+		},
+		{
+			name: "clone from template when no suspended warm pool exists",
+			inst: queries.DeploymentInstance{
+				Role: deploymentInstanceRoleActive,
+			},
+			template: templateID,
+			wantMode: launchModeClone,
+			wantLaunch: true,
+		},
+		{
+			name: "cold start when neither resume nor clone is available",
+			inst: queries.DeploymentInstance{
+				Role: deploymentInstanceRoleActive,
+			},
+			wantMode: launchModeCold,
+			wantLaunch: true,
+		},
+		{
+			name: "no work for non active role",
+			inst: queries.DeploymentInstance{
+				Role: deploymentInstanceRoleTemplate,
+			},
+			template: templateID,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			gotMode, ok := selectLaunchMode(tt.inst, tt.vm, tt.template)
+			if ok != tt.wantLaunch {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantLaunch)
+			}
+			if gotMode != tt.wantMode {
+				t.Fatalf("mode = %q, want %q", gotMode, tt.wantMode)
+			}
+		})
 	}
 }

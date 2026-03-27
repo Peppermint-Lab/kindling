@@ -180,8 +180,8 @@ LIMIT 100;
 -- Deployment instances (horizontal scaling) --
 
 -- name: DeploymentInstanceCreate :one
-INSERT INTO deployment_instances (id, deployment_id, status)
-VALUES ($1, $2, 'pending')
+INSERT INTO deployment_instances (id, deployment_id, role, status)
+VALUES ($1, $2, 'active', 'pending')
 RETURNING *;
 
 -- name: DeploymentInstanceFirstByID :one
@@ -202,8 +202,18 @@ UPDATE deployment_instances SET status = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
+-- name: DeploymentInstanceUpdateRole :one
+UPDATE deployment_instances SET role = $2, updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING *;
+
 -- name: DeploymentInstanceAttachVM :one
 UPDATE deployment_instances SET vm_id = $2, status = $3, updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING *;
+
+-- name: DeploymentInstanceSetCloneSource :one
+UPDATE deployment_instances SET clone_source_instance_id = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
@@ -220,12 +230,12 @@ WHERE server_id = $1 AND deleted_at IS NULL AND vm_id IS NOT NULL;
 
 -- name: DeploymentInstanceResetForDeadServer :exec
 UPDATE deployment_instances
-SET server_id = NULL, vm_id = NULL, status = 'pending', updated_at = NOW()
+SET server_id = NULL, vm_id = NULL, role = 'active', clone_source_instance_id = NULL, status = 'pending', updated_at = NOW()
 WHERE server_id = $1 AND deleted_at IS NULL;
 
 -- name: DeploymentInstancePrepareRetry :one
 UPDATE deployment_instances
-SET server_id = NULL, vm_id = NULL, status = 'pending', updated_at = NOW()
+SET server_id = NULL, vm_id = NULL, role = 'active', clone_source_instance_id = NULL, status = 'pending', updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
@@ -254,8 +264,8 @@ DELETE FROM environment_variables WHERE id = $1;
 -- VMs --
 
 -- name: VMCreate :one
-INSERT INTO vms (id, server_id, image_id, status, vcpus, memory, ip_address, port, env_variables)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO vms (id, server_id, image_id, status, runtime, snapshot_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING *;
 
 -- name: VMFirstByID :one
@@ -263,6 +273,15 @@ SELECT * FROM vms WHERE id = $1;
 
 -- name: VMUpdateStatus :one
 UPDATE vms SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING *;
+
+-- name: VMUpdateLifecycleMetadata :one
+UPDATE vms
+SET status = $2,
+    snapshot_ref = $3,
+    clone_source_vm_id = $4,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
 
 -- name: VMSoftDelete :exec
 UPDATE vms SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1;
@@ -490,7 +509,7 @@ SELECT
     dep.wake_requested_at AS deployment_wake_requested_at,
     (SELECT COUNT(*)::bigint FROM deployment_instances di
      INNER JOIN vms vm ON di.vm_id = vm.id AND vm.deleted_at IS NULL AND vm.status = 'running'
-     WHERE di.deployment_id = d.deployment_id AND di.deleted_at IS NULL AND di.status = 'running') AS running_backend_count
+     WHERE di.deployment_id = d.deployment_id AND di.deleted_at IS NULL AND di.role = 'active' AND di.status = 'running') AS running_backend_count
 FROM domains d
 LEFT JOIN deployments dep ON d.deployment_id = dep.id AND dep.deleted_at IS NULL
 WHERE d.domain_name = $1 AND d.verified_at IS NOT NULL;
@@ -509,8 +528,9 @@ FROM domains d
 LEFT JOIN deployments dep ON d.deployment_id = dep.id
 LEFT JOIN deployment_instances di ON di.deployment_id = dep.id
     AND di.deleted_at IS NULL
+    AND di.role = 'active'
     AND di.status = 'running'
-LEFT JOIN vms v ON di.vm_id = v.id AND v.deleted_at IS NULL
+LEFT JOIN vms v ON di.vm_id = v.id AND v.deleted_at IS NULL AND v.status = 'running'
 WHERE d.verified_at IS NOT NULL;
 
 -- VM Logs --
@@ -662,6 +682,7 @@ FROM deployment_instances di
 INNER JOIN deployments d ON d.id = di.deployment_id AND d.deleted_at IS NULL
 WHERE di.server_id = $1
   AND di.deleted_at IS NULL
+  AND di.role = 'active'
   AND di.status = 'running'
   AND di.vm_id IS NOT NULL;
 

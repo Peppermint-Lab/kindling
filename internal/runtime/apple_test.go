@@ -48,3 +48,13 @@ func TestAppleGuestConfigPreservesExistingPortEnv(t *testing.T) {
 		t.Fatalf("expected runtime not to override explicit PORT, got %v", cfg.Env)
 	}
 }
+
+func TestAppleRuntimeSupportsWarmLifecycle(t *testing.T) {
+	rt := &AppleRuntime{}
+	if !rt.Supports(CapabilitySuspendResume) {
+		t.Fatal("expected apple-vz runtime to support suspend/resume fallback")
+	}
+	if !rt.Supports(CapabilityWarmClone) {
+		t.Fatal("expected apple-vz runtime to support warm clone fallback")
+	}
+}

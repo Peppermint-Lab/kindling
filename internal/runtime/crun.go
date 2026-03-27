@@ -19,16 +19,37 @@ import (
 type CrunRuntime struct {
 	mu            sync.Mutex
 	instances     map[uuid.UUID]*crunInstance
+	suspended     map[uuid.UUID]*crunSuspended
+	templates     map[string]*crunTemplate
 	advertiseHost string
 	pullAuth      *oci.Auth
 }
 
 type crunInstance struct {
-	cmd    *exec.Cmd
-	ip     string
-	logs   []string
-	logMu  sync.Mutex
-	cancel context.CancelFunc
+	id        uuid.UUID
+	inst      Instance
+	cmd       *exec.Cmd
+	ip        string
+	hostPort  int
+	bundleDir string
+	ociDir    string
+	logs      []string
+	logMu     sync.Mutex
+	cancel    context.CancelFunc
+	retain    bool
+	stopped   chan struct{}
+}
+
+type crunSuspended struct {
+	inst      Instance
+	bundleDir string
+	ociDir    string
+	hostPort  int
+	ip        string
+}
+
+type crunTemplate struct {
+	path string
 }
 
 // NewCrunRuntime creates a new crun-based runtime. crun must be installed.
@@ -41,12 +62,17 @@ func NewCrunRuntime(advertiseHost string, pullAuth *oci.Auth) *CrunRuntime {
 	}
 	return &CrunRuntime{
 		instances:     make(map[uuid.UUID]*crunInstance),
+		suspended:     make(map[uuid.UUID]*crunSuspended),
+		templates:     make(map[string]*crunTemplate),
 		advertiseHost: strings.TrimSpace(advertiseHost),
 		pullAuth:      pullAuth,
 	}
 }
 
 func (r *CrunRuntime) Name() string { return "crun" }
+func (r *CrunRuntime) Supports(cap Capability) bool {
+	return cap == CapabilitySuspendResume || cap == CapabilityWarmClone
+}
 
 func (r *CrunRuntime) Start(ctx context.Context, inst Instance) (string, error) {
 	if _, err := exec.LookPath("crun"); err != nil {
@@ -75,19 +101,24 @@ func (r *CrunRuntime) startCrun(ctx context.Context, inst Instance) (string, err
 	if err := patchBundleHostNetwork(bundleDir); err != nil {
 		return "", fmt.Errorf("host-network oci patch: %w", err)
 	}
+	return r.startPreparedCrun(ctx, inst, bundleDir, ociDir, 0)
+}
 
+func (r *CrunRuntime) startPreparedCrun(ctx context.Context, inst Instance, bundleDir, ociDir string, hostPort int) (string, error) {
+	var err error
 	// One free port on the host loopback; with host networking the app must bind
 	// this PORT (same idea as publishing a random host port to the container).
-	hostPort, err := pickFreeTCPPort()
-	if err != nil {
-		return "", fmt.Errorf("allocate local port: %w", err)
+	if hostPort == 0 {
+		hostPort, err = pickFreeTCPPort()
+		if err != nil {
+			return "", fmt.Errorf("allocate local port: %w", err)
+		}
 	}
 	rawAddr := fmt.Sprintf("127.0.0.1:%d", hostPort)
 	listenAddr, err := applyAdvertisedHost(rawAddr, r.advertiseHost)
 	if err != nil {
 		return "", err
 	}
-
 	containerID := fmt.Sprintf("kindling-%s", inst.ID)
 	runCtx, cancel := context.WithCancel(ctx)
 
@@ -104,9 +135,15 @@ func (r *CrunRuntime) startCrun(ctx context.Context, inst Instance) (string, err
 	cmd.Env = env
 
 	ci := &crunInstance{
-		cmd:    cmd,
-		ip:     listenAddr,
-		cancel: cancel,
+		id:        inst.ID,
+		inst:      inst,
+		cmd:       cmd,
+		ip:        listenAddr,
+		hostPort:  hostPort,
+		bundleDir: bundleDir,
+		ociDir:    ociDir,
+		cancel:    cancel,
+		stopped:   make(chan struct{}),
 	}
 
 	stdout, _ := cmd.StdoutPipe()
@@ -130,10 +167,18 @@ func (r *CrunRuntime) startCrun(ctx context.Context, inst Instance) (string, err
 		cmd.Wait()
 		r.mu.Lock()
 		delete(r.instances, inst.ID)
+		retain := ci.retain
 		r.mu.Unlock()
-		os.RemoveAll(bundleDir)
-		os.RemoveAll(ociDir)
+		if !retain {
+			if bundleDir != "" {
+				os.RemoveAll(bundleDir)
+			}
+			if ociDir != "" {
+				os.RemoveAll(ociDir)
+			}
+		}
 		slog.Info("container exited", "id", inst.ID, "runtime", "crun")
+		close(ci.stopped)
 	}()
 
 	slog.Info("container started",
@@ -144,6 +189,100 @@ func (r *CrunRuntime) startCrun(ctx context.Context, inst Instance) (string, err
 	)
 
 	return ci.ip, nil
+}
+
+func (r *CrunRuntime) Suspend(ctx context.Context, id uuid.UUID) error {
+	r.mu.Lock()
+	ci, ok := r.instances[id]
+	if !ok {
+		r.mu.Unlock()
+		return nil
+	}
+	ci.retain = true
+	r.suspended[id] = &crunSuspended{
+		inst:      ci.inst,
+		bundleDir: ci.bundleDir,
+		ociDir:    ci.ociDir,
+		hostPort:  ci.hostPort,
+		ip:        ci.ip,
+	}
+	r.mu.Unlock()
+	if err := r.Stop(ctx, id); err != nil {
+		return err
+	}
+	select {
+	case <-ci.stopped:
+		return nil
+	case <-ctx.Done():
+		r.mu.Lock()
+		s := r.suspended[id]
+		delete(r.suspended, id)
+		ci.retain = false
+		r.mu.Unlock()
+		if s != nil {
+			_ = os.RemoveAll(s.bundleDir)
+			if s.ociDir != "" {
+				_ = os.RemoveAll(s.ociDir)
+			}
+		}
+		return ctx.Err()
+	}
+}
+
+func (r *CrunRuntime) Resume(ctx context.Context, id uuid.UUID) (string, error) {
+	r.mu.Lock()
+	s, ok := r.suspended[id]
+	if ok {
+		delete(r.suspended, id)
+	}
+	r.mu.Unlock()
+	if !ok {
+		return "", ErrInstanceNotRunning
+	}
+	return r.startPreparedCrun(ctx, s.inst, s.bundleDir, s.ociDir, s.hostPort)
+}
+
+func (r *CrunRuntime) CreateTemplate(ctx context.Context, id uuid.UUID) (string, error) {
+	_ = ctx
+	r.mu.Lock()
+	var bundleDir string
+	if s, ok := r.suspended[id]; ok {
+		bundleDir = s.bundleDir
+	} else if ci, ok := r.instances[id]; ok {
+		bundleDir = ci.bundleDir
+	}
+	templatePath := lifecyclePath("crun-template", id.String())
+	r.mu.Unlock()
+	if strings.TrimSpace(bundleDir) == "" {
+		return "", ErrInstanceNotRunning
+	}
+	_ = os.RemoveAll(templatePath)
+	if err := copyDir(bundleDir, templatePath); err != nil {
+		return "", err
+	}
+	r.mu.Lock()
+	r.templates[templatePath] = &crunTemplate{path: templatePath}
+	r.mu.Unlock()
+	return templatePath, nil
+}
+
+func (r *CrunRuntime) StartClone(ctx context.Context, inst Instance, snapshotRef string, cloneSourceVMID uuid.UUID) (string, StartMetadata, error) {
+	r.mu.Lock()
+	template, ok := r.templates[snapshotRef]
+	r.mu.Unlock()
+	if !ok {
+		return "", StartMetadata{}, ErrInstanceNotRunning
+	}
+	bundleDir := fmt.Sprintf("/tmp/kindling-bundle-%s", inst.ID)
+	_ = os.RemoveAll(bundleDir)
+	if err := copyDir(template.path, bundleDir); err != nil {
+		return "", StartMetadata{}, err
+	}
+	ip, err := r.startPreparedCrun(ctx, inst, bundleDir, "", 0)
+	if err != nil {
+		return "", StartMetadata{}, err
+	}
+	return ip, StartMetadata{SnapshotRef: snapshotRef, CloneSourceVMID: cloneSourceVMID}, nil
 }
 
 func pickFreeTCPPort() (int, error) {
@@ -158,6 +297,19 @@ func pickFreeTCPPort() (int, error) {
 func (r *CrunRuntime) Stop(ctx context.Context, id uuid.UUID) error {
 	r.mu.Lock()
 	ci, ok := r.instances[id]
+	if !ok {
+		if s, suspended := r.suspended[id]; suspended {
+			delete(r.suspended, id)
+			r.mu.Unlock()
+			if s.bundleDir != "" {
+				_ = os.RemoveAll(s.bundleDir)
+			}
+			if s.ociDir != "" {
+				_ = os.RemoveAll(s.ociDir)
+			}
+			return nil
+		}
+	}
 	r.mu.Unlock()
 
 	if !ok {

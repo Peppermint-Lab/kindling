@@ -55,13 +55,40 @@ type ResourceStats struct {
 	CollectedAt        time.Time
 }
 
+type Capability string
+
+const (
+	CapabilitySuspendResume Capability = "suspend_resume"
+	CapabilityWarmClone     Capability = "warm_clone"
+)
+
+type StartMetadata struct {
+	SnapshotRef     string
+	CloneSourceVMID uuid.UUID
+}
+
 // Runtime is the interface for starting and stopping app instances.
 type Runtime interface {
 	// Name returns the runtime name (e.g. "crun", "cloud-hypervisor").
 	Name() string
 
+	// Supports returns whether this runtime implements an optional lifecycle capability.
+	Supports(Capability) bool
+
 	// Start starts an instance. Returns the IP address the instance is reachable at.
 	Start(ctx context.Context, inst Instance) (ip string, err error)
+
+	// Suspend releases active resources while preserving enough local state for a faster resume.
+	Suspend(ctx context.Context, id uuid.UUID) error
+
+	// Resume restarts a suspended instance from retained local state.
+	Resume(ctx context.Context, id uuid.UUID) (ip string, err error)
+
+	// CreateTemplate captures retained local state for future warm clones and returns its reference.
+	CreateTemplate(ctx context.Context, id uuid.UUID) (snapshotRef string, err error)
+
+	// StartClone starts a new instance from retained template state.
+	StartClone(ctx context.Context, inst Instance, snapshotRef string, cloneSourceVMID uuid.UUID) (ip string, meta StartMetadata, err error)
 
 	// Stop stops and cleans up an instance.
 	Stop(ctx context.Context, id uuid.UUID) error

@@ -51,3 +51,13 @@ func TestPatchBundleHostNetworkRemovesNetworkNS(t *testing.T) {
 		}
 	}
 }
+
+func TestCrunSupportsWarmLifecycle(t *testing.T) {
+	rt := &CrunRuntime{}
+	if !rt.Supports(CapabilitySuspendResume) {
+		t.Fatal("expected crun runtime to support suspend/resume fallback")
+	}
+	if !rt.Supports(CapabilityWarmClone) {
+		t.Fatal("expected crun runtime to support warm clone fallback")
+	}
+}

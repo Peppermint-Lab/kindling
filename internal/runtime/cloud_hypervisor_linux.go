@@ -40,6 +40,8 @@ const (
 type CloudHypervisorRuntime struct {
 	mu        sync.Mutex
 	instances map[uuid.UUID]*cloudHypervisorInstance
+	suspended map[uuid.UUID]*cloudHypervisorSuspended
+	templates map[string]*cloudHypervisorTemplate
 	nextSlot  atomic.Uint32
 
 	binaryPath        string
@@ -62,6 +64,22 @@ type cloudHypervisorInstance struct {
 	cancel     context.CancelFunc
 	ready      chan struct{}
 	once       sync.Once
+	inst       Instance
+	workDisk   string
+	hostPort   int
+	retain     bool
+	stopped    chan struct{}
+}
+
+type cloudHypervisorSuspended struct {
+	inst     Instance
+	workDir  string
+	workDisk string
+	hostPort int
+}
+
+type cloudHypervisorTemplate struct {
+	workDisk string
 }
 
 type guestConfig struct {
@@ -79,6 +97,8 @@ func NewCloudHypervisorRuntime(cfg CloudHypervisorHostConfig, advertiseHost stri
 	homeInitramfs := filepath.Join(home, ".kindling", "initramfs.cpio.gz")
 	return &CloudHypervisorRuntime{
 		instances:     make(map[uuid.UUID]*cloudHypervisorInstance),
+		suspended:     make(map[uuid.UUID]*cloudHypervisorSuspended),
+		templates:     make(map[string]*cloudHypervisorTemplate),
 		binaryPath:    firstExistingPath(cfg.BinaryPath, cloudHypervisorDefaultBin),
 		// Note: do not fall back to /data/vmlinux.bin — provision.sh stores rust hypervisor firmware there, not a Linux bzImage/vmlinux.
 		kernelPath:    firstExistingPath(cfg.KernelPath, cloudHypervisorDefaultKernel, homeKernel),
@@ -89,6 +109,9 @@ func NewCloudHypervisorRuntime(cfg CloudHypervisorHostConfig, advertiseHost stri
 }
 
 func (r *CloudHypervisorRuntime) Name() string { return "cloud-hypervisor" }
+func (r *CloudHypervisorRuntime) Supports(cap Capability) bool {
+	return cap == CapabilitySuspendResume || cap == CapabilityWarmClone
+}
 
 func (r *CloudHypervisorRuntime) Start(ctx context.Context, inst Instance) (string, error) {
 	if _, err := os.Stat(r.binaryPath); err != nil {
@@ -125,7 +148,10 @@ func (r *CloudHypervisorRuntime) startVM(ctx context.Context, inst Instance) (st
 		_ = os.RemoveAll(workDir)
 		return "", fmt.Errorf("virt-make-fs: %s: %w", string(out), err)
 	}
+	return r.startPreparedVM(ctx, inst, workDir, workDisk, 0)
+}
 
+func (r *CloudHypervisorRuntime) startPreparedVM(ctx context.Context, inst Instance, workDir, workDisk string, requestedHostPort int) (string, error) {
 	slot := r.nextSlot.Add(1) - 1
 	hostIP, guestCIDR, err := cloudHypervisorIPs(slot)
 	if err != nil {
@@ -156,9 +182,12 @@ func (r *CloudHypervisorRuntime) startVM(ctx context.Context, inst Instance) (st
 		tapName:    tapName,
 		vmIP:       guestIP,
 		workDir:    workDir,
+		workDisk:   workDisk,
 		socketBase: filepath.Join(os.TempDir(), "kindling-vsock-"+inst.ID.String()+".sock"),
 		cancel:     cancel,
 		ready:      make(chan struct{}),
+		inst:       inst,
+		stopped:    make(chan struct{}),
 	}
 
 	if err := r.startGuestVsockServer(runCtx, inst, ai, guestCIDR, hostIP, port); err != nil {
@@ -206,15 +235,22 @@ func (r *CloudHypervisorRuntime) startVM(ctx context.Context, inst Instance) (st
 		return "", fmt.Errorf("wait for guest ready: %w", err)
 	}
 
-	hostLn, err := net.Listen("tcp", "0.0.0.0:0")
+	hostAddrBind := "0.0.0.0:0"
+	if requestedHostPort > 0 {
+		hostAddrBind = net.JoinHostPort("0.0.0.0", strconv.Itoa(requestedHostPort))
+	}
+	hostLn, err := net.Listen("tcp", hostAddrBind)
 	if err != nil {
 		cancel()
+		_ = os.RemoveAll(workDir)
 		return "", fmt.Errorf("host tcp forward listen: %w", err)
 	}
 	ai.hostFwd = hostLn
+	ai.hostPort = hostLn.Addr().(*net.TCPAddr).Port
 		ai.ip, err = applyAdvertisedHost(hostLn.Addr().String(), r.advertiseHost)
 	if err != nil {
 		cancel()
+		_ = os.RemoveAll(workDir)
 		return "", err
 	}
 	go r.forwardHostTCPToVM(runCtx, hostLn, ai.socketBase)
@@ -228,6 +264,96 @@ func (r *CloudHypervisorRuntime) startVM(ctx context.Context, inst Instance) (st
 		"runtime_url", ai.ip,
 	)
 	return ai.ip, nil
+}
+
+func (r *CloudHypervisorRuntime) Suspend(ctx context.Context, id uuid.UUID) error {
+	r.mu.Lock()
+	ai, ok := r.instances[id]
+	if !ok {
+		r.mu.Unlock()
+		return nil
+	}
+	ai.retain = true
+	r.suspended[id] = &cloudHypervisorSuspended{
+		inst:     ai.inst,
+		workDir:  ai.workDir,
+		workDisk: ai.workDisk,
+		hostPort: ai.hostPort,
+	}
+	r.mu.Unlock()
+	if err := r.Stop(ctx, id); err != nil {
+		return err
+	}
+	select {
+	case <-ai.stopped:
+		return nil
+	case <-ctx.Done():
+		r.mu.Lock()
+		delete(r.suspended, id)
+		ai.retain = false
+		r.mu.Unlock()
+		return ctx.Err()
+	}
+}
+
+func (r *CloudHypervisorRuntime) Resume(ctx context.Context, id uuid.UUID) (string, error) {
+	r.mu.Lock()
+	s, ok := r.suspended[id]
+	if ok {
+		delete(r.suspended, id)
+	}
+	r.mu.Unlock()
+	if !ok {
+		return "", ErrInstanceNotRunning
+	}
+	return r.startPreparedVM(ctx, s.inst, s.workDir, s.workDisk, s.hostPort)
+}
+
+func (r *CloudHypervisorRuntime) CreateTemplate(ctx context.Context, id uuid.UUID) (string, error) {
+	_ = ctx
+	r.mu.Lock()
+	s, ok := r.suspended[id]
+	if !ok {
+		r.mu.Unlock()
+		return "", fmt.Errorf("cloud-hypervisor template requires suspended source")
+	}
+	templateDir := lifecyclePath("ch-template", id.String())
+	templateDisk := filepath.Join(templateDir, "rootfs.qcow2")
+	r.mu.Unlock()
+	_ = os.RemoveAll(templateDir)
+	if err := ensureDir(templateDir); err != nil {
+		return "", err
+	}
+	if err := copyFile(s.workDisk, templateDisk); err != nil {
+		return "", err
+	}
+	r.mu.Lock()
+	r.templates[templateDir] = &cloudHypervisorTemplate{workDisk: templateDisk}
+	r.mu.Unlock()
+	return templateDir, nil
+}
+
+func (r *CloudHypervisorRuntime) StartClone(ctx context.Context, inst Instance, snapshotRef string, cloneSourceVMID uuid.UUID) (string, StartMetadata, error) {
+	r.mu.Lock()
+	tmpl, ok := r.templates[snapshotRef]
+	r.mu.Unlock()
+	if !ok {
+		return "", StartMetadata{}, ErrInstanceNotRunning
+	}
+	workDir := filepath.Join(os.TempDir(), "kindling-ch-"+inst.ID.String())
+	_ = os.RemoveAll(workDir)
+	if err := ensureDir(workDir); err != nil {
+		return "", StartMetadata{}, err
+	}
+	workDisk := filepath.Join(workDir, "rootfs.qcow2")
+	if err := copyFile(tmpl.workDisk, workDisk); err != nil {
+		return "", StartMetadata{}, err
+	}
+	ip, err := r.startPreparedVM(ctx, inst, workDir, workDisk, 0)
+	if err != nil {
+		return "", StartMetadata{}, err
+	}
+	return ip, StartMetadata{SnapshotRef: snapshotRef, CloneSourceVMID: cloneSourceVMID}, nil
 }
 
 func (r *CloudHypervisorRuntime) startGuestVsockServer(ctx context.Context, inst Instance, ai *cloudHypervisorInstance, guestCIDR, hostIP string, port int) error {
@@ -371,20 +497,34 @@ func (r *CloudHypervisorRuntime) waitCH(id uuid.UUID, ai *cloudHypervisorInstanc
 	}
 	removeCHTap(ai.tapName)
 	r.cleanupGuestVsock(ai.socketBase)
-	_ = os.RemoveAll(ai.workDir)
 	r.mu.Lock()
 	delete(r.instances, id)
+	retain := ai.retain
 	r.mu.Unlock()
+	if !retain {
+		_ = os.RemoveAll(ai.workDir)
+	}
 	if err != nil {
 		slog.Error("cloud-hypervisor VM exited", "id", id, "error", err)
 	} else {
 		slog.Info("cloud-hypervisor VM exited", "id", id)
 	}
+	close(ai.stopped)
 }
 
 func (r *CloudHypervisorRuntime) Stop(ctx context.Context, id uuid.UUID) error {
 	r.mu.Lock()
 	ai, ok := r.instances[id]
+	if !ok {
+		if s, suspended := r.suspended[id]; suspended {
+			delete(r.suspended, id)
+			r.mu.Unlock()
+			if s.workDir != "" {
+				_ = os.RemoveAll(s.workDir)
+			}
+			return nil
+		}
+	}
 	r.mu.Unlock()
 	if !ok {
 		return nil

@@ -67,6 +67,7 @@ func (d *Deployer) persistInstanceVMMetadata(
 	vcpus int,
 	memoryMB int,
 	env []string,
+	meta instanceVMMetadata,
 ) error {
 	inst, err := store.DeploymentInstanceFirstByID(ctx, instanceID)
 	if err != nil {
@@ -91,15 +92,18 @@ func (d *Deployer) persistInstanceVMMetadata(
 
 	vmID := uuid.New()
 	if _, err := store.VMCreate(ctx, queries.VMCreateParams{
-		ID:           uuidToPgtype(vmID),
-		ServerID:     uuidToPgtype(serverID),
-		ImageID:      imageID,
-		Status:       "running",
-		Vcpus:        int32(vcpus),
-		Memory:       int32(memoryMB),
-		IpAddress:    ip,
-		Port:         pgtype.Int4{Int32: int32(port), Valid: true},
-		EnvVariables: pgtype.Text{String: string(envJSON), Valid: true},
+		ID:              uuidToPgtype(vmID),
+		ServerID:        uuidToPgtype(serverID),
+		ImageID:         imageID,
+		Status:          "running",
+		Runtime:         meta.Runtime,
+		SnapshotRef:     pgtype.Text{String: meta.SnapshotRef, Valid: strings.TrimSpace(meta.SnapshotRef) != ""},
+		CloneSourceVmID: meta.CloneSourceVMID,
+		Vcpus:           int32(vcpus),
+		Memory:          int32(memoryMB),
+		IpAddress:       ip,
+		Port:            pgtype.Int4{Int32: int32(port), Valid: true},
+		EnvVariables:    pgtype.Text{String: string(envJSON), Valid: true},
 	}); err != nil {
 		return fmt.Errorf("create vm row: %w", err)
 	}

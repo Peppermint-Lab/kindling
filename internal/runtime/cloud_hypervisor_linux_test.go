@@ -39,6 +39,16 @@ func TestCloudHypervisorTapNameUsesDeploymentID(t *testing.T) {
 	}
 }
 
+func TestCloudHypervisorSupportsWarmLifecycle(t *testing.T) {
+	rt := &CloudHypervisorRuntime{}
+	if !rt.Supports(CapabilitySuspendResume) {
+		t.Fatal("expected cloud-hypervisor to support suspend/resume")
+	}
+	if !rt.Supports(CapabilityWarmClone) {
+		t.Fatal("expected cloud-hypervisor to support warm clone")
+	}
+}
+
 func mustUUID(s string) uuid.UUID {
 	id, err := uuid.Parse(s)
 	if err != nil {

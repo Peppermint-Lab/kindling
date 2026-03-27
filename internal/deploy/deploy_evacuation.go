@@ -15,6 +15,9 @@ func (d *Deployer) serverStatusByIDs(ctx context.Context, instList []queries.Dep
 	m := make(map[uuid.UUID]string)
 	seen := make(map[uuid.UUID]struct{})
 	for _, inst := range instList {
+		if !isActiveInstance(inst) {
+			continue
+		}
 		if !inst.ServerID.Valid {
 			continue
 		}
@@ -35,6 +38,9 @@ func (d *Deployer) serverStatusByIDs(ctx context.Context, instList []queries.Dep
 func (d *Deployer) countInstancesOnDrainingServers(instList []queries.DeploymentInstance, statusMap map[uuid.UUID]string) int {
 	n := 0
 	for _, inst := range instList {
+		if !isActiveInstance(inst) {
+			continue
+		}
 		if !inst.ServerID.Valid {
 			continue
 		}
@@ -48,6 +54,9 @@ func (d *Deployer) countInstancesOnDrainingServers(instList []queries.Deployment
 func (d *Deployer) countReadyOffDrainingServers(ctx context.Context, instList []queries.DeploymentInstance, statusMap map[uuid.UUID]string) int {
 	n := 0
 	for _, inst := range instList {
+		if !isActiveInstance(inst) {
+			continue
+		}
 		if inst.Status != "running" || !inst.VmID.Valid {
 			continue
 		}
@@ -77,7 +86,7 @@ func (d *Deployer) scaleDownExcess(ctx context.Context, deploymentID pgtype.UUID
 	list := instList
 	statusMap := initStatus
 	var err error
-	for len(list) > target {
+	for d.countActiveInstances(list) > target {
 		if statusMap == nil {
 			statusMap, err = d.serverStatusByIDs(ctx, list)
 			if err != nil {
@@ -97,6 +106,9 @@ func (d *Deployer) scaleDownExcess(ctx context.Context, deploymentID pgtype.UUID
 		var victim queries.DeploymentInstance
 		found := false
 		for _, inst := range sorted {
+			if !isActiveInstance(inst) {
+				continue
+			}
 			drain := inst.ServerID.Valid && statusMap[uuidFromPgtype(inst.ServerID)] == "draining"
 			if !drain {
 				victim = inst
@@ -118,6 +130,13 @@ func (d *Deployer) scaleDownExcess(ctx context.Context, deploymentID pgtype.UUID
 		}
 		statusMap = nil
 	}
+	if err := d.pruneWarmPoolInstances(ctx, list, d.retainedWarmPoolBudget()); err != nil {
+		return nil, err
+	}
+	list, err = d.q.DeploymentInstanceFindByDeploymentID(ctx, deploymentID)
+	if err != nil {
+		return nil, err
+	}
 	return list, nil
 }
 
@@ -127,6 +146,9 @@ func (d *Deployer) removeInstancesOnDrainingServers(ctx context.Context, depID p
 	}
 	var toRemove []queries.DeploymentInstance
 	for _, inst := range instList {
+		if !isActiveInstance(inst) {
+			continue
+		}
 		if !inst.ServerID.Valid {
 			continue
 		}
@@ -144,7 +166,7 @@ func (d *Deployer) removeInstancesOnDrainingServers(ctx context.Context, depID p
 			serversToNotify[uuidFromPgtype(inst.ServerID)] = struct{}{}
 		}
 		logger.Info("retiring instance from draining server", "instance_id", uuidFromPgtype(inst.ID))
-		d.cleanupInstance(ctx, inst)
+		d.deleteInstancePermanently(ctx, inst)
 	}
 	list, err := d.q.DeploymentInstanceFindByDeploymentID(ctx, depID)
 	if err != nil {

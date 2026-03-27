@@ -102,6 +102,10 @@ func TestPersistInstanceVMMetadata(t *testing.T) {
 		1,
 		512,
 		[]string{"PORT=3000", "HELLO=world"},
+		instanceVMMetadata{
+			Runtime:     "cloud-hypervisor",
+			SnapshotRef: "tmpl://deployment/rootfs",
+		},
 	)
 	if err != nil {
 		t.Fatalf("persistInstanceVMMetadata: %v", err)
@@ -121,6 +125,15 @@ func TestPersistInstanceVMMetadata(t *testing.T) {
 	}
 	if store.createArg.Status != "running" {
 		t.Fatalf("status = %q, want running", store.createArg.Status)
+	}
+	if store.createArg.Runtime != "cloud-hypervisor" {
+		t.Fatalf("runtime = %q, want cloud-hypervisor", store.createArg.Runtime)
+	}
+	if !store.createArg.SnapshotRef.Valid || store.createArg.SnapshotRef.String != "tmpl://deployment/rootfs" {
+		t.Fatalf("snapshot_ref = %+v, want tmpl://deployment/rootfs", store.createArg.SnapshotRef)
+	}
+	if store.createArg.CloneSourceVmID.Valid {
+		t.Fatalf("clone_source_vm_id = %+v, want invalid", store.createArg.CloneSourceVmID)
 	}
 	if store.attachArg.Status != "running" {
 		t.Fatalf("attach status = %q, want running", store.attachArg.Status)
@@ -164,12 +177,54 @@ func TestPersistInstanceVMMetadataSoftDeletesVMWhenAttachFails(t *testing.T) {
 		1,
 		512,
 		nil,
+		instanceVMMetadata{},
 	)
 	if err == nil {
 		t.Fatal("expected attach error")
 	}
 	if !store.softDeleted {
 		t.Fatal("expected VMSoftDelete to be called when attach fails")
+	}
+}
+
+func TestPersistInstanceVMMetadataStoresCloneLineage(t *testing.T) {
+	t.Parallel()
+
+	serverID := uuid.New()
+	instanceID := uuid.New()
+	imageID := uuid.New()
+	parentVMID := uuid.New()
+
+	store := &fakeInstanceVMStore{
+		instance: queries.DeploymentInstance{
+			ID:           pgUUID(instanceID),
+			DeploymentID: pgUUID(uuid.New()),
+			Status:       "starting",
+		},
+	}
+
+	d := &Deployer{serverID: serverID}
+	err := d.persistInstanceVMMetadata(
+		context.Background(),
+		store,
+		pgUUID(instanceID),
+		pgUUID(imageID),
+		serverID,
+		"127.0.0.1:32768",
+		1,
+		512,
+		nil,
+		instanceVMMetadata{
+			Runtime:         "cloud-hypervisor",
+			SnapshotRef:     "tmpl://clone/rootfs",
+			CloneSourceVMID: pgUUID(parentVMID),
+		},
+	)
+	if err != nil {
+		t.Fatalf("persistInstanceVMMetadata: %v", err)
+	}
+	if !store.createArg.CloneSourceVmID.Valid || store.createArg.CloneSourceVmID.Bytes != parentVMID {
+		t.Fatalf("clone_source_vm_id = %+v, want %+v", store.createArg.CloneSourceVmID, pgUUID(parentVMID))
 	}
 }
 

@@ -859,7 +859,7 @@ func (q *Queries) DeploymentIDsForInstancesOnServer(ctx context.Context, serverI
 const deploymentInstanceAttachVM = `-- name: DeploymentInstanceAttachVM :one
 UPDATE deployment_instances SET vm_id = $2, status = $3, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, deployment_id, server_id, vm_id, status, deleted_at, created_at, updated_at
+RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, deleted_at, created_at, updated_at
 `
 
 type DeploymentInstanceAttachVMParams struct {
@@ -876,6 +876,8 @@ func (q *Queries) DeploymentInstanceAttachVM(ctx context.Context, arg Deployment
 		&i.DeploymentID,
 		&i.ServerID,
 		&i.VmID,
+		&i.Role,
+		&i.CloneSourceInstanceID,
 		&i.Status,
 		&i.DeletedAt,
 		&i.CreatedAt,
@@ -898,9 +900,9 @@ func (q *Queries) DeploymentInstanceCountByServerID(ctx context.Context, serverI
 
 const deploymentInstanceCreate = `-- name: DeploymentInstanceCreate :one
 
-INSERT INTO deployment_instances (id, deployment_id, status)
-VALUES ($1, $2, 'pending')
-RETURNING id, deployment_id, server_id, vm_id, status, deleted_at, created_at, updated_at
+INSERT INTO deployment_instances (id, deployment_id, role, status)
+VALUES ($1, $2, 'active', 'pending')
+RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, deleted_at, created_at, updated_at
 `
 
 type DeploymentInstanceCreateParams struct {
@@ -917,6 +919,8 @@ func (q *Queries) DeploymentInstanceCreate(ctx context.Context, arg DeploymentIn
 		&i.DeploymentID,
 		&i.ServerID,
 		&i.VmID,
+		&i.Role,
+		&i.CloneSourceInstanceID,
 		&i.Status,
 		&i.DeletedAt,
 		&i.CreatedAt,
@@ -926,7 +930,7 @@ func (q *Queries) DeploymentInstanceCreate(ctx context.Context, arg DeploymentIn
 }
 
 const deploymentInstanceFindByDeploymentID = `-- name: DeploymentInstanceFindByDeploymentID :many
-SELECT id, deployment_id, server_id, vm_id, status, deleted_at, created_at, updated_at FROM deployment_instances
+SELECT id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, deleted_at, created_at, updated_at FROM deployment_instances
 WHERE deployment_id = $1 AND deleted_at IS NULL
 ORDER BY created_at ASC
 `
@@ -945,6 +949,8 @@ func (q *Queries) DeploymentInstanceFindByDeploymentID(ctx context.Context, depl
 			&i.DeploymentID,
 			&i.ServerID,
 			&i.VmID,
+			&i.Role,
+			&i.CloneSourceInstanceID,
 			&i.Status,
 			&i.DeletedAt,
 			&i.CreatedAt,
@@ -961,7 +967,7 @@ func (q *Queries) DeploymentInstanceFindByDeploymentID(ctx context.Context, depl
 }
 
 const deploymentInstanceFirstByID = `-- name: DeploymentInstanceFirstByID :one
-SELECT id, deployment_id, server_id, vm_id, status, deleted_at, created_at, updated_at FROM deployment_instances WHERE id = $1
+SELECT id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, deleted_at, created_at, updated_at FROM deployment_instances WHERE id = $1
 `
 
 func (q *Queries) DeploymentInstanceFirstByID(ctx context.Context, id pgtype.UUID) (DeploymentInstance, error) {
@@ -972,6 +978,8 @@ func (q *Queries) DeploymentInstanceFirstByID(ctx context.Context, id pgtype.UUI
 		&i.DeploymentID,
 		&i.ServerID,
 		&i.VmID,
+		&i.Role,
+		&i.CloneSourceInstanceID,
 		&i.Status,
 		&i.DeletedAt,
 		&i.CreatedAt,
@@ -982,9 +990,9 @@ func (q *Queries) DeploymentInstanceFirstByID(ctx context.Context, id pgtype.UUI
 
 const deploymentInstancePrepareRetry = `-- name: DeploymentInstancePrepareRetry :one
 UPDATE deployment_instances
-SET server_id = NULL, vm_id = NULL, status = 'pending', updated_at = NOW()
+SET server_id = NULL, vm_id = NULL, role = 'active', clone_source_instance_id = NULL, status = 'pending', updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, deployment_id, server_id, vm_id, status, deleted_at, created_at, updated_at
+RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, deleted_at, created_at, updated_at
 `
 
 func (q *Queries) DeploymentInstancePrepareRetry(ctx context.Context, id pgtype.UUID) (DeploymentInstance, error) {
@@ -995,6 +1003,8 @@ func (q *Queries) DeploymentInstancePrepareRetry(ctx context.Context, id pgtype.
 		&i.DeploymentID,
 		&i.ServerID,
 		&i.VmID,
+		&i.Role,
+		&i.CloneSourceInstanceID,
 		&i.Status,
 		&i.DeletedAt,
 		&i.CreatedAt,
@@ -1005,13 +1015,42 @@ func (q *Queries) DeploymentInstancePrepareRetry(ctx context.Context, id pgtype.
 
 const deploymentInstanceResetForDeadServer = `-- name: DeploymentInstanceResetForDeadServer :exec
 UPDATE deployment_instances
-SET server_id = NULL, vm_id = NULL, status = 'pending', updated_at = NOW()
+SET server_id = NULL, vm_id = NULL, role = 'active', clone_source_instance_id = NULL, status = 'pending', updated_at = NOW()
 WHERE server_id = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) DeploymentInstanceResetForDeadServer(ctx context.Context, serverID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deploymentInstanceResetForDeadServer, serverID)
 	return err
+}
+
+const deploymentInstanceSetCloneSource = `-- name: DeploymentInstanceSetCloneSource :one
+UPDATE deployment_instances SET clone_source_instance_id = $2, updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, deleted_at, created_at, updated_at
+`
+
+type DeploymentInstanceSetCloneSourceParams struct {
+	ID                    pgtype.UUID `json:"id"`
+	CloneSourceInstanceID pgtype.UUID `json:"clone_source_instance_id"`
+}
+
+func (q *Queries) DeploymentInstanceSetCloneSource(ctx context.Context, arg DeploymentInstanceSetCloneSourceParams) (DeploymentInstance, error) {
+	row := q.db.QueryRow(ctx, deploymentInstanceSetCloneSource, arg.ID, arg.CloneSourceInstanceID)
+	var i DeploymentInstance
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentID,
+		&i.ServerID,
+		&i.VmID,
+		&i.Role,
+		&i.CloneSourceInstanceID,
+		&i.Status,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const deploymentInstanceSoftDelete = `-- name: DeploymentInstanceSoftDelete :exec
@@ -1033,10 +1072,39 @@ func (q *Queries) DeploymentInstanceSoftDeleteByDeploymentID(ctx context.Context
 	return err
 }
 
+const deploymentInstanceUpdateRole = `-- name: DeploymentInstanceUpdateRole :one
+UPDATE deployment_instances SET role = $2, updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, deleted_at, created_at, updated_at
+`
+
+type DeploymentInstanceUpdateRoleParams struct {
+	ID   pgtype.UUID `json:"id"`
+	Role string      `json:"role"`
+}
+
+func (q *Queries) DeploymentInstanceUpdateRole(ctx context.Context, arg DeploymentInstanceUpdateRoleParams) (DeploymentInstance, error) {
+	row := q.db.QueryRow(ctx, deploymentInstanceUpdateRole, arg.ID, arg.Role)
+	var i DeploymentInstance
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentID,
+		&i.ServerID,
+		&i.VmID,
+		&i.Role,
+		&i.CloneSourceInstanceID,
+		&i.Status,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const deploymentInstanceUpdateServer = `-- name: DeploymentInstanceUpdateServer :one
 UPDATE deployment_instances SET server_id = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, deployment_id, server_id, vm_id, status, deleted_at, created_at, updated_at
+RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, deleted_at, created_at, updated_at
 `
 
 type DeploymentInstanceUpdateServerParams struct {
@@ -1052,6 +1120,8 @@ func (q *Queries) DeploymentInstanceUpdateServer(ctx context.Context, arg Deploy
 		&i.DeploymentID,
 		&i.ServerID,
 		&i.VmID,
+		&i.Role,
+		&i.CloneSourceInstanceID,
 		&i.Status,
 		&i.DeletedAt,
 		&i.CreatedAt,
@@ -1063,7 +1133,7 @@ func (q *Queries) DeploymentInstanceUpdateServer(ctx context.Context, arg Deploy
 const deploymentInstanceUpdateStatus = `-- name: DeploymentInstanceUpdateStatus :one
 UPDATE deployment_instances SET status = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, deployment_id, server_id, vm_id, status, deleted_at, created_at, updated_at
+RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, deleted_at, created_at, updated_at
 `
 
 type DeploymentInstanceUpdateStatusParams struct {
@@ -1079,6 +1149,8 @@ func (q *Queries) DeploymentInstanceUpdateStatus(ctx context.Context, arg Deploy
 		&i.DeploymentID,
 		&i.ServerID,
 		&i.VmID,
+		&i.Role,
+		&i.CloneSourceInstanceID,
 		&i.Status,
 		&i.DeletedAt,
 		&i.CreatedAt,
@@ -1121,6 +1193,7 @@ FROM deployment_instances di
 INNER JOIN deployments d ON d.id = di.deployment_id AND d.deleted_at IS NULL
 WHERE di.server_id = $1
   AND di.deleted_at IS NULL
+  AND di.role = 'active'
   AND di.status = 'running'
   AND di.vm_id IS NOT NULL
 `
@@ -1390,7 +1463,7 @@ SELECT
     dep.wake_requested_at AS deployment_wake_requested_at,
     (SELECT COUNT(*)::bigint FROM deployment_instances di
      INNER JOIN vms vm ON di.vm_id = vm.id AND vm.deleted_at IS NULL AND vm.status = 'running'
-     WHERE di.deployment_id = d.deployment_id AND di.deleted_at IS NULL AND di.status = 'running') AS running_backend_count
+     WHERE di.deployment_id = d.deployment_id AND di.deleted_at IS NULL AND di.role = 'active' AND di.status = 'running') AS running_backend_count
 FROM domains d
 LEFT JOIN deployments dep ON d.deployment_id = dep.id AND dep.deleted_at IS NULL
 WHERE d.domain_name = $1 AND d.verified_at IS NOT NULL
@@ -2720,8 +2793,9 @@ FROM domains d
 LEFT JOIN deployments dep ON d.deployment_id = dep.id
 LEFT JOIN deployment_instances di ON di.deployment_id = dep.id
     AND di.deleted_at IS NULL
+    AND di.role = 'active'
     AND di.status = 'running'
-LEFT JOIN vms v ON di.vm_id = v.id AND v.deleted_at IS NULL
+LEFT JOIN vms v ON di.vm_id = v.id AND v.deleted_at IS NULL AND v.status = 'running'
 WHERE d.verified_at IS NOT NULL
 `
 
@@ -3255,21 +3329,24 @@ func (q *Queries) UserUpdatePasswordHash(ctx context.Context, arg UserUpdatePass
 
 const vMCreate = `-- name: VMCreate :one
 
-INSERT INTO vms (id, server_id, image_id, status, vcpus, memory, ip_address, port, env_variables)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, server_id, image_id, status, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at
+INSERT INTO vms (id, server_id, image_id, status, runtime, snapshot_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+RETURNING id, server_id, image_id, status, runtime, snapshot_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at
 `
 
 type VMCreateParams struct {
-	ID           pgtype.UUID `json:"id"`
-	ServerID     pgtype.UUID `json:"server_id"`
-	ImageID      pgtype.UUID `json:"image_id"`
-	Status       string      `json:"status"`
-	Vcpus        int32       `json:"vcpus"`
-	Memory       int32       `json:"memory"`
-	IpAddress    netip.Addr  `json:"ip_address"`
-	Port         pgtype.Int4 `json:"port"`
-	EnvVariables pgtype.Text `json:"env_variables"`
+	ID              pgtype.UUID `json:"id"`
+	ServerID        pgtype.UUID `json:"server_id"`
+	ImageID         pgtype.UUID `json:"image_id"`
+	Status          string      `json:"status"`
+	Runtime         string      `json:"runtime"`
+	SnapshotRef     pgtype.Text `json:"snapshot_ref"`
+	CloneSourceVmID pgtype.UUID `json:"clone_source_vm_id"`
+	Vcpus           int32       `json:"vcpus"`
+	Memory          int32       `json:"memory"`
+	IpAddress       netip.Addr  `json:"ip_address"`
+	Port            pgtype.Int4 `json:"port"`
+	EnvVariables    pgtype.Text `json:"env_variables"`
 }
 
 // VMs --
@@ -3279,6 +3356,9 @@ func (q *Queries) VMCreate(ctx context.Context, arg VMCreateParams) (Vm, error) 
 		arg.ServerID,
 		arg.ImageID,
 		arg.Status,
+		arg.Runtime,
+		arg.SnapshotRef,
+		arg.CloneSourceVmID,
 		arg.Vcpus,
 		arg.Memory,
 		arg.IpAddress,
@@ -3291,6 +3371,9 @@ func (q *Queries) VMCreate(ctx context.Context, arg VMCreateParams) (Vm, error) 
 		&i.ServerID,
 		&i.ImageID,
 		&i.Status,
+		&i.Runtime,
+		&i.SnapshotRef,
+		&i.CloneSourceVmID,
 		&i.Vcpus,
 		&i.Memory,
 		&i.IpAddress,
@@ -3304,7 +3387,7 @@ func (q *Queries) VMCreate(ctx context.Context, arg VMCreateParams) (Vm, error) 
 }
 
 const vMFindByServerID = `-- name: VMFindByServerID :many
-SELECT id, server_id, image_id, status, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at FROM vms WHERE server_id = $1 AND deleted_at IS NULL
+SELECT id, server_id, image_id, status, runtime, snapshot_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at FROM vms WHERE server_id = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) VMFindByServerID(ctx context.Context, serverID pgtype.UUID) ([]Vm, error) {
@@ -3321,6 +3404,9 @@ func (q *Queries) VMFindByServerID(ctx context.Context, serverID pgtype.UUID) ([
 			&i.ServerID,
 			&i.ImageID,
 			&i.Status,
+			&i.Runtime,
+			&i.SnapshotRef,
+			&i.CloneSourceVmID,
 			&i.Vcpus,
 			&i.Memory,
 			&i.IpAddress,
@@ -3341,7 +3427,7 @@ func (q *Queries) VMFindByServerID(ctx context.Context, serverID pgtype.UUID) ([
 }
 
 const vMFirstByID = `-- name: VMFirstByID :one
-SELECT id, server_id, image_id, status, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at FROM vms WHERE id = $1
+SELECT id, server_id, image_id, status, runtime, snapshot_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at FROM vms WHERE id = $1
 `
 
 func (q *Queries) VMFirstByID(ctx context.Context, id pgtype.UUID) (Vm, error) {
@@ -3352,6 +3438,9 @@ func (q *Queries) VMFirstByID(ctx context.Context, id pgtype.UUID) (Vm, error) {
 		&i.ServerID,
 		&i.ImageID,
 		&i.Status,
+		&i.Runtime,
+		&i.SnapshotRef,
+		&i.CloneSourceVmID,
 		&i.Vcpus,
 		&i.Memory,
 		&i.IpAddress,
@@ -3448,8 +3537,53 @@ func (q *Queries) VMSoftDelete(ctx context.Context, id pgtype.UUID) error {
 	return err
 }
 
+const vMUpdateLifecycleMetadata = `-- name: VMUpdateLifecycleMetadata :one
+UPDATE vms
+SET status = $2,
+    snapshot_ref = $3,
+    clone_source_vm_id = $4,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, server_id, image_id, status, runtime, snapshot_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at
+`
+
+type VMUpdateLifecycleMetadataParams struct {
+	ID              pgtype.UUID `json:"id"`
+	Status          string      `json:"status"`
+	SnapshotRef     pgtype.Text `json:"snapshot_ref"`
+	CloneSourceVmID pgtype.UUID `json:"clone_source_vm_id"`
+}
+
+func (q *Queries) VMUpdateLifecycleMetadata(ctx context.Context, arg VMUpdateLifecycleMetadataParams) (Vm, error) {
+	row := q.db.QueryRow(ctx, vMUpdateLifecycleMetadata,
+		arg.ID,
+		arg.Status,
+		arg.SnapshotRef,
+		arg.CloneSourceVmID,
+	)
+	var i Vm
+	err := row.Scan(
+		&i.ID,
+		&i.ServerID,
+		&i.ImageID,
+		&i.Status,
+		&i.Runtime,
+		&i.SnapshotRef,
+		&i.CloneSourceVmID,
+		&i.Vcpus,
+		&i.Memory,
+		&i.IpAddress,
+		&i.Port,
+		&i.EnvVariables,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const vMUpdateStatus = `-- name: VMUpdateStatus :one
-UPDATE vms SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING id, server_id, image_id, status, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at
+UPDATE vms SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING id, server_id, image_id, status, runtime, snapshot_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at
 `
 
 type VMUpdateStatusParams struct {
@@ -3465,6 +3599,9 @@ func (q *Queries) VMUpdateStatus(ctx context.Context, arg VMUpdateStatusParams) 
 		&i.ServerID,
 		&i.ImageID,
 		&i.Status,
+		&i.Runtime,
+		&i.SnapshotRef,
+		&i.CloneSourceVmID,
 		&i.Vcpus,
 		&i.Memory,
 		&i.IpAddress,

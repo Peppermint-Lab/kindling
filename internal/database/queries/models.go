@@ -68,14 +68,16 @@ type Deployment struct {
 }
 
 type DeploymentInstance struct {
-	ID           pgtype.UUID        `json:"id"`
-	DeploymentID pgtype.UUID        `json:"deployment_id"`
-	ServerID     pgtype.UUID        `json:"server_id"`
-	VmID         pgtype.UUID        `json:"vm_id"`
-	Status       string             `json:"status"`
-	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	ID                    pgtype.UUID        `json:"id"`
+	DeploymentID          pgtype.UUID        `json:"deployment_id"`
+	ServerID              pgtype.UUID        `json:"server_id"`
+	VmID                  pgtype.UUID        `json:"vm_id"`
+	Role                  string             `json:"role"`
+	CloneSourceInstanceID pgtype.UUID        `json:"clone_source_instance_id"`
+	Status                string             `json:"status"`
+	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Domain struct {
@@ -236,18 +238,21 @@ type UserSession struct {
 }
 
 type Vm struct {
-	ID           pgtype.UUID        `json:"id"`
-	ServerID     pgtype.UUID        `json:"server_id"`
-	ImageID      pgtype.UUID        `json:"image_id"`
-	Status       string             `json:"status"`
-	Vcpus        int32              `json:"vcpus"`
-	Memory       int32              `json:"memory"`
-	IpAddress    netip.Addr         `json:"ip_address"`
-	Port         pgtype.Int4        `json:"port"`
-	EnvVariables pgtype.Text        `json:"env_variables"`
-	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	ID              pgtype.UUID        `json:"id"`
+	ServerID        pgtype.UUID        `json:"server_id"`
+	ImageID         pgtype.UUID        `json:"image_id"`
+	Status          string             `json:"status"`
+	Runtime         string             `json:"runtime"`
+	SnapshotRef     pgtype.Text        `json:"snapshot_ref"`
+	CloneSourceVmID pgtype.UUID        `json:"clone_source_vm_id"`
+	Vcpus           int32              `json:"vcpus"`
+	Memory          int32              `json:"memory"`
+	IpAddress       netip.Addr         `json:"ip_address"`
+	Port            pgtype.Int4        `json:"port"`
+	EnvVariables    pgtype.Text        `json:"env_variables"`
+	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 type VmLog struct {
