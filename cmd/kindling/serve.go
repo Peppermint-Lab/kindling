@@ -489,8 +489,24 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 
 	if components.api || components.edge || components.worker {
 		go func() {
-			if err := wal.Start(ctx); err != nil && ctx.Err() == nil {
-				slog.Error("WAL listener failed", "error", err)
+			backoff := time.Second
+			for ctx.Err() == nil {
+				if err := wal.Start(ctx); err != nil && ctx.Err() == nil {
+					slog.Error("WAL listener failed", "error", err, "retry_in", backoff)
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(backoff):
+					}
+					if backoff < 30*time.Second {
+						backoff *= 2
+						if backoff > 30*time.Second {
+							backoff = 30 * time.Second
+						}
+					}
+					continue
+				}
+				return
 			}
 		}()
 		slog.Info("WAL listener started")

@@ -62,6 +62,14 @@ func (b *Builder) pullConfig(ctx context.Context) (Config, error) {
 	return b.getConfig(ctx)
 }
 
+func normalizeRegistryURL(registryURL string) string {
+	registryURL = strings.TrimSpace(registryURL)
+	if registryURL == "" {
+		return "kindling"
+	}
+	return registryURL
+}
+
 // ReconcileBuild is the reconcile function for builds.
 func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 	build, err := b.q.BuildFirstByID(ctx, uuidToPgtype(buildID))
@@ -154,7 +162,8 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 	if ociRepo == "" {
 		ociRepo = strings.ToLower(strings.TrimSpace(project.GithubRepository))
 	}
-	imageRef := fmt.Sprintf("%s/%s:%s", cfg.RegistryURL, ociRepo, imageTag)
+	registryURL := normalizeRegistryURL(cfg.RegistryURL)
+	imageRef := fmt.Sprintf("%s/%s:%s", registryURL, ociRepo, imageTag)
 
 	dockerfilePath := project.DockerfilePath
 	if dockerfilePath == "" {
@@ -178,7 +187,7 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 	// Create image record.
 	image, err := b.q.ImageFindOrCreate(ctx, queries.ImageFindOrCreateParams{
 		ID:         uuidToPgtype(uuid.New()),
-		Registry:   cfg.RegistryURL,
+		Registry:   registryURL,
 		Repository: ociRepo,
 		Tag:        imageTag,
 	})

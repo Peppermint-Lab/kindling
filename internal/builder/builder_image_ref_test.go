@@ -14,3 +14,15 @@ func TestImageRefUsesLowercaseOCIRepository(t *testing.T) {
 		t.Fatalf("oci repo = %q", ociRepo)
 	}
 }
+
+func TestNormalizeRegistryURLDefaultsToKindling(t *testing.T) {
+	if got := normalizeRegistryURL(""); got != "kindling" {
+		t.Fatalf("normalizeRegistryURL(\"\") = %q, want %q", got, "kindling")
+	}
+	if got := normalizeRegistryURL("   "); got != "kindling" {
+		t.Fatalf("normalizeRegistryURL(blank) = %q, want %q", got, "kindling")
+	}
+	if got := normalizeRegistryURL("registry.example"); got != "registry.example" {
+		t.Fatalf("normalizeRegistryURL(custom) = %q", got)
+	}
+}

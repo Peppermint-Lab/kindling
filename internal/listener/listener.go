@@ -11,6 +11,7 @@ package listener
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -33,7 +34,8 @@ type Config struct {
 	// The listener appends replication=database automatically.
 	DatabaseURL string
 
-	// SlotName is the replication slot name (default: "kindling_listener").
+	// SlotName is the replication slot name. When empty, a unique temporary
+	// slot name is generated so multiple listeners can run concurrently.
 	SlotName string
 
 	// PublicationName is the PG publication name (default: "kindling_changes").
@@ -65,7 +67,7 @@ type Listener struct {
 // New creates a new WAL listener.
 func New(cfg Config) *Listener {
 	if cfg.SlotName == "" {
-		cfg.SlotName = "kindling_listener"
+		cfg.SlotName = defaultSlotName()
 	}
 	if cfg.PublicationName == "" {
 		cfg.PublicationName = "kindling_changes"
@@ -77,6 +79,51 @@ func New(cfg Config) *Listener {
 		typeMap:        pgtype.NewMap(),
 		standbyTimeout: 10 * time.Second,
 	}
+}
+
+var publicationTables = []string{
+	"deployments",
+	"deployment_instances",
+	"projects",
+	"builds",
+	"vms",
+	"domains",
+	"servers",
+	"preview_environments",
+	"instance_migrations",
+}
+
+func defaultSlotName() string {
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
+	if len(suffix) > 12 {
+		suffix = suffix[:12]
+	}
+	return "kindling_listener_" + suffix
+}
+
+func quoteIdentifier(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
+func publicationCreateSQL(name string) string {
+	return fmt.Sprintf(
+		"CREATE PUBLICATION %s FOR TABLE %s",
+		quoteIdentifier(name),
+		strings.Join(publicationTables, ", "),
+	)
+}
+
+func publicationAlterSQL(name string) string {
+	return fmt.Sprintf(
+		"ALTER PUBLICATION %s SET TABLE %s",
+		quoteIdentifier(name),
+		strings.Join(publicationTables, ", "),
+	)
+}
+
+func isDuplicateObjectError(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42710"
 }
 
 // Start connects to PostgreSQL in replication mode and streams WAL changes
@@ -110,21 +157,21 @@ func (l *Listener) Start(ctx context.Context) error {
 	return l.loop(ctx)
 }
 
-// setupPublication creates (or recreates) the publication for tracked tables.
+// setupPublication ensures the publication exists for the tracked tables.
 func (l *Listener) setupPublication(ctx context.Context) error {
-	drop := fmt.Sprintf("DROP PUBLICATION IF EXISTS %s", l.cfg.PublicationName)
-	result := l.conn.Exec(ctx, drop)
+	result := l.conn.Exec(ctx, publicationCreateSQL(l.cfg.PublicationName))
 	if _, err := result.ReadAll(); err != nil {
-		slog.Warn("failed to drop existing publication", "error", err)
-	}
+		if !isDuplicateObjectError(err) {
+			return fmt.Errorf("create publication: %w", err)
+		}
 
-	create := fmt.Sprintf(
-		"CREATE PUBLICATION %s FOR TABLE deployments, deployment_instances, projects, builds, vms, domains, servers, preview_environments, instance_migrations",
-		l.cfg.PublicationName,
-	)
-	result = l.conn.Exec(ctx, create)
-	if _, err := result.ReadAll(); err != nil {
-		return fmt.Errorf("create publication: %w", err)
+		result = l.conn.Exec(ctx, publicationAlterSQL(l.cfg.PublicationName))
+		if _, err := result.ReadAll(); err != nil {
+			return fmt.Errorf("alter publication: %w", err)
+		}
+
+		slog.Info("updated publication", "name", l.cfg.PublicationName)
+		return nil
 	}
 
 	slog.Info("created publication", "name", l.cfg.PublicationName)
