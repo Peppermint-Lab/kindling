@@ -3,11 +3,13 @@ package rpc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database/queries"
@@ -232,6 +234,28 @@ func projectStripSecret(p queries.Project) queries.Project {
 	return p
 }
 
+func validatePersistentVolumeReplicaCount(desired int32, volumeExists bool) error {
+	if volumeExists && desired > 1 {
+		return errors.New("persistent volumes require desired_instance_count <= 1")
+	}
+	return nil
+}
+
+func (a *API) ensurePersistentVolumeReplicaCount(ctx context.Context, projectID pgtype.UUID, desired int32) error {
+	if desired <= 1 {
+		return nil
+	}
+	_, err := a.q.ProjectVolumeFindByProjectID(ctx, projectID)
+	switch {
+	case err == nil:
+		return validatePersistentVolumeReplicaCount(desired, true)
+	case errors.Is(err, pgx.ErrNoRows):
+		return nil
+	default:
+		return err
+	}
+}
+
 func (a *API) listProjects(w http.ResponseWriter, r *http.Request) {
 	p, ok := mustPrincipal(w, r)
 	if !ok {
@@ -372,6 +396,14 @@ func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
 	if req.DesiredInstanceCount != nil {
 		if *req.DesiredInstanceCount < 0 {
 			writeAPIError(w, http.StatusBadRequest, "validation_error", "desired_instance_count must be at least 0")
+			return
+		}
+		if err := a.ensurePersistentVolumeReplicaCount(r.Context(), id, *req.DesiredInstanceCount); err != nil {
+			if err.Error() == "persistent volumes require desired_instance_count <= 1" {
+				writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
+				return
+			}
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
 			return
 		}
 		project, err = a.q.ProjectUpdateDesiredInstanceCount(r.Context(), queries.ProjectUpdateDesiredInstanceCountParams{

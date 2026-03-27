@@ -218,6 +218,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	snap := cfgMgr.Snapshot()
 	pullAuth := registryAuthFromSnapshot(snap)
 	var rt crunrt.Runtime
+	var deployer *deploy.Deployer
 	serverTracked := components.worker || components.edge
 	if components.worker {
 		rt = crunrt.NewDetectedRuntime(crunrt.HostRuntimeConfig{
@@ -311,7 +312,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 			}, nil
 		}, q, serverID, buildRunner)
 
-		deployer := deploy.New(q, db.Pool, serverID, cfgMgr)
+		deployer = deploy.New(q, db.Pool, serverID, cfgMgr)
 		deployer.SetRuntime(rt)
 
 		deploymentReconciler = reconciler.New(reconciler.Config{
@@ -386,6 +387,14 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 			rpc.TopicProject(projectID),
 			rpc.TopicProjectDeployments(projectID),
 		)
+	}
+	if deployer != nil {
+		deployer.SetDashboardPublishers(publishDeploymentScopes, func() {
+			if dashboardEvents == nil {
+				return
+			}
+			dashboardEvents.Publish(rpc.TopicServers)
+		})
 	}
 
 	// Start WAL listener

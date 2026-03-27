@@ -71,3 +71,21 @@ func TestHasCloudHypervisorWorker(t *testing.T) {
 		t.Fatal("expected draining workers to be ignored")
 	}
 }
+
+func TestValidatePersistentVolumeReplicaCount(t *testing.T) {
+	t.Parallel()
+
+	if err := validatePersistentVolumeReplicaCount(1, true); err != nil {
+		t.Fatalf("desired=1 should pass: %v", err)
+	}
+	if err := validatePersistentVolumeReplicaCount(3, false); err != nil {
+		t.Fatalf("no volume should pass: %v", err)
+	}
+	err := validatePersistentVolumeReplicaCount(2, true)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if err.Error() != "persistent volumes require desired_instance_count <= 1" {
+		t.Fatalf("unexpected error = %q", err.Error())
+	}
+}

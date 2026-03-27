@@ -52,6 +52,15 @@ func (d *Deployer) projectVolumeForProject(ctx context.Context, projectID pgtype
 	return &vol, persistentVolumeMountFromRow(vol), nil
 }
 
+func (d *Deployer) publishProjectVolumeEvents(projectID pgtype.UUID) {
+	if d.publishProjectEvents != nil && projectID.Valid {
+		d.publishProjectEvents(uuidFromPgtype(projectID))
+	}
+	if d.publishServerEvents != nil {
+		d.publishServerEvents()
+	}
+}
+
 func persistentVolumeMountFromRow(vol queries.ProjectVolume) *runtime.PersistentVolumeMount {
 	return &runtime.PersistentVolumeMount{
 		ID:         uuidFromPgtype(vol.ID),
@@ -81,6 +90,7 @@ func (d *Deployer) ensureProjectVolumeServer(ctx context.Context, vol queries.Pr
 				LastError: "",
 			})
 			if err == nil {
+				d.publishProjectVolumeEvents(vol.ProjectID)
 				return updated, nil
 			}
 		}
@@ -98,6 +108,7 @@ func (d *Deployer) ensureProjectVolumeServer(ctx context.Context, vol queries.Pr
 	if err != nil {
 		return vol, err
 	}
+	d.publishProjectVolumeEvents(vol.ProjectID)
 	updated, err = d.q.ProjectVolumeUpdateStatus(ctx, queries.ProjectVolumeUpdateStatusParams{
 		ProjectID: vol.ProjectID,
 		Status:    "available",
@@ -106,6 +117,7 @@ func (d *Deployer) ensureProjectVolumeServer(ctx context.Context, vol queries.Pr
 	if err != nil {
 		return updated, err
 	}
+	d.publishProjectVolumeEvents(vol.ProjectID)
 	return updated, nil
 }
 
@@ -131,6 +143,7 @@ func (d *Deployer) markProjectVolumeUnavailable(ctx context.Context, projectID p
 	if err != nil {
 		return queries.ProjectVolume{}, err
 	}
+	d.publishProjectVolumeEvents(projectID)
 	return vol, &projectVolumeUnavailableError{message: message}
 }
 
@@ -238,6 +251,9 @@ func (d *Deployer) detachProjectVolumeIfAttached(ctx context.Context, projectID,
 		Status:    status,
 		LastError: lastError,
 	})
+	if err == nil {
+		d.publishProjectVolumeEvents(projectID)
+	}
 	return err
 }
 

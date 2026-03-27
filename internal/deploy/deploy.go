@@ -33,6 +33,8 @@ type Deployer struct {
 	deploymentReconciler *reconciler.Scheduler
 	serverScheduler      *reconciler.Scheduler
 	rt                   runtime.Runtime
+	publishProjectEvents func(projectID uuid.UUID)
+	publishServerEvents  func()
 }
 
 type projectSecretDecoder interface {
@@ -58,6 +60,12 @@ func (d *Deployer) SetReconciler(r *reconciler.Scheduler) {
 // SetServerScheduler schedules the server reconciler when instances leave a draining host.
 func (d *Deployer) SetServerScheduler(r *reconciler.Scheduler) {
 	d.serverScheduler = r
+}
+
+// SetDashboardPublishers configures optional dashboard invalidation hooks.
+func (d *Deployer) SetDashboardPublishers(projectEvents func(projectID uuid.UUID), serverEvents func()) {
+	d.publishProjectEvents = projectEvents
+	d.publishServerEvents = serverEvents
 }
 
 // effectiveReplicaCount returns how many instances the deployment reconciler
@@ -928,6 +936,7 @@ func (d *Deployer) reconcileOneInstance(
 			})
 			return fmt.Errorf("attach project volume to vm: %w", err)
 		}
+		d.publishProjectVolumeEvents(dep.ProjectID)
 	}
 	return nil
 }
