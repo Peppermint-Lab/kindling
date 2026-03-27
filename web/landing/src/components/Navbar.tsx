@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { Flame, Menu, X } from "lucide-react"
+import { loginHref } from "@/lib/login"
 
 function GitHubIcon({ className }: { className?: string }) {
   return (
@@ -41,6 +42,12 @@ export function Navbar() {
           >
             <GitHubIcon className="w-4 h-4" />
           </a>
+          <a
+            href={loginHref}
+            className="text-sm font-medium text-black bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-md transition-colors"
+          >
+            Sign in
+          </a>
         </div>
 
         <button
@@ -63,6 +70,13 @@ export function Navbar() {
               {l.label}
             </a>
           ))}
+          <a
+            href={loginHref}
+            className="text-sm font-medium text-black py-1"
+            onClick={() => setOpen(false)}
+          >
+            Sign in
+          </a>
         </div>
       )}
     </nav>

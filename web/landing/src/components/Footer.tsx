@@ -1,4 +1,5 @@
 import { Flame } from "lucide-react"
+import { loginHref } from "@/lib/login"
 
 export function Footer() {
   return (
@@ -10,6 +11,12 @@ export function Footer() {
             <span>Kindling</span>
           </div>
           <div className="flex items-center gap-6 text-sm text-gray-400">
+            <a
+              href={loginHref}
+              className="hover:text-black transition-colors"
+            >
+              sign in
+            </a>
             <a
               href="https://docs.kindling.dev"
               className="hover:text-black transition-colors"
