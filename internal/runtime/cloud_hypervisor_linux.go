@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -43,33 +44,37 @@ type CloudHypervisorRuntime struct {
 	instances map[uuid.UUID]*cloudHypervisorInstance
 	suspended map[uuid.UUID]*cloudHypervisorSuspended
 	templates map[string]*cloudHypervisorTemplate
+	prepared  map[uuid.UUID]*cloudHypervisorPreparedMigration
 	nextSlot  atomic.Uint32
 
-	binaryPath    string
-	kernelPath    string
-	initramfsPath string
-	advertiseHost string
-	pullAuth      *oci.Auth
+	binaryPath      string
+	kernelPath      string
+	initramfsPath   string
+	sharedRootfsDir string
+	advertiseHost   string
+	pullAuth        *oci.Auth
 }
 
 type cloudHypervisorInstance struct {
-	cmd        *exec.Cmd
-	bridgeCmd  *exec.Cmd
-	tapName    string
-	ip         string
-	vmIP       string
-	workDir    string
-	socketBase string
-	logs       []string
-	logMu      sync.Mutex
-	cancel     context.CancelFunc
-	ready      chan struct{}
-	once       sync.Once
-	inst       Instance
-	workDisk   string
-	hostPort   int
-	retain     bool
-	stopped    chan struct{}
+	cmd             *exec.Cmd
+	bridgeCmd       *exec.Cmd
+	tapName         string
+	ip              string
+	vmIP            string
+	workDir         string
+	socketBase      string
+	apiSocket       string
+	logs            []string
+	logMu           sync.Mutex
+	cancel          context.CancelFunc
+	ready           chan struct{}
+	once            sync.Once
+	inst            Instance
+	workDisk        string
+	sharedRootfsRef string
+	hostPort        int
+	retain          bool
+	stopped         chan struct{}
 }
 
 type cloudHypervisorSuspended struct {
@@ -81,6 +86,18 @@ type cloudHypervisorSuspended struct {
 
 type cloudHypervisorTemplate struct {
 	workDisk string
+}
+
+type cloudHypervisorPreparedMigration struct {
+	id              uuid.UUID
+	cmd             *exec.Cmd
+	workDir         string
+	apiSocket       string
+	socketBase      string
+	sharedRootfsRef string
+	hostPort        int
+	ip              string
+	stopped         chan struct{}
 }
 
 type guestConfig struct {
@@ -97,22 +114,34 @@ func NewCloudHypervisorRuntime(cfg CloudHypervisorHostConfig, advertiseHost stri
 	home, _ := os.UserHomeDir()
 	homeKernel := filepath.Join(home, ".kindling", "vmlinuz.bin")
 	homeInitramfs := filepath.Join(home, ".kindling", "initramfs.cpio.gz")
+	sharedRootfsDir := strings.TrimSpace(cfg.SharedRootfsDir)
+	if sharedRootfsDir == "" {
+		sharedRootfsDir = strings.TrimSpace(os.Getenv("KINDLING_CH_SHARED_ROOTFS_DIR"))
+	}
+	if sharedRootfsDir == "" {
+		defaultShared := filepath.Join("/data", "kindling-shared-rootfs")
+		if _, err := os.Stat(defaultShared); err == nil {
+			sharedRootfsDir = defaultShared
+		}
+	}
 	return &CloudHypervisorRuntime{
 		instances:  make(map[uuid.UUID]*cloudHypervisorInstance),
 		suspended:  make(map[uuid.UUID]*cloudHypervisorSuspended),
 		templates:  make(map[string]*cloudHypervisorTemplate),
+		prepared:   make(map[uuid.UUID]*cloudHypervisorPreparedMigration),
 		binaryPath: firstExistingPath(cfg.BinaryPath, cloudHypervisorDefaultBin),
 		// Note: do not fall back to /data/vmlinux.bin — provision.sh stores rust hypervisor firmware there, not a Linux bzImage/vmlinux.
-		kernelPath:    firstExistingPath(cfg.KernelPath, cloudHypervisorDefaultKernel, homeKernel),
-		initramfsPath: firstExistingPath(cfg.InitramfsPath, cloudHypervisorDefaultInitramfs, homeInitramfs),
-		advertiseHost: strings.TrimSpace(advertiseHost),
-		pullAuth:      pullAuth,
+		kernelPath:      firstExistingPath(cfg.KernelPath, cloudHypervisorDefaultKernel, homeKernel),
+		initramfsPath:   firstExistingPath(cfg.InitramfsPath, cloudHypervisorDefaultInitramfs, homeInitramfs),
+		sharedRootfsDir: sharedRootfsDir,
+		advertiseHost:   strings.TrimSpace(advertiseHost),
+		pullAuth:        pullAuth,
 	}
 }
 
 func (r *CloudHypervisorRuntime) Name() string { return "cloud-hypervisor" }
 func (r *CloudHypervisorRuntime) Supports(cap Capability) bool {
-	return cap == CapabilitySuspendResume || cap == CapabilityWarmClone
+	return cap == CapabilitySuspendResume || cap == CapabilityWarmClone || cap == CapabilityLiveMigration
 }
 
 func (r *CloudHypervisorRuntime) Start(ctx context.Context, inst Instance) (string, error) {
@@ -141,6 +170,14 @@ func (r *CloudHypervisorRuntime) startVM(ctx context.Context, inst Instance) (st
 		return "", err
 	}
 	workDisk := filepath.Join(workDir, "rootfs.qcow2")
+	if sharedDisk, ok := r.sharedRootfsPath(inst.ID); ok {
+		if err := ensureDir(filepath.Dir(sharedDisk)); err != nil {
+			_ = os.RemoveAll(workDir)
+			return "", err
+		}
+		workDisk = sharedDisk
+	}
+	_ = os.Remove(workDisk)
 	if out, err := exec.CommandContext(ctx, "virt-make-fs", "--format=qcow2", "--type=ext4", "--size=+2G", rootfsDir, workDisk).CombinedOutput(); err != nil {
 		_ = os.RemoveAll(workDir)
 		return "", fmt.Errorf("virt-make-fs: %s: %w", string(out), err)
@@ -187,15 +224,17 @@ func (r *CloudHypervisorRuntime) startPreparedVM(ctx context.Context, inst Insta
 
 	runCtx, cancel := context.WithCancel(ctx)
 	ai := &cloudHypervisorInstance{
-		tapName:    tapName,
-		vmIP:       guestIP,
-		workDir:    workDir,
-		workDisk:   workDisk,
-		socketBase: filepath.Join(os.TempDir(), "kindling-vsock-"+inst.ID.String()+".sock"),
-		cancel:     cancel,
-		ready:      make(chan struct{}),
-		inst:       inst,
-		stopped:    make(chan struct{}),
+		tapName:         tapName,
+		vmIP:            guestIP,
+		workDir:         workDir,
+		workDisk:        workDisk,
+		sharedRootfsRef: sharedRootfsRefFromWorkDisk(r.sharedRootfsDir, workDisk),
+		socketBase:      filepath.Join(os.TempDir(), "kindling-vsock-"+inst.ID.String()+".sock"),
+		apiSocket:       filepath.Join(workDir, "api.sock"),
+		cancel:          cancel,
+		ready:           make(chan struct{}),
+		inst:            inst,
+		stopped:         make(chan struct{}),
 	}
 
 	if err := r.startGuestVsockServer(runCtx, inst, ai, guestCIDR, hostIP, port); err != nil {
@@ -216,6 +255,7 @@ func (r *CloudHypervisorRuntime) startPreparedVM(ctx context.Context, inst Insta
 	args = append(args,
 		"--net", fmt.Sprintf("tap=%s,ip=%s,mask=255.255.255.254", tapName, hostIP),
 		"--vsock", fmt.Sprintf("cid=3,socket=%s", ai.socketBase),
+		"--api-socket", ai.apiSocket,
 	)
 	cmd := exec.CommandContext(runCtx, r.binaryPath, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -378,6 +418,13 @@ func (r *CloudHypervisorRuntime) StartClone(ctx context.Context, inst Instance, 
 		return "", StartMetadata{}, err
 	}
 	workDisk := filepath.Join(workDir, "rootfs.qcow2")
+	if sharedDisk, ok := r.sharedRootfsPath(inst.ID); ok {
+		if err := ensureDir(filepath.Dir(sharedDisk)); err != nil {
+			return "", StartMetadata{}, err
+		}
+		workDisk = sharedDisk
+	}
+	_ = os.Remove(workDisk)
 	if err := copyFile(tmpl.workDisk, workDisk); err != nil {
 		return "", StartMetadata{}, err
 	}
@@ -385,7 +432,169 @@ func (r *CloudHypervisorRuntime) StartClone(ctx context.Context, inst Instance, 
 	if err != nil {
 		return "", StartMetadata{}, err
 	}
-	return ip, StartMetadata{SnapshotRef: snapshotRef, CloneSourceVMID: cloneSourceVMID}, nil
+	return ip, StartMetadata{
+		SnapshotRef:     snapshotRef,
+		SharedRootfsRef: sharedRootfsRefFromWorkDisk(r.sharedRootfsDir, workDisk),
+		CloneSourceVMID: cloneSourceVMID,
+	}, nil
+}
+
+func (r *CloudHypervisorRuntime) MigrationMetadata(ctx context.Context, id uuid.UUID) (MigrationMetadata, error) {
+	r.mu.Lock()
+	ai, ok := r.instances[id]
+	r.mu.Unlock()
+	if !ok {
+		return MigrationMetadata{}, ErrInstanceNotRunning
+	}
+	info, err := r.pingVMM(ctx, ai.apiSocket)
+	if err != nil {
+		return MigrationMetadata{}, err
+	}
+	return MigrationMetadata{
+		SharedRootfsRef: ai.sharedRootfsRef,
+		Version:         strings.TrimSpace(info.Version),
+	}, nil
+}
+
+func (r *CloudHypervisorRuntime) PrepareMigrationTarget(ctx context.Context, id uuid.UUID) (PreparedMigrationTarget, error) {
+	if strings.TrimSpace(r.sharedRootfsDir) == "" {
+		return PreparedMigrationTarget{}, ErrLiveMigrationUnsupported
+	}
+	workDir := cloudHypervisorWorkDir(id)
+	_ = os.RemoveAll(workDir)
+	if err := ensureDir(workDir); err != nil {
+		return PreparedMigrationTarget{}, err
+	}
+	apiSocket := filepath.Join(workDir, "api.sock")
+	socketBase := filepath.Join(os.TempDir(), "kindling-vsock-"+id.String()+".sock")
+	cmd := exec.CommandContext(ctx, r.binaryPath, "--api-socket", apiSocket)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+	if err := cmd.Start(); err != nil {
+		_ = os.RemoveAll(workDir)
+		return PreparedMigrationTarget{}, fmt.Errorf("start destination cloud-hypervisor: %w", err)
+	}
+	prepared := &cloudHypervisorPreparedMigration{
+		id:              id,
+		cmd:             cmd,
+		workDir:         workDir,
+		apiSocket:       apiSocket,
+		socketBase:      socketBase,
+		sharedRootfsRef: sharedRootfsRefFromWorkDisk(r.sharedRootfsDir, sharedRootfsPathForID(r.sharedRootfsDir, id)),
+		stopped:         make(chan struct{}),
+	}
+	ai := &cloudHypervisorInstance{logMu: sync.Mutex{}}
+	go func() {
+		r.captureOutputCH(ai, stdout)
+	}()
+	go func() {
+		r.captureOutputCH(ai, stderr)
+	}()
+	if err := waitForCloudHypervisorAPI(ctx, apiSocket); err != nil {
+		_ = terminatePID(cmd.Process.Pid)
+		_ = os.RemoveAll(workDir)
+		return PreparedMigrationTarget{}, err
+	}
+	port, err := pickFreeTCPPort()
+	if err != nil {
+		_ = terminatePID(cmd.Process.Pid)
+		_ = os.RemoveAll(workDir)
+		return PreparedMigrationTarget{}, err
+	}
+	receiveAddr := net.JoinHostPort("0.0.0.0", strconv.Itoa(port))
+	if err := r.putVMM(ctx, apiSocket, "/vm.receive-migration", map[string]string{"receiver_url": "tcp:" + receiveAddr}); err != nil {
+		_ = terminatePID(cmd.Process.Pid)
+		_ = os.RemoveAll(workDir)
+		return PreparedMigrationTarget{}, err
+	}
+	prepared.hostPort = 0
+	r.mu.Lock()
+	r.prepared[id] = prepared
+	r.mu.Unlock()
+	go r.waitPreparedMigration(prepared)
+	return PreparedMigrationTarget{ReceiveAddr: receiveAddr}, nil
+}
+
+func (r *CloudHypervisorRuntime) SendMigration(ctx context.Context, id uuid.UUID, req SendMigrationRequest) error {
+	r.mu.Lock()
+	ai, ok := r.instances[id]
+	r.mu.Unlock()
+	if !ok {
+		return ErrInstanceNotRunning
+	}
+	payload := map[string]any{
+		"destination_url":  req.DestinationURL,
+		"downtime_ms":      req.DowntimeMS,
+		"timeout_s":        req.TimeoutSeconds,
+		"timeout_strategy": "Cancel",
+	}
+	return r.putVMM(ctx, ai.apiSocket, "/vm.send-migration", payload)
+}
+
+func (r *CloudHypervisorRuntime) FinalizeMigrationTarget(ctx context.Context, id uuid.UUID) (string, StartMetadata, error) {
+	r.mu.Lock()
+	prepared, ok := r.prepared[id]
+	if ok {
+		delete(r.prepared, id)
+	}
+	r.mu.Unlock()
+	if !ok {
+		return "", StartMetadata{}, ErrInstanceNotRunning
+	}
+	prepared.hostPort, _ = pickFreeTCPPort()
+	prepared.ip, _ = applyAdvertisedHost(net.JoinHostPort("0.0.0.0", strconv.Itoa(prepared.hostPort)), r.advertiseHost)
+	bridgeCmd, err := startCloudHypervisorBridgeHelper(prepared.hostPort, prepared.socketBase)
+	if err != nil {
+		_ = terminatePID(prepared.cmd.Process.Pid)
+		_ = os.RemoveAll(prepared.workDir)
+		return "", StartMetadata{}, fmt.Errorf("start migration bridge: %w", err)
+	}
+	if err := waitForTCPPort(ctx, net.JoinHostPort("127.0.0.1", strconv.Itoa(prepared.hostPort)), 5*time.Second); err != nil {
+		_ = terminatePID(bridgeCmd.Process.Pid)
+		_ = terminatePID(prepared.cmd.Process.Pid)
+		_ = os.RemoveAll(prepared.workDir)
+		return "", StartMetadata{}, err
+	}
+	runCtx, cancel := context.WithCancel(context.Background())
+	ai := &cloudHypervisorInstance{
+		cmd:             prepared.cmd,
+		bridgeCmd:       bridgeCmd,
+		ip:              prepared.ip,
+		workDir:         prepared.workDir,
+		socketBase:      prepared.socketBase,
+		apiSocket:       prepared.apiSocket,
+		workDisk:        sharedRootfsPathForID(r.sharedRootfsDir, id),
+		sharedRootfsRef: prepared.sharedRootfsRef,
+		hostPort:        prepared.hostPort,
+		cancel:          cancel,
+		ready:           make(chan struct{}),
+		inst:            Instance{ID: id},
+		stopped:         make(chan struct{}),
+	}
+	r.mu.Lock()
+	r.instances[id] = ai
+	r.mu.Unlock()
+	go r.waitCH(id, ai)
+	_ = runCtx
+	return prepared.ip, StartMetadata{SharedRootfsRef: prepared.sharedRootfsRef}, nil
+}
+
+func (r *CloudHypervisorRuntime) AbortMigrationTarget(ctx context.Context, id uuid.UUID) error {
+	r.mu.Lock()
+	prepared, ok := r.prepared[id]
+	if ok {
+		delete(r.prepared, id)
+	}
+	r.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	if prepared.cmd != nil && prepared.cmd.Process != nil {
+		_ = terminatePID(prepared.cmd.Process.Pid)
+	}
+	_ = os.RemoveAll(prepared.workDir)
+	return nil
 }
 
 func (r *CloudHypervisorRuntime) startGuestVsockServer(ctx context.Context, inst Instance, ai *cloudHypervisorInstance, guestCIDR, hostIP string, port int) error {
@@ -476,10 +685,34 @@ func (r *CloudHypervisorRuntime) waitCH(id uuid.UUID, ai *cloudHypervisorInstanc
 	close(ai.stopped)
 }
 
+func (r *CloudHypervisorRuntime) waitPreparedMigration(prepared *cloudHypervisorPreparedMigration) {
+	if prepared == nil || prepared.cmd == nil {
+		return
+	}
+	_ = prepared.cmd.Wait()
+	r.mu.Lock()
+	current, ok := r.prepared[prepared.id]
+	if ok && current == prepared {
+		delete(r.prepared, prepared.id)
+	}
+	r.mu.Unlock()
+	_ = os.RemoveAll(prepared.workDir)
+	close(prepared.stopped)
+}
+
 func (r *CloudHypervisorRuntime) Stop(ctx context.Context, id uuid.UUID) error {
 	r.mu.Lock()
 	ai, ok := r.instances[id]
 	if !ok {
+		if prepared, prepOK := r.prepared[id]; prepOK {
+			delete(r.prepared, id)
+			r.mu.Unlock()
+			if prepared.cmd != nil && prepared.cmd.Process != nil {
+				_ = terminatePID(prepared.cmd.Process.Pid)
+			}
+			_ = os.RemoveAll(prepared.workDir)
+			return nil
+		}
 		if s, suspended := r.suspended[id]; suspended {
 			delete(r.suspended, id)
 			r.mu.Unlock()
@@ -549,6 +782,11 @@ func (r *CloudHypervisorRuntime) StopAll() {
 	for _, ai := range r.instances {
 		ai.cancel()
 	}
+	for _, prepared := range r.prepared {
+		if prepared.cmd != nil && prepared.cmd.Process != nil {
+			_ = terminatePID(prepared.cmd.Process.Pid)
+		}
+	}
 }
 
 func (r *CloudHypervisorRuntime) captureOutputCH(ai *cloudHypervisorInstance, rd interface{ Read([]byte) (int, error) }) {
@@ -605,6 +843,113 @@ func startCloudHypervisorBridgeHelper(hostPort int, vsockUDS string) (*exec.Cmd,
 		return nil, err
 	}
 	return cmd, nil
+}
+
+type cloudHypervisorPingResponse struct {
+	Version string `json:"version"`
+}
+
+func (r *CloudHypervisorRuntime) sharedRootfsPath(id uuid.UUID) (string, bool) {
+	if strings.TrimSpace(r.sharedRootfsDir) == "" {
+		return "", false
+	}
+	return sharedRootfsPathForID(r.sharedRootfsDir, id), true
+}
+
+func sharedRootfsPathForID(base string, id uuid.UUID) string {
+	return filepath.Join(base, id.String(), "rootfs.qcow2")
+}
+
+func sharedRootfsRefFromWorkDisk(sharedDir, workDisk string) string {
+	if strings.TrimSpace(sharedDir) == "" {
+		return ""
+	}
+	cleanDisk := filepath.Clean(workDisk)
+	cleanBase := filepath.Clean(sharedDir) + string(os.PathSeparator)
+	if strings.HasPrefix(cleanDisk, cleanBase) {
+		return cleanDisk
+	}
+	return ""
+}
+
+func waitForCloudHypervisorAPI(ctx context.Context, apiSocket string) error {
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		client := cloudHypervisorAPIClient(apiSocket)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost/api/v1/vmm.ping", nil)
+		if err == nil {
+			resp, callErr := client.Do(req)
+			if callErr == nil {
+				_ = resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					return nil
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("cloud-hypervisor api socket %s did not become ready", apiSocket)
+}
+
+func cloudHypervisorAPIClient(apiSocket string) *http.Client {
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				var d net.Dialer
+				return d.DialContext(ctx, "unix", apiSocket)
+			},
+		},
+	}
+}
+
+func (r *CloudHypervisorRuntime) pingVMM(ctx context.Context, apiSocket string) (cloudHypervisorPingResponse, error) {
+	var out cloudHypervisorPingResponse
+	client := cloudHypervisorAPIClient(apiSocket)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost/api/v1/vmm.ping", nil)
+	if err != nil {
+		return out, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return out, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return out, fmt.Errorf("cloud-hypervisor ping: %s", strings.TrimSpace(string(body)))
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+func (r *CloudHypervisorRuntime) putVMM(ctx context.Context, apiSocket, path string, payload any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	client := cloudHypervisorAPIClient(apiSocket)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://localhost/api/v1"+path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("cloud-hypervisor api %s: status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
 }
 
 func writePIDFile(path string, pid int) error {

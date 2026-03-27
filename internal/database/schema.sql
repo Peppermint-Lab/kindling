@@ -41,9 +41,62 @@ CREATE TABLE IF NOT EXISTS users (
     email          TEXT NOT NULL UNIQUE,
     password_hash  TEXT NOT NULL,
     display_name   TEXT NOT NULL DEFAULT '',
+    is_platform_admin BOOLEAN NOT NULL DEFAULT false,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'is_platform_admin'
+    ) THEN
+        ALTER TABLE users ADD COLUMN is_platform_admin BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS auth_providers (
+    provider                 TEXT PRIMARY KEY CHECK (provider IN ('github', 'oidc')),
+    display_name             TEXT NOT NULL DEFAULT '',
+    enabled                  BOOLEAN NOT NULL DEFAULT false,
+    client_id                TEXT NOT NULL DEFAULT '',
+    client_secret_ciphertext BYTEA,
+    issuer_url               TEXT NOT NULL DEFAULT '',
+    auth_url                 TEXT NOT NULL DEFAULT '',
+    token_url                TEXT NOT NULL DEFAULT '',
+    userinfo_url             TEXT NOT NULL DEFAULT '',
+    scopes                   TEXT NOT NULL DEFAULT '',
+    metadata                 JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO auth_providers (
+    provider, display_name, enabled, client_id, client_secret_ciphertext,
+    issuer_url, auth_url, token_url, userinfo_url, scopes, metadata, created_at, updated_at
+)
+VALUES
+    ('github', 'GitHub', false, '', NULL, '', '', '', '', 'read:user user:email read:org', '{}'::jsonb, NOW(), NOW()),
+    ('oidc', 'OpenID Connect', false, '', NULL, '', '', '', '', 'openid profile email', '{}'::jsonb, NOW(), NOW())
+ON CONFLICT (provider) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS user_identities (
+    id                    UUID PRIMARY KEY,
+    user_id               UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider              TEXT NOT NULL REFERENCES auth_providers(provider) ON DELETE CASCADE,
+    provider_subject      TEXT NOT NULL,
+    provider_login        TEXT NOT NULL DEFAULT '',
+    provider_email        TEXT NOT NULL DEFAULT '',
+    provider_display_name TEXT NOT NULL DEFAULT '',
+    claims                JSONB NOT NULL DEFAULT '{}'::jsonb,
+    last_login_at         TIMESTAMPTZ,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (provider, provider_subject),
+    UNIQUE (user_id, provider)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_identities_user_id ON user_identities (user_id);
 
 CREATE TABLE IF NOT EXISTS organization_memberships (
     id                UUID PRIMARY KEY,
@@ -230,6 +283,7 @@ CREATE TABLE IF NOT EXISTS vms (
     status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'starting', 'running', 'stopped', 'failed', 'suspending', 'suspended', 'warming', 'template')),
     runtime         TEXT NOT NULL DEFAULT '',
     snapshot_ref    TEXT,
+    shared_rootfs_ref TEXT NOT NULL DEFAULT '',
     clone_source_vm_id UUID REFERENCES vms(id),
     vcpus           INT NOT NULL DEFAULT 1,
     memory          INT NOT NULL DEFAULT 512,  -- MB
@@ -469,6 +523,15 @@ END $$;
 DO $$ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'vms' AND column_name = 'shared_rootfs_ref'
+    ) THEN
+        ALTER TABLE vms ADD COLUMN shared_rootfs_ref TEXT NOT NULL DEFAULT '';
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = 'vms' AND column_name = 'clone_source_vm_id'
     ) THEN
         ALTER TABLE vms ADD COLUMN clone_source_vm_id UUID REFERENCES vms(id);
@@ -601,6 +664,40 @@ CREATE TABLE IF NOT EXISTS cluster_secrets (
     ciphertext   BYTEA NOT NULL,
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Instance live migrations (Cloud Hypervisor Phase 2).
+CREATE TABLE IF NOT EXISTS instance_migrations (
+    id                      UUID PRIMARY KEY,
+    deployment_instance_id  UUID NOT NULL REFERENCES deployment_instances(id) ON DELETE CASCADE,
+    source_server_id        UUID NOT NULL REFERENCES servers(id),
+    destination_server_id   UUID NOT NULL REFERENCES servers(id),
+    source_vm_id            UUID NOT NULL REFERENCES vms(id),
+    state                   TEXT NOT NULL DEFAULT 'pending'
+        CHECK (state IN ('pending', 'destination_prepared', 'sending', 'received', 'completed', 'failed', 'aborted', 'fallback_evacuating')),
+    mode                    TEXT NOT NULL DEFAULT 'stop_and_copy'
+        CHECK (mode IN ('stop_and_copy')),
+    receive_addr            TEXT NOT NULL DEFAULT '',
+    receive_token_hash      BYTEA,
+    destination_runtime_url TEXT NOT NULL DEFAULT '',
+    failure_code            TEXT NOT NULL DEFAULT '',
+    failure_message         TEXT NOT NULL DEFAULT '',
+    cutover_deadline_at     TIMESTAMPTZ,
+    started_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at            TIMESTAMPTZ,
+    failed_at               TIMESTAMPTZ,
+    aborted_at              TIMESTAMPTZ,
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_instance_migrations_instance_id
+    ON instance_migrations(deployment_instance_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_instance_migrations_source_server
+    ON instance_migrations(source_server_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_instance_migrations_destination_server
+    ON instance_migrations(destination_server_id, started_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_instance_migrations_one_active_per_instance
+    ON instance_migrations(deployment_instance_id)
+    WHERE state NOT IN ('completed', 'failed', 'aborted', 'fallback_evacuating');
 
 -- Polled resource usage per deployment instance (control plane / workload server)
 CREATE TABLE IF NOT EXISTS instance_usage_samples (

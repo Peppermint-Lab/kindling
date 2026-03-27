@@ -47,6 +47,7 @@ type Config struct {
 	OnVM                 Handler
 	OnDomain             Handler
 	OnServer             Handler
+	OnInstanceMigration  Handler
 }
 
 // Listener streams PostgreSQL WAL changes and dispatches to handlers.
@@ -118,7 +119,7 @@ func (l *Listener) setupPublication(ctx context.Context) error {
 	}
 
 	create := fmt.Sprintf(
-		"CREATE PUBLICATION %s FOR TABLE deployments, deployment_instances, projects, builds, vms, domains, servers, preview_environments",
+		"CREATE PUBLICATION %s FOR TABLE deployments, deployment_instances, projects, builds, vms, domains, servers, preview_environments, instance_migrations",
 		l.cfg.PublicationName,
 	)
 	result = l.conn.Exec(ctx, create)
@@ -330,6 +331,10 @@ func (l *Listener) dispatch(ctx context.Context, relationID uint32, tuple *pglog
 	case "servers":
 		if l.cfg.OnServer != nil {
 			l.cfg.OnServer(ctx, id)
+		}
+	case "instance_migrations":
+		if l.cfg.OnInstanceMigration != nil {
+			l.cfg.OnInstanceMigration(ctx, id)
 		}
 	}
 

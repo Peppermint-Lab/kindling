@@ -21,6 +21,183 @@ func (q *Queries) AdvisoryLock(ctx context.Context, hashtext string) error {
 	return err
 }
 
+const authProviderByProvider = `-- name: AuthProviderByProvider :one
+SELECT provider, display_name, enabled, client_id, client_secret_ciphertext, issuer_url, auth_url, token_url, userinfo_url, scopes, metadata, created_at, updated_at FROM auth_providers WHERE provider = $1
+`
+
+func (q *Queries) AuthProviderByProvider(ctx context.Context, provider string) (AuthProvider, error) {
+	row := q.db.QueryRow(ctx, authProviderByProvider, provider)
+	var i AuthProvider
+	err := row.Scan(
+		&i.Provider,
+		&i.DisplayName,
+		&i.Enabled,
+		&i.ClientID,
+		&i.ClientSecretCiphertext,
+		&i.IssuerUrl,
+		&i.AuthUrl,
+		&i.TokenUrl,
+		&i.UserinfoUrl,
+		&i.Scopes,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const authProviderListAll = `-- name: AuthProviderListAll :many
+
+SELECT provider, display_name, enabled, client_id, client_secret_ciphertext, issuer_url, auth_url, token_url, userinfo_url, scopes, metadata, created_at, updated_at FROM auth_providers
+ORDER BY provider ASC
+`
+
+// Auth providers --
+func (q *Queries) AuthProviderListAll(ctx context.Context) ([]AuthProvider, error) {
+	rows, err := q.db.Query(ctx, authProviderListAll)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AuthProvider{}
+	for rows.Next() {
+		var i AuthProvider
+		if err := rows.Scan(
+			&i.Provider,
+			&i.DisplayName,
+			&i.Enabled,
+			&i.ClientID,
+			&i.ClientSecretCiphertext,
+			&i.IssuerUrl,
+			&i.AuthUrl,
+			&i.TokenUrl,
+			&i.UserinfoUrl,
+			&i.Scopes,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const authProviderListEnabled = `-- name: AuthProviderListEnabled :many
+SELECT provider, display_name, enabled, client_id, client_secret_ciphertext, issuer_url, auth_url, token_url, userinfo_url, scopes, metadata, created_at, updated_at FROM auth_providers
+WHERE enabled = TRUE
+  AND BTRIM(client_id) <> ''
+ORDER BY provider ASC
+`
+
+func (q *Queries) AuthProviderListEnabled(ctx context.Context) ([]AuthProvider, error) {
+	rows, err := q.db.Query(ctx, authProviderListEnabled)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AuthProvider{}
+	for rows.Next() {
+		var i AuthProvider
+		if err := rows.Scan(
+			&i.Provider,
+			&i.DisplayName,
+			&i.Enabled,
+			&i.ClientID,
+			&i.ClientSecretCiphertext,
+			&i.IssuerUrl,
+			&i.AuthUrl,
+			&i.TokenUrl,
+			&i.UserinfoUrl,
+			&i.Scopes,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const authProviderUpsert = `-- name: AuthProviderUpsert :one
+INSERT INTO auth_providers (
+    provider, display_name, enabled, client_id, client_secret_ciphertext,
+    issuer_url, auth_url, token_url, userinfo_url, scopes, metadata, updated_at
+) VALUES (
+    $1, $2, $3, $4, $5,
+    $6, $7, $8, $9, $10, $11, NOW()
+)
+ON CONFLICT (provider) DO UPDATE SET
+    display_name = EXCLUDED.display_name,
+    enabled = EXCLUDED.enabled,
+    client_id = EXCLUDED.client_id,
+    client_secret_ciphertext = EXCLUDED.client_secret_ciphertext,
+    issuer_url = EXCLUDED.issuer_url,
+    auth_url = EXCLUDED.auth_url,
+    token_url = EXCLUDED.token_url,
+    userinfo_url = EXCLUDED.userinfo_url,
+    scopes = EXCLUDED.scopes,
+    metadata = EXCLUDED.metadata,
+    updated_at = NOW()
+RETURNING provider, display_name, enabled, client_id, client_secret_ciphertext, issuer_url, auth_url, token_url, userinfo_url, scopes, metadata, created_at, updated_at
+`
+
+type AuthProviderUpsertParams struct {
+	Provider               string `json:"provider"`
+	DisplayName            string `json:"display_name"`
+	Enabled                bool   `json:"enabled"`
+	ClientID               string `json:"client_id"`
+	ClientSecretCiphertext []byte `json:"client_secret_ciphertext"`
+	IssuerUrl              string `json:"issuer_url"`
+	AuthUrl                string `json:"auth_url"`
+	TokenUrl               string `json:"token_url"`
+	UserinfoUrl            string `json:"userinfo_url"`
+	Scopes                 string `json:"scopes"`
+	Metadata               []byte `json:"metadata"`
+}
+
+func (q *Queries) AuthProviderUpsert(ctx context.Context, arg AuthProviderUpsertParams) (AuthProvider, error) {
+	row := q.db.QueryRow(ctx, authProviderUpsert,
+		arg.Provider,
+		arg.DisplayName,
+		arg.Enabled,
+		arg.ClientID,
+		arg.ClientSecretCiphertext,
+		arg.IssuerUrl,
+		arg.AuthUrl,
+		arg.TokenUrl,
+		arg.UserinfoUrl,
+		arg.Scopes,
+		arg.Metadata,
+	)
+	var i AuthProvider
+	err := row.Scan(
+		&i.Provider,
+		&i.DisplayName,
+		&i.Enabled,
+		&i.ClientID,
+		&i.ClientSecretCiphertext,
+		&i.IssuerUrl,
+		&i.AuthUrl,
+		&i.TokenUrl,
+		&i.UserinfoUrl,
+		&i.Scopes,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const buildClaimLease = `-- name: BuildClaimLease :one
 UPDATE builds SET processing_by = $2, updated_at = NOW()
 WHERE id = $1 AND (processing_by IS NULL OR processing_by = $2)
@@ -2353,6 +2530,456 @@ func (q *Queries) ImageFindOrCreate(ctx context.Context, arg ImageFindOrCreatePa
 	return i, err
 }
 
+const instanceMigrationCountActiveByServerID = `-- name: InstanceMigrationCountActiveByServerID :one
+SELECT COUNT(*)::bigint AS count
+FROM instance_migrations
+WHERE state NOT IN ('completed', 'failed', 'aborted', 'fallback_evacuating')
+  AND (source_server_id = $1 OR destination_server_id = $1)
+`
+
+func (q *Queries) InstanceMigrationCountActiveByServerID(ctx context.Context, sourceServerID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, instanceMigrationCountActiveByServerID, sourceServerID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const instanceMigrationCreate = `-- name: InstanceMigrationCreate :one
+INSERT INTO instance_migrations (
+    id, deployment_instance_id, source_server_id, destination_server_id, source_vm_id, state, mode,
+    receive_addr, receive_token_hash, destination_runtime_url, failure_code, failure_message, cutover_deadline_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7,
+    '', $8, '', '', '', $9
+)
+RETURNING id, deployment_instance_id, source_server_id, destination_server_id, source_vm_id, state, mode, receive_addr, receive_token_hash, destination_runtime_url, failure_code, failure_message, cutover_deadline_at, started_at, completed_at, failed_at, aborted_at, updated_at
+`
+
+type InstanceMigrationCreateParams struct {
+	ID                   pgtype.UUID        `json:"id"`
+	DeploymentInstanceID pgtype.UUID        `json:"deployment_instance_id"`
+	SourceServerID       pgtype.UUID        `json:"source_server_id"`
+	DestinationServerID  pgtype.UUID        `json:"destination_server_id"`
+	SourceVmID           pgtype.UUID        `json:"source_vm_id"`
+	State                string             `json:"state"`
+	Mode                 string             `json:"mode"`
+	ReceiveTokenHash     []byte             `json:"receive_token_hash"`
+	CutoverDeadlineAt    pgtype.Timestamptz `json:"cutover_deadline_at"`
+}
+
+func (q *Queries) InstanceMigrationCreate(ctx context.Context, arg InstanceMigrationCreateParams) (InstanceMigration, error) {
+	row := q.db.QueryRow(ctx, instanceMigrationCreate,
+		arg.ID,
+		arg.DeploymentInstanceID,
+		arg.SourceServerID,
+		arg.DestinationServerID,
+		arg.SourceVmID,
+		arg.State,
+		arg.Mode,
+		arg.ReceiveTokenHash,
+		arg.CutoverDeadlineAt,
+	)
+	var i InstanceMigration
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentInstanceID,
+		&i.SourceServerID,
+		&i.DestinationServerID,
+		&i.SourceVmID,
+		&i.State,
+		&i.Mode,
+		&i.ReceiveAddr,
+		&i.ReceiveTokenHash,
+		&i.DestinationRuntimeUrl,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.CutoverDeadlineAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.AbortedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const instanceMigrationFindActiveByDeploymentInstanceID = `-- name: InstanceMigrationFindActiveByDeploymentInstanceID :one
+SELECT id, deployment_instance_id, source_server_id, destination_server_id, source_vm_id, state, mode, receive_addr, receive_token_hash, destination_runtime_url, failure_code, failure_message, cutover_deadline_at, started_at, completed_at, failed_at, aborted_at, updated_at FROM instance_migrations
+WHERE deployment_instance_id = $1
+  AND state NOT IN ('completed', 'failed', 'aborted', 'fallback_evacuating')
+ORDER BY started_at DESC
+LIMIT 1
+`
+
+func (q *Queries) InstanceMigrationFindActiveByDeploymentInstanceID(ctx context.Context, deploymentInstanceID pgtype.UUID) (InstanceMigration, error) {
+	row := q.db.QueryRow(ctx, instanceMigrationFindActiveByDeploymentInstanceID, deploymentInstanceID)
+	var i InstanceMigration
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentInstanceID,
+		&i.SourceServerID,
+		&i.DestinationServerID,
+		&i.SourceVmID,
+		&i.State,
+		&i.Mode,
+		&i.ReceiveAddr,
+		&i.ReceiveTokenHash,
+		&i.DestinationRuntimeUrl,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.CutoverDeadlineAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.AbortedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const instanceMigrationFirstByID = `-- name: InstanceMigrationFirstByID :one
+SELECT id, deployment_instance_id, source_server_id, destination_server_id, source_vm_id, state, mode, receive_addr, receive_token_hash, destination_runtime_url, failure_code, failure_message, cutover_deadline_at, started_at, completed_at, failed_at, aborted_at, updated_at FROM instance_migrations WHERE id = $1
+`
+
+func (q *Queries) InstanceMigrationFirstByID(ctx context.Context, id pgtype.UUID) (InstanceMigration, error) {
+	row := q.db.QueryRow(ctx, instanceMigrationFirstByID, id)
+	var i InstanceMigration
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentInstanceID,
+		&i.SourceServerID,
+		&i.DestinationServerID,
+		&i.SourceVmID,
+		&i.State,
+		&i.Mode,
+		&i.ReceiveAddr,
+		&i.ReceiveTokenHash,
+		&i.DestinationRuntimeUrl,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.CutoverDeadlineAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.AbortedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const instanceMigrationLatestByDeploymentInstanceID = `-- name: InstanceMigrationLatestByDeploymentInstanceID :one
+SELECT id, deployment_instance_id, source_server_id, destination_server_id, source_vm_id, state, mode, receive_addr, receive_token_hash, destination_runtime_url, failure_code, failure_message, cutover_deadline_at, started_at, completed_at, failed_at, aborted_at, updated_at FROM instance_migrations
+WHERE deployment_instance_id = $1
+ORDER BY started_at DESC
+LIMIT 1
+`
+
+func (q *Queries) InstanceMigrationLatestByDeploymentInstanceID(ctx context.Context, deploymentInstanceID pgtype.UUID) (InstanceMigration, error) {
+	row := q.db.QueryRow(ctx, instanceMigrationLatestByDeploymentInstanceID, deploymentInstanceID)
+	var i InstanceMigration
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentInstanceID,
+		&i.SourceServerID,
+		&i.DestinationServerID,
+		&i.SourceVmID,
+		&i.State,
+		&i.Mode,
+		&i.ReceiveAddr,
+		&i.ReceiveTokenHash,
+		&i.DestinationRuntimeUrl,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.CutoverDeadlineAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.AbortedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const instanceMigrationUpdateAborted = `-- name: InstanceMigrationUpdateAborted :one
+UPDATE instance_migrations
+SET state = 'aborted',
+    failure_code = $2,
+    failure_message = $3,
+    aborted_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, deployment_instance_id, source_server_id, destination_server_id, source_vm_id, state, mode, receive_addr, receive_token_hash, destination_runtime_url, failure_code, failure_message, cutover_deadline_at, started_at, completed_at, failed_at, aborted_at, updated_at
+`
+
+type InstanceMigrationUpdateAbortedParams struct {
+	ID             pgtype.UUID `json:"id"`
+	FailureCode    string      `json:"failure_code"`
+	FailureMessage string      `json:"failure_message"`
+}
+
+func (q *Queries) InstanceMigrationUpdateAborted(ctx context.Context, arg InstanceMigrationUpdateAbortedParams) (InstanceMigration, error) {
+	row := q.db.QueryRow(ctx, instanceMigrationUpdateAborted, arg.ID, arg.FailureCode, arg.FailureMessage)
+	var i InstanceMigration
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentInstanceID,
+		&i.SourceServerID,
+		&i.DestinationServerID,
+		&i.SourceVmID,
+		&i.State,
+		&i.Mode,
+		&i.ReceiveAddr,
+		&i.ReceiveTokenHash,
+		&i.DestinationRuntimeUrl,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.CutoverDeadlineAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.AbortedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const instanceMigrationUpdateCompleted = `-- name: InstanceMigrationUpdateCompleted :one
+UPDATE instance_migrations
+SET state = 'completed',
+    destination_runtime_url = $2,
+    completed_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, deployment_instance_id, source_server_id, destination_server_id, source_vm_id, state, mode, receive_addr, receive_token_hash, destination_runtime_url, failure_code, failure_message, cutover_deadline_at, started_at, completed_at, failed_at, aborted_at, updated_at
+`
+
+type InstanceMigrationUpdateCompletedParams struct {
+	ID                    pgtype.UUID `json:"id"`
+	DestinationRuntimeUrl string      `json:"destination_runtime_url"`
+}
+
+func (q *Queries) InstanceMigrationUpdateCompleted(ctx context.Context, arg InstanceMigrationUpdateCompletedParams) (InstanceMigration, error) {
+	row := q.db.QueryRow(ctx, instanceMigrationUpdateCompleted, arg.ID, arg.DestinationRuntimeUrl)
+	var i InstanceMigration
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentInstanceID,
+		&i.SourceServerID,
+		&i.DestinationServerID,
+		&i.SourceVmID,
+		&i.State,
+		&i.Mode,
+		&i.ReceiveAddr,
+		&i.ReceiveTokenHash,
+		&i.DestinationRuntimeUrl,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.CutoverDeadlineAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.AbortedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const instanceMigrationUpdateFailed = `-- name: InstanceMigrationUpdateFailed :one
+UPDATE instance_migrations
+SET state = 'failed',
+    failure_code = $2,
+    failure_message = $3,
+    failed_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, deployment_instance_id, source_server_id, destination_server_id, source_vm_id, state, mode, receive_addr, receive_token_hash, destination_runtime_url, failure_code, failure_message, cutover_deadline_at, started_at, completed_at, failed_at, aborted_at, updated_at
+`
+
+type InstanceMigrationUpdateFailedParams struct {
+	ID             pgtype.UUID `json:"id"`
+	FailureCode    string      `json:"failure_code"`
+	FailureMessage string      `json:"failure_message"`
+}
+
+func (q *Queries) InstanceMigrationUpdateFailed(ctx context.Context, arg InstanceMigrationUpdateFailedParams) (InstanceMigration, error) {
+	row := q.db.QueryRow(ctx, instanceMigrationUpdateFailed, arg.ID, arg.FailureCode, arg.FailureMessage)
+	var i InstanceMigration
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentInstanceID,
+		&i.SourceServerID,
+		&i.DestinationServerID,
+		&i.SourceVmID,
+		&i.State,
+		&i.Mode,
+		&i.ReceiveAddr,
+		&i.ReceiveTokenHash,
+		&i.DestinationRuntimeUrl,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.CutoverDeadlineAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.AbortedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const instanceMigrationUpdateFallbackEvacuating = `-- name: InstanceMigrationUpdateFallbackEvacuating :one
+UPDATE instance_migrations
+SET state = 'fallback_evacuating',
+    failure_code = $2,
+    failure_message = $3,
+    failed_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, deployment_instance_id, source_server_id, destination_server_id, source_vm_id, state, mode, receive_addr, receive_token_hash, destination_runtime_url, failure_code, failure_message, cutover_deadline_at, started_at, completed_at, failed_at, aborted_at, updated_at
+`
+
+type InstanceMigrationUpdateFallbackEvacuatingParams struct {
+	ID             pgtype.UUID `json:"id"`
+	FailureCode    string      `json:"failure_code"`
+	FailureMessage string      `json:"failure_message"`
+}
+
+func (q *Queries) InstanceMigrationUpdateFallbackEvacuating(ctx context.Context, arg InstanceMigrationUpdateFallbackEvacuatingParams) (InstanceMigration, error) {
+	row := q.db.QueryRow(ctx, instanceMigrationUpdateFallbackEvacuating, arg.ID, arg.FailureCode, arg.FailureMessage)
+	var i InstanceMigration
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentInstanceID,
+		&i.SourceServerID,
+		&i.DestinationServerID,
+		&i.SourceVmID,
+		&i.State,
+		&i.Mode,
+		&i.ReceiveAddr,
+		&i.ReceiveTokenHash,
+		&i.DestinationRuntimeUrl,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.CutoverDeadlineAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.AbortedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const instanceMigrationUpdatePrepared = `-- name: InstanceMigrationUpdatePrepared :one
+UPDATE instance_migrations
+SET state = 'destination_prepared',
+    receive_addr = $2,
+    cutover_deadline_at = $3,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, deployment_instance_id, source_server_id, destination_server_id, source_vm_id, state, mode, receive_addr, receive_token_hash, destination_runtime_url, failure_code, failure_message, cutover_deadline_at, started_at, completed_at, failed_at, aborted_at, updated_at
+`
+
+type InstanceMigrationUpdatePreparedParams struct {
+	ID                pgtype.UUID        `json:"id"`
+	ReceiveAddr       string             `json:"receive_addr"`
+	CutoverDeadlineAt pgtype.Timestamptz `json:"cutover_deadline_at"`
+}
+
+func (q *Queries) InstanceMigrationUpdatePrepared(ctx context.Context, arg InstanceMigrationUpdatePreparedParams) (InstanceMigration, error) {
+	row := q.db.QueryRow(ctx, instanceMigrationUpdatePrepared, arg.ID, arg.ReceiveAddr, arg.CutoverDeadlineAt)
+	var i InstanceMigration
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentInstanceID,
+		&i.SourceServerID,
+		&i.DestinationServerID,
+		&i.SourceVmID,
+		&i.State,
+		&i.Mode,
+		&i.ReceiveAddr,
+		&i.ReceiveTokenHash,
+		&i.DestinationRuntimeUrl,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.CutoverDeadlineAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.AbortedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const instanceMigrationUpdateReceived = `-- name: InstanceMigrationUpdateReceived :one
+UPDATE instance_migrations
+SET state = 'received',
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, deployment_instance_id, source_server_id, destination_server_id, source_vm_id, state, mode, receive_addr, receive_token_hash, destination_runtime_url, failure_code, failure_message, cutover_deadline_at, started_at, completed_at, failed_at, aborted_at, updated_at
+`
+
+func (q *Queries) InstanceMigrationUpdateReceived(ctx context.Context, id pgtype.UUID) (InstanceMigration, error) {
+	row := q.db.QueryRow(ctx, instanceMigrationUpdateReceived, id)
+	var i InstanceMigration
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentInstanceID,
+		&i.SourceServerID,
+		&i.DestinationServerID,
+		&i.SourceVmID,
+		&i.State,
+		&i.Mode,
+		&i.ReceiveAddr,
+		&i.ReceiveTokenHash,
+		&i.DestinationRuntimeUrl,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.CutoverDeadlineAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.AbortedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const instanceMigrationUpdateSending = `-- name: InstanceMigrationUpdateSending :one
+UPDATE instance_migrations
+SET state = 'sending',
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, deployment_instance_id, source_server_id, destination_server_id, source_vm_id, state, mode, receive_addr, receive_token_hash, destination_runtime_url, failure_code, failure_message, cutover_deadline_at, started_at, completed_at, failed_at, aborted_at, updated_at
+`
+
+func (q *Queries) InstanceMigrationUpdateSending(ctx context.Context, id pgtype.UUID) (InstanceMigration, error) {
+	row := q.db.QueryRow(ctx, instanceMigrationUpdateSending, id)
+	var i InstanceMigration
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentInstanceID,
+		&i.SourceServerID,
+		&i.DestinationServerID,
+		&i.SourceVmID,
+		&i.State,
+		&i.Mode,
+		&i.ReceiveAddr,
+		&i.ReceiveTokenHash,
+		&i.DestinationRuntimeUrl,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.CutoverDeadlineAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.AbortedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const instanceUsageLastBefore = `-- name: InstanceUsageLastBefore :one
 SELECT sampled_at, cpu_nanos_cumulative
 FROM instance_usage_samples
@@ -2656,6 +3283,42 @@ func (q *Queries) OrgProviderConnectionListByOrg(ctx context.Context, organizati
 	return items, nil
 }
 
+const orgProviderConnectionListByProvider = `-- name: OrgProviderConnectionListByProvider :many
+SELECT id, organization_id, provider, external_slug, display_label, credentials_ciphertext, metadata, created_at, updated_at FROM org_provider_connections
+WHERE provider = $1
+ORDER BY organization_id ASC, external_slug ASC
+`
+
+func (q *Queries) OrgProviderConnectionListByProvider(ctx context.Context, provider string) ([]OrgProviderConnection, error) {
+	rows, err := q.db.Query(ctx, orgProviderConnectionListByProvider, provider)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrgProviderConnection{}
+	for rows.Next() {
+		var i OrgProviderConnection
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.Provider,
+			&i.ExternalSlug,
+			&i.DisplayLabel,
+			&i.CredentialsCiphertext,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const orgProviderConnectionUpdate = `-- name: OrgProviderConnectionUpdate :one
 UPDATE org_provider_connections
 SET display_label = $2,
@@ -2794,6 +3457,29 @@ func (q *Queries) OrganizationMembershipCreate(ctx context.Context, arg Organiza
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const organizationMembershipUpsert = `-- name: OrganizationMembershipUpsert :exec
+INSERT INTO organization_memberships (id, organization_id, user_id, role)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (organization_id, user_id) DO NOTHING
+`
+
+type OrganizationMembershipUpsertParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	UserID         pgtype.UUID `json:"user_id"`
+	Role           string      `json:"role"`
+}
+
+func (q *Queries) OrganizationMembershipUpsert(ctx context.Context, arg OrganizationMembershipUpsertParams) error {
+	_, err := q.db.Exec(ctx, organizationMembershipUpsert,
+		arg.ID,
+		arg.OrganizationID,
+		arg.UserID,
+		arg.Role,
+	)
+	return err
 }
 
 const organizationMembershipUpsertOwner = `-- name: OrganizationMembershipUpsertOwner :exec
@@ -4468,6 +5154,10 @@ SELECT
     di.status,
     di.created_at,
     di.updated_at,
+    m.id AS migration_id,
+    m.state AS migration_state,
+    m.destination_server_id AS migration_destination_server_id,
+    m.failure_message AS migration_failure_message,
     s.sampled_at,
     s.cpu_percent,
     s.memory_rss_bytes,
@@ -4478,6 +5168,13 @@ FROM deployment_instances di
 INNER JOIN deployments d ON d.id = di.deployment_id
   AND d.deleted_at IS NULL
 INNER JOIN projects p ON p.id = d.project_id
+LEFT JOIN LATERAL (
+    SELECT id, state, destination_server_id, failure_message
+    FROM instance_migrations
+    WHERE deployment_instance_id = di.id
+    ORDER BY started_at DESC
+    LIMIT 1
+) m ON TRUE
 LEFT JOIN LATERAL (
     SELECT sampled_at, cpu_percent, memory_rss_bytes, disk_read_bytes, disk_write_bytes, source
     FROM instance_usage_samples
@@ -4491,21 +5188,25 @@ ORDER BY di.created_at ASC
 `
 
 type ServerInstanceUsageLatestRow struct {
-	DeploymentInstanceID pgtype.UUID        `json:"deployment_instance_id"`
-	DeploymentID         pgtype.UUID        `json:"deployment_id"`
-	ProjectID            pgtype.UUID        `json:"project_id"`
-	ProjectName          string             `json:"project_name"`
-	VmID                 pgtype.UUID        `json:"vm_id"`
-	Role                 string             `json:"role"`
-	Status               string             `json:"status"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
-	SampledAt            pgtype.Timestamptz `json:"sampled_at"`
-	CpuPercent           pgtype.Float8      `json:"cpu_percent"`
-	MemoryRssBytes       int64              `json:"memory_rss_bytes"`
-	DiskReadBytes        int64              `json:"disk_read_bytes"`
-	DiskWriteBytes       int64              `json:"disk_write_bytes"`
-	Source               string             `json:"source"`
+	DeploymentInstanceID         pgtype.UUID        `json:"deployment_instance_id"`
+	DeploymentID                 pgtype.UUID        `json:"deployment_id"`
+	ProjectID                    pgtype.UUID        `json:"project_id"`
+	ProjectName                  string             `json:"project_name"`
+	VmID                         pgtype.UUID        `json:"vm_id"`
+	Role                         string             `json:"role"`
+	Status                       string             `json:"status"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	MigrationID                  pgtype.UUID        `json:"migration_id"`
+	MigrationState               string             `json:"migration_state"`
+	MigrationDestinationServerID pgtype.UUID        `json:"migration_destination_server_id"`
+	MigrationFailureMessage      string             `json:"migration_failure_message"`
+	SampledAt                    pgtype.Timestamptz `json:"sampled_at"`
+	CpuPercent                   pgtype.Float8      `json:"cpu_percent"`
+	MemoryRssBytes               int64              `json:"memory_rss_bytes"`
+	DiskReadBytes                int64              `json:"disk_read_bytes"`
+	DiskWriteBytes               int64              `json:"disk_write_bytes"`
+	Source                       string             `json:"source"`
 }
 
 func (q *Queries) ServerInstanceUsageLatest(ctx context.Context, serverID pgtype.UUID) ([]ServerInstanceUsageLatestRow, error) {
@@ -4527,6 +5228,10 @@ func (q *Queries) ServerInstanceUsageLatest(ctx context.Context, serverID pgtype
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.MigrationID,
+			&i.MigrationState,
+			&i.MigrationDestinationServerID,
+			&i.MigrationFailureMessage,
 			&i.SampledAt,
 			&i.CpuPercent,
 			&i.MemoryRssBytes,
@@ -4687,7 +5392,7 @@ func (q *Queries) TrySessionAdvisoryLock(ctx context.Context, hashtext string) (
 }
 
 const userByEmail = `-- name: UserByEmail :one
-SELECT id, email, password_hash, display_name, created_at, updated_at FROM users WHERE LOWER(email) = LOWER($1)
+SELECT id, email, password_hash, display_name, is_platform_admin, created_at, updated_at FROM users WHERE LOWER(email) = LOWER($1)
 `
 
 func (q *Queries) UserByEmail(ctx context.Context, lower string) (User, error) {
@@ -4698,6 +5403,7 @@ func (q *Queries) UserByEmail(ctx context.Context, lower string) (User, error) {
 		&i.Email,
 		&i.PasswordHash,
 		&i.DisplayName,
+		&i.IsPlatformAdmin,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -4705,7 +5411,7 @@ func (q *Queries) UserByEmail(ctx context.Context, lower string) (User, error) {
 }
 
 const userByID = `-- name: UserByID :one
-SELECT id, email, password_hash, display_name, created_at, updated_at FROM users WHERE id = $1
+SELECT id, email, password_hash, display_name, is_platform_admin, created_at, updated_at FROM users WHERE id = $1
 `
 
 func (q *Queries) UserByID(ctx context.Context, id pgtype.UUID) (User, error) {
@@ -4716,6 +5422,7 @@ func (q *Queries) UserByID(ctx context.Context, id pgtype.UUID) (User, error) {
 		&i.Email,
 		&i.PasswordHash,
 		&i.DisplayName,
+		&i.IsPlatformAdmin,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -4736,16 +5443,17 @@ func (q *Queries) UserCount(ctx context.Context) (int64, error) {
 }
 
 const userCreate = `-- name: UserCreate :one
-INSERT INTO users (id, email, password_hash, display_name)
-VALUES ($1, $2, $3, $4)
-RETURNING id, email, password_hash, display_name, created_at, updated_at
+INSERT INTO users (id, email, password_hash, display_name, is_platform_admin)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, email, password_hash, display_name, is_platform_admin, created_at, updated_at
 `
 
 type UserCreateParams struct {
-	ID           pgtype.UUID `json:"id"`
-	Email        string      `json:"email"`
-	PasswordHash string      `json:"password_hash"`
-	DisplayName  string      `json:"display_name"`
+	ID              pgtype.UUID `json:"id"`
+	Email           string      `json:"email"`
+	PasswordHash    string      `json:"password_hash"`
+	DisplayName     string      `json:"display_name"`
+	IsPlatformAdmin bool        `json:"is_platform_admin"`
 }
 
 func (q *Queries) UserCreate(ctx context.Context, arg UserCreateParams) (User, error) {
@@ -4754,6 +5462,7 @@ func (q *Queries) UserCreate(ctx context.Context, arg UserCreateParams) (User, e
 		arg.Email,
 		arg.PasswordHash,
 		arg.DisplayName,
+		arg.IsPlatformAdmin,
 	)
 	var i User
 	err := row.Scan(
@@ -4761,6 +5470,220 @@ func (q *Queries) UserCreate(ctx context.Context, arg UserCreateParams) (User, e
 		&i.Email,
 		&i.PasswordHash,
 		&i.DisplayName,
+		&i.IsPlatformAdmin,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const userIdentityByProviderSubject = `-- name: UserIdentityByProviderSubject :one
+SELECT id, user_id, provider, provider_subject, provider_login, provider_email, provider_display_name, claims, last_login_at, created_at, updated_at FROM user_identities
+WHERE provider = $1 AND provider_subject = $2
+`
+
+type UserIdentityByProviderSubjectParams struct {
+	Provider        string `json:"provider"`
+	ProviderSubject string `json:"provider_subject"`
+}
+
+func (q *Queries) UserIdentityByProviderSubject(ctx context.Context, arg UserIdentityByProviderSubjectParams) (UserIdentity, error) {
+	row := q.db.QueryRow(ctx, userIdentityByProviderSubject, arg.Provider, arg.ProviderSubject)
+	var i UserIdentity
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Provider,
+		&i.ProviderSubject,
+		&i.ProviderLogin,
+		&i.ProviderEmail,
+		&i.ProviderDisplayName,
+		&i.Claims,
+		&i.LastLoginAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const userIdentityByUserAndProvider = `-- name: UserIdentityByUserAndProvider :one
+SELECT id, user_id, provider, provider_subject, provider_login, provider_email, provider_display_name, claims, last_login_at, created_at, updated_at FROM user_identities
+WHERE user_id = $1 AND provider = $2
+`
+
+type UserIdentityByUserAndProviderParams struct {
+	UserID   pgtype.UUID `json:"user_id"`
+	Provider string      `json:"provider"`
+}
+
+func (q *Queries) UserIdentityByUserAndProvider(ctx context.Context, arg UserIdentityByUserAndProviderParams) (UserIdentity, error) {
+	row := q.db.QueryRow(ctx, userIdentityByUserAndProvider, arg.UserID, arg.Provider)
+	var i UserIdentity
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Provider,
+		&i.ProviderSubject,
+		&i.ProviderLogin,
+		&i.ProviderEmail,
+		&i.ProviderDisplayName,
+		&i.Claims,
+		&i.LastLoginAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const userIdentityCreate = `-- name: UserIdentityCreate :one
+INSERT INTO user_identities (
+    id, user_id, provider, provider_subject, provider_login, provider_email,
+    provider_display_name, claims, last_login_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6,
+    $7, $8, $9
+)
+RETURNING id, user_id, provider, provider_subject, provider_login, provider_email, provider_display_name, claims, last_login_at, created_at, updated_at
+`
+
+type UserIdentityCreateParams struct {
+	ID                  pgtype.UUID        `json:"id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	Provider            string             `json:"provider"`
+	ProviderSubject     string             `json:"provider_subject"`
+	ProviderLogin       string             `json:"provider_login"`
+	ProviderEmail       string             `json:"provider_email"`
+	ProviderDisplayName string             `json:"provider_display_name"`
+	Claims              []byte             `json:"claims"`
+	LastLoginAt         pgtype.Timestamptz `json:"last_login_at"`
+}
+
+func (q *Queries) UserIdentityCreate(ctx context.Context, arg UserIdentityCreateParams) (UserIdentity, error) {
+	row := q.db.QueryRow(ctx, userIdentityCreate,
+		arg.ID,
+		arg.UserID,
+		arg.Provider,
+		arg.ProviderSubject,
+		arg.ProviderLogin,
+		arg.ProviderEmail,
+		arg.ProviderDisplayName,
+		arg.Claims,
+		arg.LastLoginAt,
+	)
+	var i UserIdentity
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Provider,
+		&i.ProviderSubject,
+		&i.ProviderLogin,
+		&i.ProviderEmail,
+		&i.ProviderDisplayName,
+		&i.Claims,
+		&i.LastLoginAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const userIdentityDeleteByUserAndProvider = `-- name: UserIdentityDeleteByUserAndProvider :exec
+DELETE FROM user_identities
+WHERE user_id = $1 AND provider = $2
+`
+
+type UserIdentityDeleteByUserAndProviderParams struct {
+	UserID   pgtype.UUID `json:"user_id"`
+	Provider string      `json:"provider"`
+}
+
+func (q *Queries) UserIdentityDeleteByUserAndProvider(ctx context.Context, arg UserIdentityDeleteByUserAndProviderParams) error {
+	_, err := q.db.Exec(ctx, userIdentityDeleteByUserAndProvider, arg.UserID, arg.Provider)
+	return err
+}
+
+const userIdentityListByUser = `-- name: UserIdentityListByUser :many
+SELECT id, user_id, provider, provider_subject, provider_login, provider_email, provider_display_name, claims, last_login_at, created_at, updated_at FROM user_identities
+WHERE user_id = $1
+ORDER BY provider ASC
+`
+
+func (q *Queries) UserIdentityListByUser(ctx context.Context, userID pgtype.UUID) ([]UserIdentity, error) {
+	rows, err := q.db.Query(ctx, userIdentityListByUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UserIdentity{}
+	for rows.Next() {
+		var i UserIdentity
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Provider,
+			&i.ProviderSubject,
+			&i.ProviderLogin,
+			&i.ProviderEmail,
+			&i.ProviderDisplayName,
+			&i.Claims,
+			&i.LastLoginAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const userIdentityUpdateByID = `-- name: UserIdentityUpdateByID :one
+UPDATE user_identities
+SET provider_subject = $2,
+    provider_login = $3,
+    provider_email = $4,
+    provider_display_name = $5,
+    claims = $6,
+    last_login_at = $7,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, user_id, provider, provider_subject, provider_login, provider_email, provider_display_name, claims, last_login_at, created_at, updated_at
+`
+
+type UserIdentityUpdateByIDParams struct {
+	ID                  pgtype.UUID        `json:"id"`
+	ProviderSubject     string             `json:"provider_subject"`
+	ProviderLogin       string             `json:"provider_login"`
+	ProviderEmail       string             `json:"provider_email"`
+	ProviderDisplayName string             `json:"provider_display_name"`
+	Claims              []byte             `json:"claims"`
+	LastLoginAt         pgtype.Timestamptz `json:"last_login_at"`
+}
+
+func (q *Queries) UserIdentityUpdateByID(ctx context.Context, arg UserIdentityUpdateByIDParams) (UserIdentity, error) {
+	row := q.db.QueryRow(ctx, userIdentityUpdateByID,
+		arg.ID,
+		arg.ProviderSubject,
+		arg.ProviderLogin,
+		arg.ProviderEmail,
+		arg.ProviderDisplayName,
+		arg.Claims,
+		arg.LastLoginAt,
+	)
+	var i UserIdentity
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Provider,
+		&i.ProviderSubject,
+		&i.ProviderLogin,
+		&i.ProviderEmail,
+		&i.ProviderDisplayName,
+		&i.Claims,
+		&i.LastLoginAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -4864,6 +5787,20 @@ func (q *Queries) UserSessionUpdateCurrentOrg(ctx context.Context, arg UserSessi
 	return i, err
 }
 
+const userSetPlatformAdmin = `-- name: UserSetPlatformAdmin :exec
+UPDATE users SET is_platform_admin = $2, updated_at = NOW() WHERE id = $1
+`
+
+type UserSetPlatformAdminParams struct {
+	ID              pgtype.UUID `json:"id"`
+	IsPlatformAdmin bool        `json:"is_platform_admin"`
+}
+
+func (q *Queries) UserSetPlatformAdmin(ctx context.Context, arg UserSetPlatformAdminParams) error {
+	_, err := q.db.Exec(ctx, userSetPlatformAdmin, arg.ID, arg.IsPlatformAdmin)
+	return err
+}
+
 const userUpdateDisplayName = `-- name: UserUpdateDisplayName :exec
 UPDATE users SET display_name = $2, updated_at = NOW() WHERE id = $1
 `
@@ -4894,9 +5831,9 @@ func (q *Queries) UserUpdatePasswordHash(ctx context.Context, arg UserUpdatePass
 
 const vMCreate = `-- name: VMCreate :one
 
-INSERT INTO vms (id, server_id, image_id, status, runtime, snapshot_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-RETURNING id, server_id, image_id, status, runtime, snapshot_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at
+INSERT INTO vms (id, server_id, image_id, status, runtime, snapshot_ref, shared_rootfs_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+RETURNING id, server_id, image_id, status, runtime, snapshot_ref, shared_rootfs_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at
 `
 
 type VMCreateParams struct {
@@ -4906,6 +5843,7 @@ type VMCreateParams struct {
 	Status          string      `json:"status"`
 	Runtime         string      `json:"runtime"`
 	SnapshotRef     pgtype.Text `json:"snapshot_ref"`
+	SharedRootfsRef string      `json:"shared_rootfs_ref"`
 	CloneSourceVmID pgtype.UUID `json:"clone_source_vm_id"`
 	Vcpus           int32       `json:"vcpus"`
 	Memory          int32       `json:"memory"`
@@ -4923,6 +5861,7 @@ func (q *Queries) VMCreate(ctx context.Context, arg VMCreateParams) (Vm, error) 
 		arg.Status,
 		arg.Runtime,
 		arg.SnapshotRef,
+		arg.SharedRootfsRef,
 		arg.CloneSourceVmID,
 		arg.Vcpus,
 		arg.Memory,
@@ -4938,6 +5877,7 @@ func (q *Queries) VMCreate(ctx context.Context, arg VMCreateParams) (Vm, error) 
 		&i.Status,
 		&i.Runtime,
 		&i.SnapshotRef,
+		&i.SharedRootfsRef,
 		&i.CloneSourceVmID,
 		&i.Vcpus,
 		&i.Memory,
@@ -4952,7 +5892,7 @@ func (q *Queries) VMCreate(ctx context.Context, arg VMCreateParams) (Vm, error) 
 }
 
 const vMFindByServerID = `-- name: VMFindByServerID :many
-SELECT id, server_id, image_id, status, runtime, snapshot_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at FROM vms WHERE server_id = $1 AND deleted_at IS NULL
+SELECT id, server_id, image_id, status, runtime, snapshot_ref, shared_rootfs_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at FROM vms WHERE server_id = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) VMFindByServerID(ctx context.Context, serverID pgtype.UUID) ([]Vm, error) {
@@ -4971,6 +5911,7 @@ func (q *Queries) VMFindByServerID(ctx context.Context, serverID pgtype.UUID) ([
 			&i.Status,
 			&i.Runtime,
 			&i.SnapshotRef,
+			&i.SharedRootfsRef,
 			&i.CloneSourceVmID,
 			&i.Vcpus,
 			&i.Memory,
@@ -4992,7 +5933,7 @@ func (q *Queries) VMFindByServerID(ctx context.Context, serverID pgtype.UUID) ([
 }
 
 const vMFirstByID = `-- name: VMFirstByID :one
-SELECT id, server_id, image_id, status, runtime, snapshot_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at FROM vms WHERE id = $1
+SELECT id, server_id, image_id, status, runtime, snapshot_ref, shared_rootfs_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at FROM vms WHERE id = $1
 `
 
 func (q *Queries) VMFirstByID(ctx context.Context, id pgtype.UUID) (Vm, error) {
@@ -5005,6 +5946,7 @@ func (q *Queries) VMFirstByID(ctx context.Context, id pgtype.UUID) (Vm, error) {
 		&i.Status,
 		&i.Runtime,
 		&i.SnapshotRef,
+		&i.SharedRootfsRef,
 		&i.CloneSourceVmID,
 		&i.Vcpus,
 		&i.Memory,
@@ -5106,16 +6048,18 @@ const vMUpdateLifecycleMetadata = `-- name: VMUpdateLifecycleMetadata :one
 UPDATE vms
 SET status = $2,
     snapshot_ref = $3,
-    clone_source_vm_id = $4,
+    shared_rootfs_ref = $4,
+    clone_source_vm_id = $5,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, server_id, image_id, status, runtime, snapshot_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at
+RETURNING id, server_id, image_id, status, runtime, snapshot_ref, shared_rootfs_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at
 `
 
 type VMUpdateLifecycleMetadataParams struct {
 	ID              pgtype.UUID `json:"id"`
 	Status          string      `json:"status"`
 	SnapshotRef     pgtype.Text `json:"snapshot_ref"`
+	SharedRootfsRef string      `json:"shared_rootfs_ref"`
 	CloneSourceVmID pgtype.UUID `json:"clone_source_vm_id"`
 }
 
@@ -5124,6 +6068,7 @@ func (q *Queries) VMUpdateLifecycleMetadata(ctx context.Context, arg VMUpdateLif
 		arg.ID,
 		arg.Status,
 		arg.SnapshotRef,
+		arg.SharedRootfsRef,
 		arg.CloneSourceVmID,
 	)
 	var i Vm
@@ -5134,6 +6079,7 @@ func (q *Queries) VMUpdateLifecycleMetadata(ctx context.Context, arg VMUpdateLif
 		&i.Status,
 		&i.Runtime,
 		&i.SnapshotRef,
+		&i.SharedRootfsRef,
 		&i.CloneSourceVmID,
 		&i.Vcpus,
 		&i.Memory,
@@ -5148,7 +6094,7 @@ func (q *Queries) VMUpdateLifecycleMetadata(ctx context.Context, arg VMUpdateLif
 }
 
 const vMUpdateStatus = `-- name: VMUpdateStatus :one
-UPDATE vms SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING id, server_id, image_id, status, runtime, snapshot_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at
+UPDATE vms SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING id, server_id, image_id, status, runtime, snapshot_ref, shared_rootfs_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at
 `
 
 type VMUpdateStatusParams struct {
@@ -5166,6 +6112,7 @@ func (q *Queries) VMUpdateStatus(ctx context.Context, arg VMUpdateStatusParams) 
 		&i.Status,
 		&i.Runtime,
 		&i.SnapshotRef,
+		&i.SharedRootfsRef,
 		&i.CloneSourceVmID,
 		&i.Vcpus,
 		&i.Memory,

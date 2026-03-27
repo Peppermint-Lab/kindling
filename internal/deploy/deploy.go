@@ -483,6 +483,7 @@ func (d *Deployer) cleanupInstance(ctx context.Context, inst queries.DeploymentI
 				ID:              inst.VmID,
 				Status:          vmStatusSuspending,
 				SnapshotRef:     vm.SnapshotRef,
+				SharedRootfsRef: vm.SharedRootfsRef,
 				CloneSourceVmID: vm.CloneSourceVmID,
 			}); err != nil {
 				slog.Warn("mark vm suspending failed", "instance_id", iid, "error", err)
@@ -500,6 +501,7 @@ func (d *Deployer) cleanupInstance(ctx context.Context, inst queries.DeploymentI
 					ID:              inst.VmID,
 					Status:          vmStatusSuspended,
 					SnapshotRef:     snapshotRef,
+					SharedRootfsRef: vm.SharedRootfsRef,
 					CloneSourceVmID: vm.CloneSourceVmID,
 				}); err == nil {
 					return
@@ -734,6 +736,7 @@ func (d *Deployer) reconcileOneInstance(
 				ID:              inst.VmID,
 				Status:          "running",
 				SnapshotRef:     vm.SnapshotRef,
+				SharedRootfsRef: vm.SharedRootfsRef,
 				CloneSourceVmID: vm.CloneSourceVmID,
 			}); err != nil {
 				return fmt.Errorf("mark resumed vm running: %w", err)
@@ -856,6 +859,7 @@ func (d *Deployer) reconcileOneInstance(
 				}
 				ip = startedIP
 				meta = instanceVMMetadata{Runtime: d.rt.Name()}
+				d.fillLiveMigrationMetadata(ctx, instID, &meta)
 				break
 			}
 			_, _ = d.q.DeploymentInstanceUpdateStatus(ctx, queries.DeploymentInstanceUpdateStatusParams{
@@ -868,6 +872,7 @@ func (d *Deployer) reconcileOneInstance(
 		meta = instanceVMMetadata{
 			Runtime:         d.rt.Name(),
 			SnapshotRef:     startMeta.SnapshotRef,
+			SharedRootfsRef: startMeta.SharedRootfsRef,
 			CloneSourceVMID: uuidToPgtype(startMeta.CloneSourceVMID),
 		}
 	default:
@@ -881,6 +886,7 @@ func (d *Deployer) reconcileOneInstance(
 		}
 		ip = startedIP
 		meta = instanceVMMetadata{Runtime: d.rt.Name()}
+		d.fillLiveMigrationMetadata(ctx, instID, &meta)
 	}
 
 	if requiresExternalHealthCheck(d.rt.Name()) && !d.waitHealthCheckLocalForwarded(ip, 90*time.Second) {

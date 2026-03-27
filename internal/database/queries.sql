@@ -113,6 +113,100 @@ SET advertise_host = $2, updated_at = NOW()
 WHERE server_id = $1
   AND (advertise_host = '' OR BTRIM(advertise_host) = '');
 
+-- name: InstanceMigrationCreate :one
+INSERT INTO instance_migrations (
+    id, deployment_instance_id, source_server_id, destination_server_id, source_vm_id, state, mode,
+    receive_addr, receive_token_hash, destination_runtime_url, failure_code, failure_message, cutover_deadline_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7,
+    '', $8, '', '', '', $9
+)
+RETURNING *;
+
+-- name: InstanceMigrationFirstByID :one
+SELECT * FROM instance_migrations WHERE id = $1;
+
+-- name: InstanceMigrationLatestByDeploymentInstanceID :one
+SELECT * FROM instance_migrations
+WHERE deployment_instance_id = $1
+ORDER BY started_at DESC
+LIMIT 1;
+
+-- name: InstanceMigrationFindActiveByDeploymentInstanceID :one
+SELECT * FROM instance_migrations
+WHERE deployment_instance_id = $1
+  AND state NOT IN ('completed', 'failed', 'aborted', 'fallback_evacuating')
+ORDER BY started_at DESC
+LIMIT 1;
+
+-- name: InstanceMigrationCountActiveByServerID :one
+SELECT COUNT(*)::bigint AS count
+FROM instance_migrations
+WHERE state NOT IN ('completed', 'failed', 'aborted', 'fallback_evacuating')
+  AND (source_server_id = $1 OR destination_server_id = $1);
+
+-- name: InstanceMigrationUpdatePrepared :one
+UPDATE instance_migrations
+SET state = 'destination_prepared',
+    receive_addr = $2,
+    cutover_deadline_at = $3,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: InstanceMigrationUpdateSending :one
+UPDATE instance_migrations
+SET state = 'sending',
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: InstanceMigrationUpdateReceived :one
+UPDATE instance_migrations
+SET state = 'received',
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: InstanceMigrationUpdateCompleted :one
+UPDATE instance_migrations
+SET state = 'completed',
+    destination_runtime_url = $2,
+    completed_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: InstanceMigrationUpdateFallbackEvacuating :one
+UPDATE instance_migrations
+SET state = 'fallback_evacuating',
+    failure_code = $2,
+    failure_message = $3,
+    failed_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: InstanceMigrationUpdateFailed :one
+UPDATE instance_migrations
+SET state = 'failed',
+    failure_code = $2,
+    failure_message = $3,
+    failed_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: InstanceMigrationUpdateAborted :one
+UPDATE instance_migrations
+SET state = 'aborted',
+    failure_code = $2,
+    failure_message = $3,
+    aborted_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
 -- name: ClusterSecretGet :one
 SELECT ciphertext FROM cluster_secrets WHERE key = $1;
 
@@ -125,6 +219,43 @@ ON CONFLICT (key) DO UPDATE SET
 
 -- name: ClusterSecretDelete :exec
 DELETE FROM cluster_secrets WHERE key = $1;
+
+-- Auth providers --
+
+-- name: AuthProviderListAll :many
+SELECT * FROM auth_providers
+ORDER BY provider ASC;
+
+-- name: AuthProviderListEnabled :many
+SELECT * FROM auth_providers
+WHERE enabled = TRUE
+  AND BTRIM(client_id) <> ''
+ORDER BY provider ASC;
+
+-- name: AuthProviderByProvider :one
+SELECT * FROM auth_providers WHERE provider = $1;
+
+-- name: AuthProviderUpsert :one
+INSERT INTO auth_providers (
+    provider, display_name, enabled, client_id, client_secret_ciphertext,
+    issuer_url, auth_url, token_url, userinfo_url, scopes, metadata, updated_at
+) VALUES (
+    $1, $2, $3, $4, $5,
+    $6, $7, $8, $9, $10, $11, NOW()
+)
+ON CONFLICT (provider) DO UPDATE SET
+    display_name = EXCLUDED.display_name,
+    enabled = EXCLUDED.enabled,
+    client_id = EXCLUDED.client_id,
+    client_secret_ciphertext = EXCLUDED.client_secret_ciphertext,
+    issuer_url = EXCLUDED.issuer_url,
+    auth_url = EXCLUDED.auth_url,
+    token_url = EXCLUDED.token_url,
+    userinfo_url = EXCLUDED.userinfo_url,
+    scopes = EXCLUDED.scopes,
+    metadata = EXCLUDED.metadata,
+    updated_at = NOW()
+RETURNING *;
 
 -- Images --
 
@@ -412,8 +543,8 @@ RETURNING *;
 -- VMs --
 
 -- name: VMCreate :one
-INSERT INTO vms (id, server_id, image_id, status, runtime, snapshot_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+INSERT INTO vms (id, server_id, image_id, status, runtime, snapshot_ref, shared_rootfs_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 RETURNING *;
 
 -- name: VMFirstByID :one
@@ -426,7 +557,8 @@ UPDATE vms SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING *;
 UPDATE vms
 SET status = $2,
     snapshot_ref = $3,
-    clone_source_vm_id = $4,
+    shared_rootfs_ref = $4,
+    clone_source_vm_id = $5,
     updated_at = NOW()
 WHERE id = $1
 RETURNING *;
@@ -880,8 +1012,8 @@ SELECT key FROM certmagic_data WHERE key LIKE $1 ORDER BY key;
 SELECT COUNT(*)::bigint FROM users;
 
 -- name: UserCreate :one
-INSERT INTO users (id, email, password_hash, display_name)
-VALUES ($1, $2, $3, $4)
+INSERT INTO users (id, email, password_hash, display_name, is_platform_admin)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: UserByEmail :one
@@ -921,11 +1053,19 @@ INSERT INTO organization_memberships (id, organization_id, user_id, role)
 VALUES ($1, $2, $3, 'owner')
 ON CONFLICT (organization_id, user_id) DO UPDATE SET role = EXCLUDED.role;
 
+-- name: OrganizationMembershipUpsert :exec
+INSERT INTO organization_memberships (id, organization_id, user_id, role)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (organization_id, user_id) DO NOTHING;
+
 -- name: UserUpdatePasswordHash :exec
 UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1;
 
 -- name: UserUpdateDisplayName :exec
 UPDATE users SET display_name = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: UserSetPlatformAdmin :exec
+UPDATE users SET is_platform_admin = $2, updated_at = NOW() WHERE id = $1;
 
 -- name: UserSessionCreate :one
 INSERT INTO user_sessions (id, user_id, token_hash, current_organization_id, expires_at)
@@ -948,10 +1088,54 @@ SET current_organization_id = $2
 WHERE id = $1
 RETURNING *;
 
+-- name: UserIdentityListByUser :many
+SELECT * FROM user_identities
+WHERE user_id = $1
+ORDER BY provider ASC;
+
+-- name: UserIdentityByProviderSubject :one
+SELECT * FROM user_identities
+WHERE provider = $1 AND provider_subject = $2;
+
+-- name: UserIdentityByUserAndProvider :one
+SELECT * FROM user_identities
+WHERE user_id = $1 AND provider = $2;
+
+-- name: UserIdentityCreate :one
+INSERT INTO user_identities (
+    id, user_id, provider, provider_subject, provider_login, provider_email,
+    provider_display_name, claims, last_login_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6,
+    $7, $8, $9
+)
+RETURNING *;
+
+-- name: UserIdentityUpdateByID :one
+UPDATE user_identities
+SET provider_subject = $2,
+    provider_login = $3,
+    provider_email = $4,
+    provider_display_name = $5,
+    claims = $6,
+    last_login_at = $7,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: UserIdentityDeleteByUserAndProvider :exec
+DELETE FROM user_identities
+WHERE user_id = $1 AND provider = $2;
+
 -- name: OrgProviderConnectionListByOrg :many
 SELECT * FROM org_provider_connections
 WHERE organization_id = $1
 ORDER BY provider ASC, display_label ASC;
+
+-- name: OrgProviderConnectionListByProvider :many
+SELECT * FROM org_provider_connections
+WHERE provider = $1
+ORDER BY organization_id ASC, external_slug ASC;
 
 -- name: OrgProviderConnectionCreate :one
 INSERT INTO org_provider_connections (
@@ -1033,6 +1217,10 @@ SELECT
     di.status,
     di.created_at,
     di.updated_at,
+    m.id AS migration_id,
+    m.state AS migration_state,
+    m.destination_server_id AS migration_destination_server_id,
+    m.failure_message AS migration_failure_message,
     s.sampled_at,
     s.cpu_percent,
     s.memory_rss_bytes,
@@ -1043,6 +1231,13 @@ FROM deployment_instances di
 INNER JOIN deployments d ON d.id = di.deployment_id
   AND d.deleted_at IS NULL
 INNER JOIN projects p ON p.id = d.project_id
+LEFT JOIN LATERAL (
+    SELECT id, state, destination_server_id, failure_message
+    FROM instance_migrations
+    WHERE deployment_instance_id = di.id
+    ORDER BY started_at DESC
+    LIMIT 1
+) m ON TRUE
 LEFT JOIN LATERAL (
     SELECT sampled_at, cpu_percent, memory_rss_bytes, disk_read_bytes, disk_write_bytes, source
     FROM instance_usage_samples

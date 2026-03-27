@@ -98,6 +98,7 @@ func (d *Deployer) persistInstanceVMMetadata(
 		Status:          "running",
 		Runtime:         meta.Runtime,
 		SnapshotRef:     pgtype.Text{String: meta.SnapshotRef, Valid: strings.TrimSpace(meta.SnapshotRef) != ""},
+		SharedRootfsRef: meta.SharedRootfsRef,
 		CloneSourceVmID: meta.CloneSourceVMID,
 		Vcpus:           int32(vcpus),
 		Memory:          int32(memoryMB),

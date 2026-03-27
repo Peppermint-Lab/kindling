@@ -47,6 +47,9 @@ func TestCloudHypervisorSupportsWarmLifecycle(t *testing.T) {
 	if !rt.Supports(CapabilityWarmClone) {
 		t.Fatal("expected cloud-hypervisor to support warm clone")
 	}
+	if !rt.Supports(CapabilityLiveMigration) {
+		t.Fatal("expected cloud-hypervisor to support live migration")
+	}
 }
 
 func TestCloudHypervisorDiskArgsAddsPersistentVolumeAsSecondDisk(t *testing.T) {
@@ -66,6 +69,21 @@ func TestCloudHypervisorDiskArgsAddsPersistentVolumeAsSecondDisk(t *testing.T) {
 	}
 	if args[3] != "path=/data/volumes/vol-1.qcow2,direct=off" {
 		t.Fatalf("persistent volume arg = %q", args[3])
+	}
+}
+
+func TestSharedRootfsPathHelpers(t *testing.T) {
+	id := mustUUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+	got := sharedRootfsPathForID("/shared/rootfs", id)
+	want := "/shared/rootfs/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/rootfs.qcow2"
+	if got != want {
+		t.Fatalf("sharedRootfsPathForID = %q, want %q", got, want)
+	}
+	if ref := sharedRootfsRefFromWorkDisk("/shared/rootfs", got); ref != want {
+		t.Fatalf("sharedRootfsRefFromWorkDisk = %q, want %q", ref, want)
+	}
+	if ref := sharedRootfsRefFromWorkDisk("/shared/rootfs", "/tmp/other/rootfs.qcow2"); ref != "" {
+		t.Fatalf("sharedRootfsRefFromWorkDisk outside shared dir = %q, want empty", ref)
 	}
 }
 

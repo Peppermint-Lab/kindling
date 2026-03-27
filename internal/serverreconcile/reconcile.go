@@ -51,7 +51,11 @@ func (h *Handler) Reconcile(ctx context.Context, serverID uuid.UUID) error {
 		if err != nil {
 			return fmt.Errorf("instance count on server: %w", err)
 		}
-		if n == 0 {
+		migrations, err := h.q.InstanceMigrationCountActiveByServerID(ctx, sid)
+		if err != nil {
+			return fmt.Errorf("active migrations on server: %w", err)
+		}
+		if n == 0 && migrations == 0 {
 			if err := h.q.ServerSetDrained(ctx, sid); err != nil {
 				return fmt.Errorf("server set drained: %w", err)
 			}

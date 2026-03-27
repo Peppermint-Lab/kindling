@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -30,6 +31,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/deploy"
 	"github.com/kindlingvm/kindling/internal/edgeproxy"
 	"github.com/kindlingvm/kindling/internal/listener"
+	"github.com/kindlingvm/kindling/internal/migrationreconcile"
 	"github.com/kindlingvm/kindling/internal/oci"
 	"github.com/kindlingvm/kindling/internal/preview"
 	"github.com/kindlingvm/kindling/internal/reconciler"
@@ -136,7 +138,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		_, err = q.ServerRegister(ctx, queries.ServerRegisterParams{
 			ID:         pgtype.UUID{Bytes: serverID, Valid: true},
 			Hostname:   hostname(),
-			InternalIp: "127.0.0.1",
+			InternalIp: detectInternalIP(),
 			IpRange:    mustParseCIDR("10.0.0.0/20"),
 		})
 		if err != nil {
@@ -237,7 +239,17 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		}
 		slog.Info("runtime detected", "runtime", rt.Name())
 		go runServerComponentHeartbeat(ctx, q, serverID, "worker", 10*time.Second, func() map[string]any {
-			return map[string]any{"runtime": rt.Name()}
+			meta := map[string]any{"runtime": rt.Name()}
+			if rt.Name() == "cloud-hypervisor" {
+				meta["live_migration_enabled"] = rt.Supports(crunrt.CapabilityLiveMigration)
+				if v := cloudHypervisorVersion(); v != "" {
+					meta["cloud_hypervisor_version"] = v
+				}
+				if v := strings.TrimSpace(os.Getenv("KINDLING_CH_SHARED_ROOTFS_DIR")); v != "" {
+					meta["shared_rootfs_dir"] = v
+				}
+			}
+			return meta
 		})
 		go usage.RunResourcePoller(ctx, q, serverID, rt, 15*time.Second, func(report usage.PollerStatusReport) {
 			if err := persistServerComponentStatus(ctx, q, serverID, serverComponentStatusUpdate{
@@ -266,6 +278,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		vmReconciler         *reconciler.Scheduler
 		domainReconciler     *reconciler.Scheduler
 		serverReconciler     *reconciler.Scheduler
+		migrationReconciler  *reconciler.Scheduler
 	)
 	if components.worker {
 		var buildRunner builder.BuildRunner = builder.NewLocalBuildRunner()
@@ -330,9 +343,14 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		})
 
 		serverDrainHandler := serverreconcile.NewHandler(q, deploymentReconciler, notifyRouteChange)
+		migrationHandler := migrationreconcile.NewHandler(q, db.Pool, rt, serverID, deploymentReconciler, notifyRouteChange)
 		serverReconciler = reconciler.New(reconciler.Config{
 			Name:      "server",
 			Reconcile: serverDrainHandler.Reconcile,
+		})
+		migrationReconciler = reconciler.New(reconciler.Config{
+			Name:      "instance_migration",
+			Reconcile: migrationHandler.Reconcile,
 		})
 		deployer.SetServerScheduler(serverReconciler)
 	}
@@ -344,6 +362,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		go vmReconciler.Start(ctx)
 		go domainReconciler.Start(ctx)
 		go serverReconciler.Start(ctx)
+		go migrationReconciler.Start(ctx)
 		slog.Info("reconcilers started")
 
 		recoveredDeployments, err := queueStartupRecovery(ctx, q, serverID, deploymentReconciler, notifyRouteChange)
@@ -456,6 +475,14 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 			}
 			if components.edge && serverReconciler == nil {
 				notifyRouteChange()
+			}
+		},
+		OnInstanceMigration: func(ctx context.Context, id uuid.UUID) {
+			if migrationReconciler != nil {
+				migrationReconciler.ScheduleNow(id)
+			}
+			if dashboardEvents != nil {
+				dashboardEvents.Publish(rpc.TopicServers)
 			}
 		},
 	})
@@ -954,6 +981,45 @@ func runServerComponentHeartbeat(ctx context.Context, q *queries.Queries, server
 func hostname() string {
 	h, _ := os.Hostname()
 	return h
+}
+
+func detectInternalIP() string {
+	if v := strings.TrimSpace(os.Getenv("KINDLING_INTERNAL_IP")); v != "" {
+		return v
+	}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return "127.0.0.1"
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ipNet, ok := addr.(*net.IPNet)
+			if !ok || ipNet.IP == nil {
+				continue
+			}
+			ip := ipNet.IP.To4()
+			if ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
+				continue
+			}
+			return ip.String()
+		}
+	}
+	return "127.0.0.1"
+}
+
+func cloudHypervisorVersion() string {
+	out, err := exec.Command("cloud-hypervisor", "--version").CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func mustParseCIDR(s string) netip.Prefix {

@@ -61,6 +61,9 @@ type serverInstanceOut struct {
 	DiskReadBytes        int64    `json:"disk_read_bytes"`
 	DiskWriteBytes       int64    `json:"disk_write_bytes"`
 	Source               string   `json:"source,omitempty"`
+	MigrationID          *string  `json:"migration_id,omitempty"`
+	MigrationState       string   `json:"migration_state,omitempty"`
+	MigrationFailure     string   `json:"migration_failure,omitempty"`
 }
 
 type serverDetailOut struct {
@@ -99,7 +102,11 @@ func (a *API) serverOverviewRows(ctx context.Context) ([]serverSummaryOut, error
 }
 
 func (a *API) getServerDetails(w http.ResponseWriter, r *http.Request) {
-	if _, ok := mustPrincipal(w, r); !ok {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !requirePlatformAdmin(w, p) {
 		return
 	}
 	id, err := parseUUID(r.PathValue("id"))
@@ -153,6 +160,11 @@ func (a *API) getServerDetails(w http.ResponseWriter, r *http.Request) {
 			s := pgUUIDToString(row.VmID)
 			vmID = &s
 		}
+		var migrationID *string
+		if row.MigrationID.Valid {
+			s := pgUUIDToString(row.MigrationID)
+			migrationID = &s
+		}
 		resourceHealth := "missing"
 		var sampleAgeSeconds *int64
 		if row.SampledAt.Valid {
@@ -181,6 +193,9 @@ func (a *API) getServerDetails(w http.ResponseWriter, r *http.Request) {
 			DiskReadBytes:        row.DiskReadBytes,
 			DiskWriteBytes:       row.DiskWriteBytes,
 			Source:               row.Source,
+			MigrationID:          migrationID,
+			MigrationState:       row.MigrationState,
+			MigrationFailure:     row.MigrationFailureMessage,
 		})
 	}
 

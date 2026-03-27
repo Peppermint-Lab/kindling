@@ -15,9 +15,10 @@ import (
 
 // CloudHypervisorHostConfig holds Linux microVM binary and image paths (ignored on non-Linux).
 type CloudHypervisorHostConfig struct {
-	BinaryPath    string
-	KernelPath    string
-	InitramfsPath string
+	BinaryPath      string
+	KernelPath      string
+	InitramfsPath   string
+	SharedRootfsDir string
 }
 
 // HostRuntimeConfig wires DB-backed (or other) settings into runtime selection.
@@ -69,11 +70,28 @@ type Capability string
 const (
 	CapabilitySuspendResume Capability = "suspend_resume"
 	CapabilityWarmClone     Capability = "warm_clone"
+	CapabilityLiveMigration Capability = "live_migration"
 )
 
 type StartMetadata struct {
 	SnapshotRef     string
+	SharedRootfsRef string
 	CloneSourceVMID uuid.UUID
+}
+
+type MigrationMetadata struct {
+	SharedRootfsRef string
+	Version         string
+}
+
+type PreparedMigrationTarget struct {
+	ReceiveAddr string
+}
+
+type SendMigrationRequest struct {
+	DestinationURL string
+	DowntimeMS     int64
+	TimeoutSeconds int64
 }
 
 // Runtime is the interface for starting and stopping app instances.
@@ -98,6 +116,21 @@ type Runtime interface {
 
 	// StartClone starts a new instance from retained template state.
 	StartClone(ctx context.Context, inst Instance, snapshotRef string, cloneSourceVMID uuid.UUID) (ip string, meta StartMetadata, err error)
+
+	// MigrationMetadata returns live-migration metadata for a running instance when supported.
+	MigrationMetadata(ctx context.Context, id uuid.UUID) (MigrationMetadata, error)
+
+	// PrepareMigrationTarget starts a destination receiver for a future live migration.
+	PrepareMigrationTarget(ctx context.Context, id uuid.UUID) (PreparedMigrationTarget, error)
+
+	// SendMigration streams a running instance to a prepared destination.
+	SendMigration(ctx context.Context, id uuid.UUID, req SendMigrationRequest) error
+
+	// FinalizeMigrationTarget turns a prepared receiver into a normal running instance.
+	FinalizeMigrationTarget(ctx context.Context, id uuid.UUID) (ip string, meta StartMetadata, err error)
+
+	// AbortMigrationTarget tears down a prepared destination receiver.
+	AbortMigrationTarget(ctx context.Context, id uuid.UUID) error
 
 	// Stop stops and cleans up an instance.
 	Stop(ctx context.Context, id uuid.UUID) error

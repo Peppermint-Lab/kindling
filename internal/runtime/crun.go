@@ -291,6 +291,26 @@ func (r *CrunRuntime) StartClone(ctx context.Context, inst Instance, snapshotRef
 	return ip, StartMetadata{SnapshotRef: snapshotRef, CloneSourceVMID: cloneSourceVMID}, nil
 }
 
+func (r *CrunRuntime) MigrationMetadata(ctx context.Context, id uuid.UUID) (MigrationMetadata, error) {
+	return MigrationMetadata{}, ErrLiveMigrationUnsupported
+}
+
+func (r *CrunRuntime) PrepareMigrationTarget(ctx context.Context, id uuid.UUID) (PreparedMigrationTarget, error) {
+	return PreparedMigrationTarget{}, ErrLiveMigrationUnsupported
+}
+
+func (r *CrunRuntime) SendMigration(ctx context.Context, id uuid.UUID, req SendMigrationRequest) error {
+	return ErrLiveMigrationUnsupported
+}
+
+func (r *CrunRuntime) FinalizeMigrationTarget(ctx context.Context, id uuid.UUID) (string, StartMetadata, error) {
+	return "", StartMetadata{}, ErrLiveMigrationUnsupported
+}
+
+func (r *CrunRuntime) AbortMigrationTarget(ctx context.Context, id uuid.UUID) error {
+	return ErrLiveMigrationUnsupported
+}
+
 func pickFreeTCPPort() (int, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

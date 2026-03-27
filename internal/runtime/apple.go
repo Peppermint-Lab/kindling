@@ -405,6 +405,26 @@ func (r *AppleRuntime) StartClone(ctx context.Context, inst Instance, snapshotRe
 	return ip, StartMetadata{SnapshotRef: snapshotRef, CloneSourceVMID: cloneSourceVMID}, nil
 }
 
+func (r *AppleRuntime) MigrationMetadata(ctx context.Context, id uuid.UUID) (MigrationMetadata, error) {
+	return MigrationMetadata{}, ErrLiveMigrationUnsupported
+}
+
+func (r *AppleRuntime) PrepareMigrationTarget(ctx context.Context, id uuid.UUID) (PreparedMigrationTarget, error) {
+	return PreparedMigrationTarget{}, ErrLiveMigrationUnsupported
+}
+
+func (r *AppleRuntime) SendMigration(ctx context.Context, id uuid.UUID, req SendMigrationRequest) error {
+	return ErrLiveMigrationUnsupported
+}
+
+func (r *AppleRuntime) FinalizeMigrationTarget(ctx context.Context, id uuid.UUID) (string, StartMetadata, error) {
+	return "", StartMetadata{}, ErrLiveMigrationUnsupported
+}
+
+func (r *AppleRuntime) AbortMigrationTarget(ctx context.Context, id uuid.UUID) error {
+	return ErrLiveMigrationUnsupported
+}
+
 // forwardHostTCP accepts connections on a localhost listener and relays each to the guest app over vsock.
 // Required because VZNATNetworkDeviceAttachment does not support inbound port forwarding from the host to guest eth0.
 func (r *AppleRuntime) forwardHostTCP(ctx context.Context, hostLn net.Listener, dev *vz.VirtioSocketDevice, guestVsockPort uint32) {

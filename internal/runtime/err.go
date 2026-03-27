@@ -10,3 +10,6 @@ var ErrProcStatsUnsupported = errors.New("process stats not supported on this pl
 
 // ErrPersistentVolumesUnsupported is returned when a runtime cannot attach durable block volumes.
 var ErrPersistentVolumesUnsupported = errors.New("persistent volumes not supported on this runtime")
+
+// ErrLiveMigrationUnsupported is returned when a runtime cannot perform live migration.
+var ErrLiveMigrationUnsupported = errors.New("live migration not supported on this runtime")

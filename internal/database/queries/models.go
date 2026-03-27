@@ -10,6 +10,22 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AuthProvider struct {
+	Provider               string             `json:"provider"`
+	DisplayName            string             `json:"display_name"`
+	Enabled                bool               `json:"enabled"`
+	ClientID               string             `json:"client_id"`
+	ClientSecretCiphertext []byte             `json:"client_secret_ciphertext"`
+	IssuerUrl              string             `json:"issuer_url"`
+	AuthUrl                string             `json:"auth_url"`
+	TokenUrl               string             `json:"token_url"`
+	UserinfoUrl            string             `json:"userinfo_url"`
+	Scopes                 string             `json:"scopes"`
+	Metadata               []byte             `json:"metadata"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Build struct {
 	ID           pgtype.UUID        `json:"id"`
 	ProjectID    pgtype.UUID        `json:"project_id"`
@@ -115,6 +131,27 @@ type Image struct {
 	Repository string             `json:"repository"`
 	Tag        string             `json:"tag"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type InstanceMigration struct {
+	ID                    pgtype.UUID        `json:"id"`
+	DeploymentInstanceID  pgtype.UUID        `json:"deployment_instance_id"`
+	SourceServerID        pgtype.UUID        `json:"source_server_id"`
+	DestinationServerID   pgtype.UUID        `json:"destination_server_id"`
+	SourceVmID            pgtype.UUID        `json:"source_vm_id"`
+	State                 string             `json:"state"`
+	Mode                  string             `json:"mode"`
+	ReceiveAddr           string             `json:"receive_addr"`
+	ReceiveTokenHash      []byte             `json:"receive_token_hash"`
+	DestinationRuntimeUrl string             `json:"destination_runtime_url"`
+	FailureCode           string             `json:"failure_code"`
+	FailureMessage        string             `json:"failure_message"`
+	CutoverDeadlineAt     pgtype.Timestamptz `json:"cutover_deadline_at"`
+	StartedAt             pgtype.Timestamptz `json:"started_at"`
+	CompletedAt           pgtype.Timestamptz `json:"completed_at"`
+	FailedAt              pgtype.Timestamptz `json:"failed_at"`
+	AbortedAt             pgtype.Timestamptz `json:"aborted_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
 }
 
 type InstanceUsageSample struct {
@@ -271,12 +308,27 @@ type TeamMembership struct {
 }
 
 type User struct {
-	ID           pgtype.UUID        `json:"id"`
-	Email        string             `json:"email"`
-	PasswordHash string             `json:"password_hash"`
-	DisplayName  string             `json:"display_name"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	ID              pgtype.UUID        `json:"id"`
+	Email           string             `json:"email"`
+	PasswordHash    string             `json:"password_hash"`
+	DisplayName     string             `json:"display_name"`
+	IsPlatformAdmin bool               `json:"is_platform_admin"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type UserIdentity struct {
+	ID                  pgtype.UUID        `json:"id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	Provider            string             `json:"provider"`
+	ProviderSubject     string             `json:"provider_subject"`
+	ProviderLogin       string             `json:"provider_login"`
+	ProviderEmail       string             `json:"provider_email"`
+	ProviderDisplayName string             `json:"provider_display_name"`
+	Claims              []byte             `json:"claims"`
+	LastLoginAt         pgtype.Timestamptz `json:"last_login_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
 type UserSession struct {
@@ -295,6 +347,7 @@ type Vm struct {
 	Status          string             `json:"status"`
 	Runtime         string             `json:"runtime"`
 	SnapshotRef     pgtype.Text        `json:"snapshot_ref"`
+	SharedRootfsRef string             `json:"shared_rootfs_ref"`
 	CloneSourceVmID pgtype.UUID        `json:"clone_source_vm_id"`
 	Vcpus           int32              `json:"vcpus"`
 	Memory          int32              `json:"memory"`

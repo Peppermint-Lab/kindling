@@ -29,6 +29,7 @@ const (
 type instanceVMMetadata struct {
 	Runtime         string
 	SnapshotRef     string
+	SharedRootfsRef string
 	CloneSourceVMID pgtype.UUID
 }
 
