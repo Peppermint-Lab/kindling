@@ -205,7 +205,9 @@ export function SettingsPage() {
                     Hostname suffix for generated previews (e.g.{" "}
                     <span className="font-mono">preview.example.com</span>). Point wildcard DNS{" "}
                     <span className="font-mono">*.preview.example.com</span> at the Kindling edge. Enable the{" "}
-                    <span className="font-mono">pull_request</span> event on the repo webhook in GitHub.
+                    <span className="font-mono">pull_request</span> event on the repo webhook in GitHub. Closed
+                    previews stop immediately, stay visible until retention expires, and are then deleted
+                    automatically.
                   </p>
                   <div className="space-y-1 max-w-xl">
                     <Label htmlFor="preview-base">Preview base domain</Label>
@@ -228,6 +230,7 @@ export function SettingsPage() {
                         value={previewRetentionInput}
                         onChange={(e) => setPreviewRetentionInput(e.target.value)}
                       />
+                      <p className="text-[11px] text-muted-foreground">How long closed previews stay listed before full cleanup. Use <span className="font-mono">0</span> to delete immediately on close.</p>
                     </div>
                     <div className="space-y-1">
                       <Label htmlFor="preview-idle">Preview idle scale-down (seconds)</Label>
@@ -239,6 +242,7 @@ export function SettingsPage() {
                         value={previewIdleInput}
                         onChange={(e) => setPreviewIdleInput(e.target.value)}
                       />
+                      <p className="text-[11px] text-muted-foreground">How long an active preview can sit idle before Kindling scales it to zero.</p>
                     </div>
                   </div>
                 </div>

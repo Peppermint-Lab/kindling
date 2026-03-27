@@ -27,12 +27,12 @@ type dnsChallengeOut struct {
 }
 
 type projectDomainOut struct {
-	ID            string            `json:"id"`
-	DomainName    string            `json:"domain_name"`
-	VerifiedAt    *string           `json:"verified_at,omitempty"`
-	DeploymentID  *string           `json:"deployment_id,omitempty"`
-	DNSChallenge  *dnsChallengeOut  `json:"dns_challenge,omitempty"`
-	Instructions  string            `json:"instructions,omitempty"`
+	ID           string           `json:"id"`
+	DomainName   string           `json:"domain_name"`
+	VerifiedAt   *string          `json:"verified_at,omitempty"`
+	DeploymentID *string          `json:"deployment_id,omitempty"`
+	DNSChallenge *dnsChallengeOut `json:"dns_challenge,omitempty"`
+	Instructions string           `json:"instructions,omitempty"`
 }
 
 func domainChallengeRecordName(domain string) string {
@@ -159,6 +159,9 @@ func (a *API) createProjectDomain(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !requireOrgAdmin(w, p) {
+		return
+	}
 	projectID, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
@@ -210,6 +213,9 @@ func (a *API) deleteProjectDomain(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !requireOrgAdmin(w, p) {
+		return
+	}
 	projectID, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
@@ -251,6 +257,9 @@ func (a *API) deleteProjectDomain(w http.ResponseWriter, r *http.Request) {
 func (a *API) verifyProjectDomain(w http.ResponseWriter, r *http.Request) {
 	p, ok := mustPrincipal(w, r)
 	if !ok {
+		return
+	}
+	if !requireOrgAdmin(w, p) {
 		return
 	}
 	projectID, err := parseUUID(r.PathValue("id"))

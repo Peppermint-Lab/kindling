@@ -70,8 +70,7 @@ func (a *API) upsertProjectSecret(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if p.OrgRole != "owner" && p.OrgRole != "admin" {
-		writeAPIError(w, http.StatusForbidden, "forbidden", "owner or admin role required")
+	if !requireOrgAdmin(w, p) {
 		return
 	}
 	projectID, _, ok := a.projectForRequest(w, r, p.OrganizationID)
@@ -127,8 +126,7 @@ func (a *API) deleteProjectSecret(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if p.OrgRole != "owner" && p.OrgRole != "admin" {
-		writeAPIError(w, http.StatusForbidden, "forbidden", "owner or admin role required")
+	if !requireOrgAdmin(w, p) {
 		return
 	}
 	projectID, _, ok := a.projectForRequest(w, r, p.OrganizationID)

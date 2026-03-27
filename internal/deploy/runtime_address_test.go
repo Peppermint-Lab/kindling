@@ -92,7 +92,7 @@ func TestPersistInstanceVMMetadata(t *testing.T) {
 	}
 
 	d := &Deployer{serverID: serverID}
-	err := d.persistInstanceVMMetadata(
+	vmID, err := d.persistInstanceVMMetadata(
 		context.Background(),
 		store,
 		pgUUID(instanceID),
@@ -109,6 +109,9 @@ func TestPersistInstanceVMMetadata(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatalf("persistInstanceVMMetadata: %v", err)
+	}
+	if vmID == uuid.Nil {
+		t.Fatal("expected VM id")
 	}
 
 	if !store.created {
@@ -167,7 +170,7 @@ func TestPersistInstanceVMMetadataSoftDeletesVMWhenAttachFails(t *testing.T) {
 	}
 
 	d := &Deployer{serverID: serverID}
-	err := d.persistInstanceVMMetadata(
+	_, err := d.persistInstanceVMMetadata(
 		context.Background(),
 		store,
 		pgUUID(instanceID),
@@ -204,7 +207,7 @@ func TestPersistInstanceVMMetadataStoresCloneLineage(t *testing.T) {
 	}
 
 	d := &Deployer{serverID: serverID}
-	err := d.persistInstanceVMMetadata(
+	_, err := d.persistInstanceVMMetadata(
 		context.Background(),
 		store,
 		pgUUID(instanceID),

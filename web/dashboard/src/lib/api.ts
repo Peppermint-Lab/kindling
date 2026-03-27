@@ -57,6 +57,20 @@ export type Project = {
   updated_at: string
 }
 
+export type ProjectVolume = {
+  id: string
+  project_id: string
+  server_id?: string | null
+  attached_vm_id?: string | null
+  mount_path: string
+  size_gb: number
+  filesystem: string
+  status: string
+  last_error?: string
+  created_at?: string | null
+  updated_at?: string | null
+}
+
 export type ProjectSecret = {
   id: string
   name: string
@@ -304,15 +318,26 @@ export type PreviewImmutableURL = {
   github_commit?: string
 }
 
+export type PreviewLatestDeployment = {
+  id: string
+  github_commit: string
+  phase: string
+  build_status?: string
+  created_at?: string
+  preview_scaled_to_zero: boolean
+  wake_requested_at?: string
+}
+
 export type PreviewEnvironment = {
   id: string
   pr_number: number
   head_branch: string
   head_sha: string
+  lifecycle_state: "active" | "closed" | "cleanup_due"
   stable_url?: string
-  latest_deployment_id?: string
   closed_at?: string
   expires_at?: string
+  latest_deployment?: PreviewLatestDeployment
   /** Per-deployment preview hostnames (unchanging until cleanup). */
   immutable_urls?: PreviewImmutableURL[]
 }
@@ -354,12 +379,27 @@ export type ProjectDomain = {
 }
 
 export const api = {
-  authBootstrapStatus: () => request<{ needs_bootstrap: boolean }>("/api/auth/bootstrap-status"),
+  authBootstrapStatus: () =>
+    request<{ needs_bootstrap: boolean; bootstrap_token_configured: boolean }>(
+      "/api/auth/bootstrap-status"
+    ),
   authSession: () => request<AuthSession>("/api/auth/session"),
-  authBootstrap: (data: { email: string; password: string; display_name?: string }) =>
+  authBootstrap: (data: {
+    email: string
+    password: string
+    display_name?: string
+    bootstrap_token?: string
+  }) =>
     request<AuthSession>("/api/auth/bootstrap", {
       method: "POST",
-      body: JSON.stringify(data),
+      headers: data.bootstrap_token
+        ? { "X-Kindling-Bootstrap-Token": data.bootstrap_token }
+        : undefined,
+      body: JSON.stringify({
+        email: data.email,
+        password: data.password,
+        display_name: data.display_name,
+      }),
     }),
   authLogin: (data: { email: string; password: string }) =>
     request<AuthSession>("/api/auth/login", {
@@ -429,6 +469,11 @@ export const api = {
 
   getProject: (id: string) => request<Project>(`/api/projects/${id}`),
 
+  getProjectVolume: (id: string) => request<ProjectVolume>(`/api/projects/${id}/volume`),
+  putProjectVolume: (id: string, data: { mount_path?: string; size_gb?: number }) =>
+    request<ProjectVolume>(`/api/projects/${id}/volume`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteProjectVolume: (id: string) => request<void>(`/api/projects/${id}/volume`, { method: "DELETE" }),
+
   patchProject: (
     id: string,
     data: {
@@ -471,6 +516,17 @@ export const api = {
 
   listProjectPreviews: (projectId: string) =>
     request<PreviewEnvironment[]>(`/api/projects/${projectId}/previews`),
+
+  redeployProjectPreview: (projectId: string, previewId: string) =>
+    request<Deployment>(`/api/projects/${projectId}/previews/${previewId}/redeploy`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+
+  deleteProjectPreview: (projectId: string, previewId: string) =>
+    request<{ status: string }>(`/api/projects/${projectId}/previews/${previewId}`, {
+      method: "DELETE",
+    }),
 
   listProjectDomains: (projectId: string) => request<ProjectDomain[]>(`/api/projects/${projectId}/domains`),
 

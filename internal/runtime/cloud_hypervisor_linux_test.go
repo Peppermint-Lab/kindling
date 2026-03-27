@@ -49,6 +49,26 @@ func TestCloudHypervisorSupportsWarmLifecycle(t *testing.T) {
 	}
 }
 
+func TestCloudHypervisorDiskArgsAddsPersistentVolumeAsSecondDisk(t *testing.T) {
+	args := cloudHypervisorDiskArgs("/tmp/rootfs.qcow2", &PersistentVolumeMount{
+		HostPath:  "/data/volumes/vol-1.qcow2",
+		MountPath: "/data",
+	})
+
+	if len(args) != 4 {
+		t.Fatalf("len(args) = %d, want 4", len(args))
+	}
+	if args[0] != "--disk" || args[2] != "--disk" {
+		t.Fatalf("unexpected disk flags: %#v", args)
+	}
+	if args[1] != "path=/tmp/rootfs.qcow2,direct=off" {
+		t.Fatalf("root disk arg = %q", args[1])
+	}
+	if args[3] != "path=/data/volumes/vol-1.qcow2,direct=off" {
+		t.Fatalf("persistent volume arg = %q", args[3])
+	}
+}
+
 func mustUUID(s string) uuid.UUID {
 	id, err := uuid.Parse(s)
 	if err != nil {

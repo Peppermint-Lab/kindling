@@ -68,26 +68,26 @@ func (d *Deployer) persistInstanceVMMetadata(
 	memoryMB int,
 	env []string,
 	meta instanceVMMetadata,
-) error {
+) (uuid.UUID, error) {
 	inst, err := store.DeploymentInstanceFirstByID(ctx, instanceID)
 	if err != nil {
-		return fmt.Errorf("fetch deployment instance: %w", err)
+		return uuid.Nil, fmt.Errorf("fetch deployment instance: %w", err)
 	}
 	if inst.VmID.Valid {
-		return nil
+		return uuidFromPgtype(inst.VmID), nil
 	}
 	if !imageID.Valid {
-		return fmt.Errorf("deployment image id is missing")
+		return uuid.Nil, fmt.Errorf("deployment image id is missing")
 	}
 
 	ip, port, err := parseRuntimeAddress(runtimeAddr)
 	if err != nil {
-		return err
+		return uuid.Nil, err
 	}
 
 	envJSON, err := json.Marshal(env)
 	if err != nil {
-		return fmt.Errorf("marshal env variables: %w", err)
+		return uuid.Nil, fmt.Errorf("marshal env variables: %w", err)
 	}
 
 	vmID := uuid.New()
@@ -105,7 +105,7 @@ func (d *Deployer) persistInstanceVMMetadata(
 		Port:            pgtype.Int4{Int32: int32(port), Valid: true},
 		EnvVariables:    pgtype.Text{String: string(envJSON), Valid: true},
 	}); err != nil {
-		return fmt.Errorf("create vm row: %w", err)
+		return uuid.Nil, fmt.Errorf("create vm row: %w", err)
 	}
 
 	if _, err := store.DeploymentInstanceAttachVM(ctx, queries.DeploymentInstanceAttachVMParams{
@@ -114,8 +114,8 @@ func (d *Deployer) persistInstanceVMMetadata(
 		Status: "running",
 	}); err != nil {
 		_ = store.VMSoftDelete(ctx, uuidToPgtype(vmID))
-		return fmt.Errorf("attach vm to deployment instance: %w", err)
+		return uuid.Nil, fmt.Errorf("attach vm to deployment instance: %w", err)
 	}
 
-	return nil
+	return vmID, nil
 }

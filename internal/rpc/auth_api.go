@@ -2,16 +2,24 @@ package rpc
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/auth"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+)
+
+const (
+	bootstrapTokenHeader = "X-Kindling-Bootstrap-Token"
+	bootstrapTokenEnv    = "KINDLING_BOOTSTRAP_TOKEN"
 )
 
 func (a *API) registerAuthRoutes(mux *http.ServeMux) {
@@ -29,7 +37,10 @@ func (a *API) authBootstrapStatus(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "bootstrap_status", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"needs_bootstrap": n == 0})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"needs_bootstrap":            n == 0,
+		"bootstrap_token_configured": configuredBootstrapToken() != "",
+	})
 }
 
 func (a *API) authSession(w http.ResponseWriter, r *http.Request) {
@@ -125,6 +136,10 @@ func (a *API) authBootstrap(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusForbidden, "bootstrap_done", "cluster already has users")
 		return
 	}
+	if !bootstrapRequestAllowed(r) {
+		writeAPIError(w, http.StatusForbidden, "bootstrap_forbidden", "bootstrap requires loopback access or a valid bootstrap token")
+		return
+	}
 
 	var req struct {
 		Email       string `json:"email"`
@@ -213,6 +228,58 @@ func (a *API) authBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 	auth.SetSessionCookie(w, r, rawTok, auth.RequestUsesHTTPS(r))
 	writeJSON(w, http.StatusCreated, a.authSuccessPayload(r.Context(), uRow, orgRow, "owner", allOrgs))
+}
+
+func configuredBootstrapToken() string {
+	return strings.TrimSpace(os.Getenv(bootstrapTokenEnv))
+}
+
+func bootstrapRequestAllowed(r *http.Request) bool {
+	if token := configuredBootstrapToken(); token != "" {
+		got := strings.TrimSpace(r.Header.Get(bootstrapTokenHeader))
+		if subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1 {
+			return true
+		}
+	}
+
+	ip, ok := bootstrapClientIP(r)
+	return ok && ip.IsLoopback()
+}
+
+func bootstrapClientIP(r *http.Request) (net.IP, bool) {
+	peer, ok := parseRequestIP(r.RemoteAddr)
+	if !ok {
+		return nil, false
+	}
+	if peer.IsLoopback() {
+		if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+			first := strings.TrimSpace(strings.Split(forwarded, ",")[0])
+			if first == "" {
+				return nil, false
+			}
+			return parseRequestIP(first)
+		}
+	}
+	return peer, true
+}
+
+func parseRequestIP(raw string) (net.IP, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, false
+	}
+	host := raw
+	if strings.Contains(raw, ":") {
+		if h, _, err := net.SplitHostPort(raw); err == nil {
+			host = h
+		}
+	}
+	host = strings.Trim(host, "[]")
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil, false
+	}
+	return ip, true
 }
 
 func (a *API) authLogin(w http.ResponseWriter, r *http.Request) {

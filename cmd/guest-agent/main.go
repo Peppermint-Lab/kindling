@@ -40,12 +40,13 @@ const (
 // ConfigResponse is the JSON payload from the host's config endpoint.
 type ConfigResponse struct {
 	// Mode is "" or "app" for normal workloads; "builder" for the macOS OCI build microVM.
-	Mode     string   `json:"mode"`
-	Env      []string `json:"env"`
-	IPAddr   string   `json:"ip_addr"`
-	IPGW     string   `json:"ip_gw"`
-	Hostname string   `json:"hostname"`
-	Port     int      `json:"port"`
+	Mode            string   `json:"mode"`
+	Env             []string `json:"env"`
+	IPAddr          string   `json:"ip_addr"`
+	IPGW            string   `json:"ip_gw"`
+	Hostname        string   `json:"hostname"`
+	Port            int      `json:"port"`
+	VolumeMountPath string   `json:"volume_mount_path"`
 }
 
 type commandSpec struct {
@@ -86,7 +87,7 @@ func main() {
 	setHostname(cfg.Hostname)
 
 	// Chroot into the container rootfs if available.
-	chrootIntoApp()
+	chrootIntoApp(cfg)
 
 	// Start log streaming to host.
 	logWriter := startLogStream()

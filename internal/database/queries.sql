@@ -207,6 +207,101 @@ WHERE scale_to_zero_enabled = true
 ORDER BY last_request_at ASC
 LIMIT 100;
 
+-- Project volumes --
+
+-- name: ProjectVolumeFindByProjectID :one
+SELECT * FROM project_volumes
+WHERE project_id = $1 AND deleted_at IS NULL;
+
+-- name: ProjectVolumeFindAnyByProjectID :one
+SELECT * FROM project_volumes
+WHERE project_id = $1
+LIMIT 1;
+
+-- name: ProjectVolumeFindByServerID :many
+SELECT * FROM project_volumes
+WHERE server_id = $1 AND deleted_at IS NULL
+ORDER BY created_at ASC;
+
+-- name: ProjectVolumeCreate :one
+INSERT INTO project_volumes (
+    id, project_id, mount_path, size_gb, filesystem, status
+) VALUES (
+    $1, $2, $3, $4, $5, 'detached'
+)
+RETURNING *;
+
+-- name: ProjectVolumeUpdateSpec :one
+UPDATE project_volumes
+SET size_gb = $2,
+    filesystem = $3,
+    updated_at = NOW()
+WHERE project_id = $1
+  AND deleted_at IS NULL
+RETURNING *;
+
+-- name: ProjectVolumeRevive :one
+UPDATE project_volumes
+SET size_gb = $2,
+    filesystem = $3,
+    server_id = NULL,
+    attached_vm_id = NULL,
+    status = 'detached',
+    last_error = '',
+    deleted_at = NULL,
+    updated_at = NOW()
+WHERE project_id = $1
+RETURNING *;
+
+-- name: ProjectVolumeAssignServer :one
+UPDATE project_volumes
+SET server_id = $2,
+    updated_at = NOW()
+WHERE project_id = $1
+  AND deleted_at IS NULL
+RETURNING *;
+
+-- name: ProjectVolumeAttachVM :one
+UPDATE project_volumes
+SET server_id = $2,
+    attached_vm_id = $3,
+    status = 'attached',
+    last_error = '',
+    updated_at = NOW()
+WHERE project_id = $1
+  AND deleted_at IS NULL
+RETURNING *;
+
+-- name: ProjectVolumeDetachVM :one
+UPDATE project_volumes
+SET attached_vm_id = NULL,
+    status = $2,
+    last_error = $3,
+    updated_at = NOW()
+WHERE project_id = $1
+  AND deleted_at IS NULL
+RETURNING *;
+
+-- name: ProjectVolumeUpdateStatus :one
+UPDATE project_volumes
+SET status = $2,
+    last_error = $3,
+    updated_at = NOW()
+WHERE project_id = $1
+  AND deleted_at IS NULL
+RETURNING *;
+
+-- name: ProjectVolumeSoftDelete :exec
+UPDATE project_volumes
+SET server_id = NULL,
+    attached_vm_id = NULL,
+    status = 'detached',
+    last_error = '',
+    deleted_at = NOW(),
+    updated_at = NOW()
+WHERE project_id = $1
+  AND deleted_at IS NULL;
+
 -- Deployment instances (horizontal scaling) --
 
 -- name: DeploymentInstanceCreate :one
@@ -554,6 +649,16 @@ SET head_branch = $2, head_sha = $3, updated_at = NOW()
 WHERE id = $1
 RETURNING *;
 
+-- name: PreviewEnvironmentReopen :one
+UPDATE preview_environments
+SET head_branch = $2,
+    head_sha = $3,
+    closed_at = NULL,
+    expires_at = NULL,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
 -- name: PreviewEnvironmentSetLatestDeployment :exec
 UPDATE preview_environments SET latest_deployment_id = $2, updated_at = NOW() WHERE id = $1;
 
@@ -622,8 +727,11 @@ WHERE id = $1
   AND preview_scaled_to_zero = false;
 
 -- name: DeploymentsFindPreviewForIdleScaleDown :many
-SELECT * FROM deployments
+SELECT deployments.*
+FROM deployments
+JOIN preview_environments pe ON pe.id = deployments.preview_environment_id
 WHERE deployment_kind = 'preview'
+  AND pe.closed_at IS NULL
   AND running_at IS NOT NULL
   AND stopped_at IS NULL
   AND failed_at IS NULL
@@ -701,15 +809,18 @@ SELECT
     d.id AS domain_id,
     d.project_id,
     d.deployment_id,
+    d.domain_kind,
     d.redirect_to,
     d.redirect_status_code,
     dep.wake_requested_at AS deployment_wake_requested_at,
     dep.deployment_kind AS deployment_kind,
+    pe.closed_at AS preview_closed_at,
     (SELECT COUNT(*)::bigint FROM deployment_instances di
      INNER JOIN vms vm ON di.vm_id = vm.id AND vm.deleted_at IS NULL AND vm.status = 'running'
      WHERE di.deployment_id = d.deployment_id AND di.deleted_at IS NULL AND di.role = 'active' AND di.status = 'running') AS running_backend_count
 FROM domains d
 LEFT JOIN deployments dep ON d.deployment_id = dep.id AND dep.deleted_at IS NULL
+LEFT JOIN preview_environments pe ON d.preview_environment_id = pe.id
 WHERE d.domain_name = $1 AND d.verified_at IS NOT NULL;
 
 -- name: RouteFindActive :many
@@ -726,6 +837,9 @@ SELECT d.domain_name,
 FROM domains d
 LEFT JOIN deployments dep ON d.deployment_id = dep.id
 LEFT JOIN deployment_instances di ON di.deployment_id = dep.id
+    AND dep.stopped_at IS NULL
+    AND dep.failed_at IS NULL
+    AND dep.deleted_at IS NULL
     AND di.deleted_at IS NULL
     AND di.role = 'active'
     AND di.status = 'running'

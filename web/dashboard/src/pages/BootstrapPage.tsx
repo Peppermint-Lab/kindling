@@ -12,6 +12,8 @@ export function BootstrapPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [displayName, setDisplayName] = useState("")
+  const [bootstrapToken, setBootstrapToken] = useState("")
+  const [bootstrapTokenConfigured, setBootstrapTokenConfigured] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -22,6 +24,9 @@ export function BootstrapPage() {
         const s = await api.authBootstrapStatus()
         if (!cancelled && !s.needs_bootstrap) {
           navigate("/login", { replace: true })
+        }
+        if (!cancelled) {
+          setBootstrapTokenConfigured(s.bootstrap_token_configured)
         }
       } catch {
         /* stay on page */
@@ -40,6 +45,9 @@ export function BootstrapPage() {
           <p className="text-muted-foreground text-sm">
             First user becomes owner of the default organization.
           </p>
+          <p className="text-muted-foreground text-xs">
+            Remote bootstrap requires a server bootstrap token. Local bootstrap works from loopback.
+          </p>
         </div>
         <form
           className="space-y-4"
@@ -52,6 +60,7 @@ export function BootstrapPage() {
                 email,
                 password,
                 display_name: displayName || undefined,
+                bootstrap_token: bootstrapToken || undefined,
               })
               await refresh()
               navigate("/", { replace: true })
@@ -92,6 +101,18 @@ export function BootstrapPage() {
               id="b-name"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="b-token">
+              Bootstrap token {bootstrapTokenConfigured ? "(required for remote setup)" : "(optional)"}
+            </Label>
+            <Input
+              id="b-token"
+              type="password"
+              autoComplete="one-time-code"
+              value={bootstrapToken}
+              onChange={(e) => setBootstrapToken(e.target.value)}
             />
           </div>
           {error ? <p className="text-destructive text-sm">{error}</p> : null}

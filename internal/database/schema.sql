@@ -400,6 +400,29 @@ CREATE INDEX IF NOT EXISTS idx_deployment_instances_server_id
 CREATE INDEX IF NOT EXISTS idx_deployment_instances_role
     ON deployment_instances(deployment_id, role) WHERE deleted_at IS NULL;
 
+-- Project volumes: single persistent block device per project.
+CREATE TABLE IF NOT EXISTS project_volumes (
+    id              UUID PRIMARY KEY,
+    project_id      UUID NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+    server_id       UUID REFERENCES servers(id) ON DELETE SET NULL,
+    attached_vm_id  UUID REFERENCES vms(id) ON DELETE SET NULL,
+    mount_path      TEXT NOT NULL DEFAULT '/data',
+    size_gb         INT NOT NULL DEFAULT 10 CHECK (size_gb > 0),
+    filesystem      TEXT NOT NULL DEFAULT 'ext4'
+        CHECK (filesystem IN ('ext4')),
+    status          TEXT NOT NULL DEFAULT 'detached'
+        CHECK (status IN ('detached', 'available', 'attached', 'unavailable')),
+    last_error      TEXT NOT NULL DEFAULT '',
+    deleted_at      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_volumes_server_id
+    ON project_volumes(server_id) WHERE deleted_at IS NULL AND server_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_project_volumes_attached_vm_id
+    ON project_volumes(attached_vm_id) WHERE deleted_at IS NULL AND attached_vm_id IS NOT NULL;
+
 -- Backfill from legacy deployments.vm_id (one VM per deployment) into deployment_instances
 INSERT INTO deployment_instances (id, deployment_id, server_id, vm_id, role, status, created_at, updated_at)
 SELECT gen_random_uuid(), d.id, v.server_id, d.vm_id, 'active', 'running', NOW(), NOW()

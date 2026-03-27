@@ -6,9 +6,42 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/reconciler"
 )
+
+func scheduleDeployments(deploymentReconciler *reconciler.Scheduler, deps []queries.Deployment) {
+	if deploymentReconciler == nil {
+		return
+	}
+	for _, dep := range deps {
+		deploymentReconciler.ScheduleNow(uuid.UUID(dep.ID.Bytes))
+	}
+}
+
+// StopEnvironmentDeployments marks a preview environment's deployments stopped
+// and schedules immediate reconciliation for instance cleanup.
+func StopEnvironmentDeployments(ctx context.Context, q *queries.Queries, deploymentReconciler *reconciler.Scheduler, previewEnvironmentID pgtype.UUID) ([]queries.Deployment, error) {
+	deps, err := q.DeploymentsByPreviewEnvironmentID(ctx, previewEnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	if err := q.DeploymentsMarkStoppedByPreviewEnvironment(ctx, previewEnvironmentID); err != nil {
+		return deps, err
+	}
+	scheduleDeployments(deploymentReconciler, deps)
+	return deps, nil
+}
+
+// CleanupEnvironmentNow stops any remaining preview deployments, schedules
+// reconciler cleanup, and deletes the preview environment immediately.
+func CleanupEnvironmentNow(ctx context.Context, q *queries.Queries, deploymentReconciler *reconciler.Scheduler, previewEnvironmentID pgtype.UUID) error {
+	if _, err := StopEnvironmentDeployments(ctx, q, deploymentReconciler, previewEnvironmentID); err != nil {
+		return err
+	}
+	return q.PreviewEnvironmentDelete(ctx, previewEnvironmentID)
+}
 
 // RunCleanupOnce acquires a cluster-wide advisory lock, reap preview environments
 // past expires_at, and deletes preview_environments (CASCADE removes preview domains).
@@ -33,18 +66,7 @@ func RunCleanupOnce(ctx context.Context, databaseURL string, q *queries.Queries,
 		return
 	}
 	for _, pe := range envs {
-		deps, err := q.DeploymentsByPreviewEnvironmentID(ctx, pe.ID)
-		if err != nil {
-			slog.Warn("preview cleanup: list deployments", "preview_env_id", pe.ID, "error", err)
-			continue
-		}
-		if err := q.DeploymentsMarkStoppedByPreviewEnvironment(ctx, pe.ID); err != nil {
-			slog.Warn("preview cleanup: mark stopped", "preview_env_id", pe.ID, "error", err)
-		}
-		for _, dep := range deps {
-			deploymentReconciler.ScheduleNow(uuid.UUID(dep.ID.Bytes))
-		}
-		if err := q.PreviewEnvironmentDelete(ctx, pe.ID); err != nil {
+		if err := CleanupEnvironmentNow(ctx, q, deploymentReconciler, pe.ID); err != nil {
 			slog.Warn("preview cleanup: delete env", "preview_env_id", pe.ID, "error", err)
 			continue
 		}

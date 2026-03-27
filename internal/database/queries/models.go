@@ -208,6 +208,21 @@ type ProjectHttpUsageRollup struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ProjectVolume struct {
+	ID           pgtype.UUID        `json:"id"`
+	ProjectID    pgtype.UUID        `json:"project_id"`
+	ServerID     pgtype.UUID        `json:"server_id"`
+	AttachedVmID pgtype.UUID        `json:"attached_vm_id"`
+	MountPath    string             `json:"mount_path"`
+	SizeGb       int32              `json:"size_gb"`
+	Filesystem   string             `json:"filesystem"`
+	Status       string             `json:"status"`
+	LastError    string             `json:"last_error"`
+	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Server struct {
 	ID              pgtype.UUID        `json:"id"`
 	Hostname        string             `json:"hostname"`

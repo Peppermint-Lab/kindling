@@ -43,20 +43,20 @@ type AppleRuntime struct {
 }
 
 type appleInstance struct {
-	vm      *vz.VirtualMachine
-	vsock   *vz.VirtioSocketDevice
-	ip      string
-	hostFwd net.Listener
-	logs    []string
-	logMu   sync.Mutex
-	cancel  context.CancelFunc
-	ready   chan struct{}
-	once    sync.Once
-	inst    Instance
-	appDir  string
+	vm       *vz.VirtualMachine
+	vsock    *vz.VirtioSocketDevice
+	ip       string
+	hostFwd  net.Listener
+	logs     []string
+	logMu    sync.Mutex
+	cancel   context.CancelFunc
+	ready    chan struct{}
+	once     sync.Once
+	inst     Instance
+	appDir   string
 	hostPort int
-	retain  bool
-	stopped chan struct{}
+	retain   bool
+	stopped  chan struct{}
 }
 
 type appleSuspended struct {
@@ -117,6 +117,9 @@ func (r *AppleRuntime) Supports(cap Capability) bool {
 func (r *AppleRuntime) Start(ctx context.Context, inst Instance) (string, error) {
 	if _, err := os.Stat(r.kernelPath); err != nil {
 		return "", fmt.Errorf("kernel not found at %s: %w", r.kernelPath, err)
+	}
+	if inst.PersistentVolume != nil {
+		return "", ErrPersistentVolumesUnsupported
 	}
 	return r.startVM(ctx, inst)
 }
@@ -381,6 +384,9 @@ func (r *AppleRuntime) CreateTemplate(ctx context.Context, id uuid.UUID) (string
 }
 
 func (r *AppleRuntime) StartClone(ctx context.Context, inst Instance, snapshotRef string, cloneSourceVMID uuid.UUID) (string, StartMetadata, error) {
+	if inst.PersistentVolume != nil {
+		return "", StartMetadata{}, ErrPersistentVolumesUnsupported
+	}
 	r.mu.Lock()
 	tmpl, ok := r.templates[snapshotRef]
 	r.mu.Unlock()

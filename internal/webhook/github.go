@@ -22,16 +22,24 @@ import (
 	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/preview"
+	"github.com/kindlingvm/kindling/internal/reconciler"
 )
 
 // Handler handles GitHub webhook requests.
 type Handler struct {
-	q *queries.Queries
+	q                    *queries.Queries
+	deploymentReconciler *reconciler.Scheduler
 }
 
 // NewHandler creates a new webhook handler.
 func NewHandler(q *queries.Queries) *Handler {
 	return &Handler{q: q}
+}
+
+// SetDeploymentReconciler configures the deployment reconciler used for
+// immediate preview cleanup work after close/delete lifecycle changes.
+func (h *Handler) SetDeploymentReconciler(r *reconciler.Scheduler) {
+	h.deploymentReconciler = r
 }
 
 // pushEvent is the relevant subset of GitHub's push event payload.
@@ -336,16 +344,31 @@ func (h *Handler) handlePullRequestClosed(w http.ResponseWriter, ctx context.Con
 		return
 	}
 
-	deps, err := h.q.DeploymentsByPreviewEnvironmentID(ctx, pe.ID)
+	deps, err := preview.StopEnvironmentDeployments(ctx, h.q, h.deploymentReconciler, pe.ID)
 	if err != nil {
-		slog.Error("PR close: list deployments", "error", err)
+		slog.Error("PR close: mark deployments stopped", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
 
-	if err := h.q.DeploymentsMarkStoppedByPreviewEnvironment(ctx, pe.ID); err != nil {
-		slog.Error("PR close: mark deployments stopped", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+	if retention == 0 {
+		if err := h.q.PreviewEnvironmentDelete(ctx, pe.ID); err != nil {
+			slog.Error("PR close: immediate cleanup", "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		slog.Info("preview environment cleaned up immediately after close",
+			"project", project.Name,
+			"pr", prNumber,
+			"deployments", len(deps),
+		)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{
+			"status":      "deleted",
+			"expires_at":  expires.UTC().Format(time.RFC3339Nano),
+			"deployments": len(deps),
+			"preview_env": pe.ID,
+		})
 		return
 	}
 
@@ -403,7 +426,7 @@ func (h *Handler) handlePullRequestSync(w http.ResponseWriter, ctx context.Conte
 			return
 		}
 	} else {
-		pe, err = h.q.PreviewEnvironmentUpdateHead(ctx, queries.PreviewEnvironmentUpdateHeadParams{
+		pe, err = h.q.PreviewEnvironmentReopen(ctx, queries.PreviewEnvironmentReopenParams{
 			ID:         existing.ID,
 			HeadBranch: headBranch,
 			HeadSha:    sha,

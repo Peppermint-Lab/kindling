@@ -128,6 +128,27 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 		return fmt.Errorf("fetch project: %w", err)
 	}
 	desired := effectiveReplicaCount(proj, dep)
+	projectVolume, persistentVolume, err := d.projectVolumeForProject(ctx, dep.ProjectID)
+	if err != nil {
+		return fmt.Errorf("fetch project volume: %w", err)
+	}
+	if projectVolume != nil {
+		if dep.DeploymentKind == "preview" {
+			msg := "persistent volumes are not supported for preview deployments"
+			_, _ = d.q.ProjectVolumeUpdateStatus(ctx, queries.ProjectVolumeUpdateStatusParams{
+				ProjectID: dep.ProjectID,
+				Status:    "unavailable",
+				LastError: msg,
+			})
+			if !dep.FailedAt.Valid {
+				_ = d.q.DeploymentUpdateFailedAt(ctx, dep.ID)
+			}
+			return nil
+		}
+		if desired > 1 {
+			desired = 1
+		}
+	}
 
 	logger := slog.With("deployment_id", deploymentID, "effective_instances", desired, "desired_instance_count", proj.DesiredInstanceCount, "scaled_to_zero", proj.ScaledToZero, "wake", dep.WakeRequestedAt.Valid)
 
@@ -181,6 +202,27 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 		logger.Info("build in progress, will retry")
 		d.scheduleRetry(deploymentID, 10*time.Second)
 		return nil
+	}
+
+	if projectVolume != nil {
+		resolvedVolume, err := d.ensureProjectVolumeServer(ctx, *projectVolume)
+		if err != nil {
+			logger.Warn("project volume unavailable", "project_id", uuidFromPgtype(dep.ProjectID), "error", err)
+			d.scheduleRetry(deploymentID, 5*time.Second)
+			return nil
+		}
+		projectVolume = &resolvedVolume
+		persistentVolume = persistentVolumeMountFromRow(resolvedVolume)
+		if dep.DeploymentKind == "production" && !dep.RunningAt.Valid {
+			drained, err := d.stopOldDeploymentsForVolume(ctx, dep, logger)
+			if err != nil {
+				return fmt.Errorf("stop old deployments for volume: %w", err)
+			}
+			if drained {
+				d.scheduleRetry(deploymentID, 5*time.Second)
+				return nil
+			}
+		}
 	}
 
 	if dep.ImageID != build.ImageID {
@@ -271,9 +313,13 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 		return fmt.Errorf("list deployment instances: %w", err)
 	}
 	templateRef, templateSourceVMID := d.templateSourceForDeployment(ctx, instList, dep.ImageID)
+	if persistentVolume != nil {
+		templateRef = ""
+		templateSourceVMID = pgtype.UUID{}
+	}
 
 	for _, inst := range instList {
-		if err := d.reconcileOneInstance(ctx, dep, inst, imageRef, env, templateRef, templateSourceVMID, logger); err != nil {
+		if err := d.reconcileOneInstance(ctx, dep, inst, imageRef, env, templateRef, templateSourceVMID, persistentVolume, logger); err != nil {
 			logger.Info("instance reconcile deferred", "instance_id", uuidFromPgtype(inst.ID), "error", err)
 			d.scheduleRetry(deploymentID, 5*time.Second)
 			return nil
@@ -600,12 +646,28 @@ func (d *Deployer) reconcileOneInstance(
 	env []string,
 	templateRef string,
 	templateSourceVMID pgtype.UUID,
+	persistentVolume *runtime.PersistentVolumeMount,
 	logger *slog.Logger,
 ) error {
 	if inst.Role == deploymentInstanceRoleTemplate {
 		return nil
 	}
 	if inst.ServerID.Valid {
+		if persistentVolume != nil {
+			projectVolume, _, err := d.projectVolumeForProject(ctx, dep.ProjectID)
+			if err != nil {
+				return fmt.Errorf("load project volume: %w", err)
+			}
+			if projectVolume != nil && projectVolume.ServerID.Valid && inst.ServerID != projectVolume.ServerID {
+				if _, err := d.q.DeploymentInstancePrepareRetry(ctx, inst.ID); err != nil {
+					return fmt.Errorf("reset instance for pinned volume server: %w", err)
+				}
+				inst, _ = d.q.DeploymentInstanceFirstByID(ctx, inst.ID)
+				if !inst.ServerID.Valid {
+					return nil
+				}
+			}
+		}
 		srv, err := d.q.ServerFindByID(ctx, inst.ServerID)
 		if err == nil && srv.Status == "draining" {
 			if isWarmPoolInstance(inst) {
@@ -653,6 +715,9 @@ func (d *Deployer) reconcileOneInstance(
 			if err != nil {
 				if errors.Is(err, runtime.ErrInstanceNotRunning) {
 					if inst.VmID.Valid {
+						if persistentVolume != nil {
+							_ = d.detachProjectVolumeIfAttached(ctx, dep.ProjectID, inst.VmID, "available", "")
+						}
 						_ = d.q.VMSoftDelete(ctx, inst.VmID)
 					}
 					if _, prepErr := d.q.DeploymentInstancePrepareRetry(ctx, inst.ID); prepErr != nil {
@@ -705,6 +770,9 @@ func (d *Deployer) reconcileOneInstance(
 			_ = d.rt.Stop(ctx, uuidFromPgtype(inst.ID))
 		}
 		if inst.VmID.Valid {
+			if persistentVolume != nil {
+				_ = d.detachProjectVolumeIfAttached(ctx, dep.ProjectID, inst.VmID, "available", "")
+			}
 			_ = d.q.VMSoftDelete(ctx, inst.VmID)
 		}
 		if _, err := d.q.DeploymentInstancePrepareRetry(ctx, inst.ID); err != nil {
@@ -714,7 +782,22 @@ func (d *Deployer) reconcileOneInstance(
 	}
 
 	if !inst.ServerID.Valid {
-		srv, err := d.q.ServerFindLeastLoaded(ctx)
+		var (
+			srv queries.Server
+			err error
+		)
+		if persistentVolume != nil {
+			projectVolume, _, volumeErr := d.projectVolumeForProject(ctx, dep.ProjectID)
+			if volumeErr != nil {
+				return fmt.Errorf("load project volume: %w", volumeErr)
+			}
+			if projectVolume == nil || !projectVolume.ServerID.Valid {
+				return fmt.Errorf("project volume server is not assigned")
+			}
+			srv, err = d.q.ServerFindByID(ctx, projectVolume.ServerID)
+		} else {
+			srv, err = d.q.ServerFindLeastLoaded(ctx)
+		}
 		if err != nil {
 			return fmt.Errorf("pick server: %w", err)
 		}
@@ -741,12 +824,13 @@ func (d *Deployer) reconcileOneInstance(
 
 	instID := uuidFromPgtype(inst.ID)
 	startInst := runtime.Instance{
-		ID:       instID,
-		ImageRef: imageRef,
-		VCPUs:    1,
-		MemoryMB: 512,
-		Port:     3000,
-		Env:      env,
+		ID:               instID,
+		ImageRef:         imageRef,
+		VCPUs:            1,
+		MemoryMB:         512,
+		Port:             3000,
+		Env:              env,
+		PersistentVolume: persistentVolume,
 	}
 	mode, shouldLaunch := selectLaunchMode(inst, queries.Vm{}, templateRef)
 	if !shouldLaunch {
@@ -808,13 +892,28 @@ func (d *Deployer) reconcileOneInstance(
 		return fmt.Errorf("health check failed")
 	}
 
-	if err := d.persistInstanceVMMetadata(ctx, d.q, inst.ID, dep.ImageID, uuidFromPgtype(inst.ServerID), ip, 1, 512, env, meta); err != nil {
+	vmID, err := d.persistInstanceVMMetadata(ctx, d.q, inst.ID, dep.ImageID, uuidFromPgtype(inst.ServerID), ip, 1, 512, env, meta)
+	if err != nil {
 		_ = d.rt.Stop(ctx, instID)
 		_, _ = d.q.DeploymentInstanceUpdateStatus(ctx, queries.DeploymentInstanceUpdateStatusParams{
 			ID:     inst.ID,
 			Status: "failed",
 		})
 		return fmt.Errorf("persist vm metadata: %w", err)
+	}
+	if persistentVolume != nil {
+		if _, err := d.q.ProjectVolumeAttachVM(ctx, queries.ProjectVolumeAttachVMParams{
+			ProjectID:    dep.ProjectID,
+			ServerID:     inst.ServerID,
+			AttachedVmID: uuidToPgtype(vmID),
+		}); err != nil {
+			_ = d.rt.Stop(ctx, instID)
+			_, _ = d.q.DeploymentInstanceUpdateStatus(ctx, queries.DeploymentInstanceUpdateStatusParams{
+				ID:     inst.ID,
+				Status: "failed",
+			})
+			return fmt.Errorf("attach project volume to vm: %w", err)
+		}
 	}
 	return nil
 }

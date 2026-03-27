@@ -38,12 +38,21 @@ type HostRuntimeConfig struct {
 
 // Instance represents a running or pending app instance.
 type Instance struct {
-	ID       uuid.UUID
-	ImageRef string // OCI image reference (e.g. "kindling/myapp:abc123")
-	VCPUs    int
-	MemoryMB int
-	Port     int
-	Env      []string // KEY=value pairs
+	ID               uuid.UUID
+	ImageRef         string // OCI image reference (e.g. "kindling/myapp:abc123")
+	VCPUs            int
+	MemoryMB         int
+	Port             int
+	Env              []string // KEY=value pairs
+	PersistentVolume *PersistentVolumeMount
+}
+
+type PersistentVolumeMount struct {
+	ID         uuid.UUID
+	HostPath   string
+	MountPath  string
+	SizeGB     int
+	Filesystem string
 }
 
 // ResourceStats holds counters suitable for usage sampling (CPU cumulative nanoseconds, RSS, disk I/O).

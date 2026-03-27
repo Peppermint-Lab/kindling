@@ -11,19 +11,27 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/reconciler"
 )
 
 // API provides REST endpoints for the dashboard.
 type API struct {
-	q               *queries.Queries
-	cfg             *config.Manager
-	dashboardEvents *DashboardEventBroker
+	q                    *queries.Queries
+	cfg                  *config.Manager
+	dashboardEvents      *DashboardEventBroker
+	deploymentReconciler *reconciler.Scheduler
 }
 
 // NewAPI creates a new API handler. cfg supplies DB-backed secrets (e.g. GitHub token).
 // dashboardEvents may be nil; in that case GET /api/events returns 503.
 func NewAPI(q *queries.Queries, cfg *config.Manager, dashboardEvents *DashboardEventBroker) *API {
 	return &API{q: q, cfg: cfg, dashboardEvents: dashboardEvents}
+}
+
+// SetDeploymentReconciler configures the reconciler used for immediate preview
+// cleanup actions exposed via the dashboard APIs.
+func (a *API) SetDeploymentReconciler(r *reconciler.Scheduler) {
+	a.deploymentReconciler = r
 }
 
 func (a *API) gitHubToken() string {
@@ -49,8 +57,13 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/projects/{id}/secrets", a.listProjectSecrets)
 	mux.HandleFunc("POST /api/projects/{id}/secrets", a.upsertProjectSecret)
 	mux.HandleFunc("DELETE /api/projects/{id}/secrets/{secret_id}", a.deleteProjectSecret)
+	mux.HandleFunc("GET /api/projects/{id}/volume", a.getProjectVolume)
+	mux.HandleFunc("PUT /api/projects/{id}/volume", a.putProjectVolume)
+	mux.HandleFunc("DELETE /api/projects/{id}/volume", a.deleteProjectVolume)
 	mux.HandleFunc("GET /api/projects/{id}/deployments", a.listDeployments)
 	mux.HandleFunc("GET /api/projects/{id}/previews", a.listProjectPreviews)
+	mux.HandleFunc("POST /api/projects/{id}/previews/{preview_id}/redeploy", a.redeployProjectPreview)
+	mux.HandleFunc("DELETE /api/projects/{id}/previews/{preview_id}", a.deleteProjectPreview)
 	mux.HandleFunc("GET /api/projects/{id}/github-setup", a.getGitHubSetup)
 	mux.HandleFunc("GET /api/projects/{id}/git-head", a.gitHead)
 	mux.HandleFunc("POST /api/projects/{id}/rotate-webhook-secret", a.rotateWebhookSecret)
@@ -105,8 +118,7 @@ func (a *API) putMeta(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if p.OrgRole != "owner" && p.OrgRole != "admin" {
-		writeAPIError(w, http.StatusForbidden, "forbidden", "owner or admin role required")
+	if !requireOrgAdmin(w, p) {
 		return
 	}
 	var req struct {
@@ -236,6 +248,9 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !requireOrgAdmin(w, p) {
+		return
+	}
 	var req struct {
 		Name                   string `json:"name"`
 		GithubRepository       string `json:"github_repository"`
@@ -317,6 +332,9 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
 	p, ok := mustPrincipal(w, r)
 	if !ok {
+		return
+	}
+	if !requireOrgAdmin(w, p) {
 		return
 	}
 	id, err := parseUUID(r.PathValue("id"))
@@ -434,6 +452,9 @@ func (a *API) deleteProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !requireOrgAdmin(w, p) {
+		return
+	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
@@ -452,6 +473,9 @@ func (a *API) deleteProject(w http.ResponseWriter, r *http.Request) {
 func (a *API) getGitHubSetup(w http.ResponseWriter, r *http.Request) {
 	p, ok := mustPrincipal(w, r)
 	if !ok {
+		return
+	}
+	if !requireOrgAdmin(w, p) {
 		return
 	}
 	id, err := parseUUID(r.PathValue("id"))
@@ -489,6 +513,9 @@ func (a *API) getGitHubSetup(w http.ResponseWriter, r *http.Request) {
 func (a *API) rotateWebhookSecret(w http.ResponseWriter, r *http.Request) {
 	p, ok := mustPrincipal(w, r)
 	if !ok {
+		return
+	}
+	if !requireOrgAdmin(w, p) {
 		return
 	}
 	id, err := parseUUID(r.PathValue("id"))
@@ -654,6 +681,9 @@ func (a *API) triggerDeploy(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !requireOrgAdmin(w, p) {
+		return
+	}
 	projectID, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
@@ -695,6 +725,9 @@ func (a *API) triggerDeploy(w http.ResponseWriter, r *http.Request) {
 func (a *API) cancelDeployment(w http.ResponseWriter, r *http.Request) {
 	p, ok := mustPrincipal(w, r)
 	if !ok {
+		return
+	}
+	if !requireOrgAdmin(w, p) {
 		return
 	}
 	id, err := parseUUID(r.PathValue("id"))
@@ -740,8 +773,7 @@ func (a *API) postServerDrain(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if p.OrgRole != "owner" && p.OrgRole != "admin" {
-		writeAPIError(w, http.StatusForbidden, "forbidden", "owner or admin role required")
+	if !requireOrgAdmin(w, p) {
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -774,8 +806,7 @@ func (a *API) postServerActivate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if p.OrgRole != "owner" && p.OrgRole != "admin" {
-		writeAPIError(w, http.StatusForbidden, "forbidden", "owner or admin role required")
+	if !requireOrgAdmin(w, p) {
 		return
 	}
 	if r.Method != http.MethodPost {

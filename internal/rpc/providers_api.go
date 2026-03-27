@@ -57,17 +57,16 @@ func (a *API) createOrgProviderConnection(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	if p.OrgRole != "owner" && p.OrgRole != "admin" {
-		writeAPIError(w, http.StatusForbidden, "forbidden", "owner or admin role required")
+	if !requireOrgAdmin(w, p) {
 		return
 	}
 
 	var req struct {
-		Provider        string          `json:"provider"`
-		ExternalSlug    string          `json:"external_slug"`
-		DisplayLabel    string          `json:"display_label"`
-		Token           string          `json:"token"`
-		Metadata        json.RawMessage `json:"metadata"`
+		Provider     string          `json:"provider"`
+		ExternalSlug string          `json:"external_slug"`
+		DisplayLabel string          `json:"display_label"`
+		Token        string          `json:"token"`
+		Metadata     json.RawMessage `json:"metadata"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
@@ -99,13 +98,13 @@ func (a *API) createOrgProviderConnection(w http.ResponseWriter, r *http.Request
 	}
 
 	row, err := a.q.OrgProviderConnectionCreate(r.Context(), queries.OrgProviderConnectionCreateParams{
-		ID:                     pgtype.UUID{Bytes: uuid.New(), Valid: true},
-		OrganizationID:         p.OrganizationID,
-		Provider:               req.Provider,
-		ExternalSlug:           req.ExternalSlug,
-		DisplayLabel:           req.DisplayLabel,
-		CredentialsCiphertext:  cipher,
-		Metadata:               meta,
+		ID:                    pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		OrganizationID:        p.OrganizationID,
+		Provider:              req.Provider,
+		ExternalSlug:          req.ExternalSlug,
+		DisplayLabel:          req.DisplayLabel,
+		CredentialsCiphertext: cipher,
+		Metadata:              meta,
 	})
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "create_provider_connection", err)
@@ -119,8 +118,7 @@ func (a *API) deleteOrgProviderConnection(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	if p.OrgRole != "owner" && p.OrgRole != "admin" {
-		writeAPIError(w, http.StatusForbidden, "forbidden", "owner or admin role required")
+	if !requireOrgAdmin(w, p) {
 		return
 	}
 	id, err := parseUUID(r.PathValue("id"))

@@ -32,7 +32,7 @@ const (
 	cloudHypervisorDefaultBin       = "/usr/local/bin/cloud-hypervisor"
 	cloudHypervisorDefaultKernel    = "/data/vmlinux-ch.bin"
 	cloudHypervisorDefaultInitramfs = "/data/initramfs.cpio.gz"
-	cloudHypervisorVsockPort = 1024
+	cloudHypervisorVsockPort        = 1024
 	// Must match cmd/guest-agent tcpBridgeVsockPort. Host→guest uses the Firecracker/CH
 	// UDS protocol on --vsock socket= (CONNECT <port>\\n), not AF_VSOCK.
 	cloudHypervisorGuestBridgeVsockPort = 1025
@@ -45,11 +45,11 @@ type CloudHypervisorRuntime struct {
 	templates map[string]*cloudHypervisorTemplate
 	nextSlot  atomic.Uint32
 
-	binaryPath        string
-	kernelPath        string
-	initramfsPath     string
-	advertiseHost     string
-	pullAuth          *oci.Auth
+	binaryPath    string
+	kernelPath    string
+	initramfsPath string
+	advertiseHost string
+	pullAuth      *oci.Auth
 }
 
 type cloudHypervisorInstance struct {
@@ -84,11 +84,12 @@ type cloudHypervisorTemplate struct {
 }
 
 type guestConfig struct {
-	Env      []string `json:"env"`
-	IPAddr   string   `json:"ip_addr"`
-	IPGW     string   `json:"ip_gw"`
-	Hostname string   `json:"hostname"`
-	Port     int      `json:"port"`
+	Env             []string `json:"env"`
+	IPAddr          string   `json:"ip_addr"`
+	IPGW            string   `json:"ip_gw"`
+	Hostname        string   `json:"hostname"`
+	Port            int      `json:"port"`
+	VolumeMountPath string   `json:"volume_mount_path,omitempty"`
 }
 
 // NewCloudHypervisorRuntime builds paths from cfg and defaults (no environment variables).
@@ -97,10 +98,10 @@ func NewCloudHypervisorRuntime(cfg CloudHypervisorHostConfig, advertiseHost stri
 	homeKernel := filepath.Join(home, ".kindling", "vmlinuz.bin")
 	homeInitramfs := filepath.Join(home, ".kindling", "initramfs.cpio.gz")
 	return &CloudHypervisorRuntime{
-		instances:     make(map[uuid.UUID]*cloudHypervisorInstance),
-		suspended:     make(map[uuid.UUID]*cloudHypervisorSuspended),
-		templates:     make(map[string]*cloudHypervisorTemplate),
-		binaryPath:    firstExistingPath(cfg.BinaryPath, cloudHypervisorDefaultBin),
+		instances:  make(map[uuid.UUID]*cloudHypervisorInstance),
+		suspended:  make(map[uuid.UUID]*cloudHypervisorSuspended),
+		templates:  make(map[string]*cloudHypervisorTemplate),
+		binaryPath: firstExistingPath(cfg.BinaryPath, cloudHypervisorDefaultBin),
 		// Note: do not fall back to /data/vmlinux.bin — provision.sh stores rust hypervisor firmware there, not a Linux bzImage/vmlinux.
 		kernelPath:    firstExistingPath(cfg.KernelPath, cloudHypervisorDefaultKernel, homeKernel),
 		initramfsPath: firstExistingPath(cfg.InitramfsPath, cloudHypervisorDefaultInitramfs, homeInitramfs),
@@ -143,6 +144,12 @@ func (r *CloudHypervisorRuntime) startVM(ctx context.Context, inst Instance) (st
 	if out, err := exec.CommandContext(ctx, "virt-make-fs", "--format=qcow2", "--type=ext4", "--size=+2G", rootfsDir, workDisk).CombinedOutput(); err != nil {
 		_ = os.RemoveAll(workDir)
 		return "", fmt.Errorf("virt-make-fs: %s: %w", string(out), err)
+	}
+	if inst.PersistentVolume != nil {
+		if err := r.ensurePersistentVolumeDisk(ctx, inst.PersistentVolume); err != nil {
+			_ = os.RemoveAll(workDir)
+			return "", err
+		}
 	}
 	return r.startPreparedVM(ctx, inst, workDir, workDisk, 0)
 }
@@ -198,16 +205,19 @@ func (r *CloudHypervisorRuntime) startPreparedVM(ctx context.Context, inst Insta
 		return "", err
 	}
 
-	cmd := exec.CommandContext(runCtx, r.binaryPath,
+	args := []string{
 		"--kernel", r.kernelPath,
 		"--initramfs", r.initramfsPath,
 		"--cmdline", "console=hvc0",
 		"--cpus", fmt.Sprintf("boot=%d", inst.VCPUs),
 		"--memory", fmt.Sprintf("size=%dM", inst.MemoryMB),
-		"--disk", fmt.Sprintf("path=%s,direct=off", workDisk),
+	}
+	args = append(args, cloudHypervisorDiskArgs(workDisk, inst.PersistentVolume)...)
+	args = append(args,
 		"--net", fmt.Sprintf("tap=%s,ip=%s,mask=255.255.255.254", tapName, hostIP),
 		"--vsock", fmt.Sprintf("cid=3,socket=%s", ai.socketBase),
 	)
+	cmd := exec.CommandContext(runCtx, r.binaryPath, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
@@ -394,6 +404,9 @@ func (r *CloudHypervisorRuntime) startGuestVsockServer(ctx context.Context, inst
 			IPGW:     hostIP,
 			Hostname: fmt.Sprintf("kindling-%s", inst.ID.String()[:8]),
 			Port:     port,
+		}
+		if inst.PersistentVolume != nil {
+			cfg.VolumeMountPath = inst.PersistentVolume.MountPath
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(cfg)
@@ -735,6 +748,78 @@ func createCHTap(tapName string, hostIP netip.Addr) error {
 		return fmt.Errorf("bring up %s: %w", tapName, err)
 	}
 	return nil
+}
+
+func cloudHypervisorDiskArgs(workDisk string, vol *PersistentVolumeMount) []string {
+	args := []string{"--disk", fmt.Sprintf("path=%s,direct=off", workDisk)}
+	if vol != nil && strings.TrimSpace(vol.HostPath) != "" {
+		args = append(args, "--disk", fmt.Sprintf("path=%s,direct=off", vol.HostPath))
+	}
+	return args
+}
+
+func (r *CloudHypervisorRuntime) ensurePersistentVolumeDisk(ctx context.Context, vol *PersistentVolumeMount) error {
+	if vol == nil {
+		return nil
+	}
+	if strings.TrimSpace(vol.HostPath) == "" {
+		return fmt.Errorf("persistent volume host path is required")
+	}
+	if vol.SizeGB <= 0 {
+		return fmt.Errorf("persistent volume size must be positive")
+	}
+	if err := ensureDir(filepath.Dir(vol.HostPath)); err != nil {
+		return fmt.Errorf("create volume dir: %w", err)
+	}
+	if _, err := os.Stat(vol.HostPath); err == nil {
+		return ensurePersistentVolumeSize(ctx, vol.HostPath, vol.SizeGB)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat volume disk: %w", err)
+	}
+
+	emptyDir, err := os.MkdirTemp("", "kindling-volume-empty-")
+	if err != nil {
+		return fmt.Errorf("create temp volume source dir: %w", err)
+	}
+	defer os.RemoveAll(emptyDir)
+
+	sizeArg := fmt.Sprintf("%dG", vol.SizeGB)
+	if out, err := exec.CommandContext(ctx, "virt-make-fs", "--format=qcow2", "--type=ext4", "--size="+sizeArg, emptyDir, vol.HostPath).CombinedOutput(); err != nil {
+		return fmt.Errorf("virt-make-fs volume: %s: %w", string(out), err)
+	}
+	return nil
+}
+
+func ensurePersistentVolumeSize(ctx context.Context, path string, sizeGB int) error {
+	currentSize, err := qcow2VirtualSize(path)
+	if err != nil {
+		return err
+	}
+	targetSize := int64(sizeGB) * 1024 * 1024 * 1024
+	if currentSize >= targetSize {
+		return nil
+	}
+	if out, err := exec.CommandContext(ctx, "qemu-img", "resize", path, fmt.Sprintf("%dG", sizeGB)).CombinedOutput(); err != nil {
+		return fmt.Errorf("qemu-img resize: %s: %w", string(out), err)
+	}
+	return nil
+}
+
+func qcow2VirtualSize(path string) (int64, error) {
+	out, err := exec.Command("qemu-img", "info", "--output=json", path).CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("qemu-img info: %s: %w", string(out), err)
+	}
+	var meta struct {
+		VirtualSize int64 `json:"virtual-size"`
+	}
+	if err := json.Unmarshal(out, &meta); err != nil {
+		return 0, fmt.Errorf("decode qemu-img info: %w", err)
+	}
+	if meta.VirtualSize <= 0 {
+		return 0, fmt.Errorf("qemu-img info returned invalid virtual size for %s", path)
+	}
+	return meta.VirtualSize, nil
 }
 
 func removeCHTap(tapName string) {

@@ -115,6 +115,10 @@ type Service struct {
 	serverID          pgtype.UUID
 }
 
+func previewLookupShouldReturnGone(lookup queries.DomainEdgeLookupRow) bool {
+	return lookup.PreviewClosedAt.Valid && strings.HasPrefix(lookup.DomainKind, "preview_")
+}
+
 // New creates a new edge proxy service.
 func New(cfg Config) (*Service, error) {
 	if cfg.HTTPAddr == "" {
@@ -417,6 +421,11 @@ func (s *Service) serveHTTPS(w http.ResponseWriter, r *http.Request) {
 			code = http.StatusMovedPermanently
 		}
 		http.Redirect(w, r, lookup.RedirectTo.String, code)
+		return
+	}
+
+	if previewLookupShouldReturnGone(lookup) {
+		http.Error(w, "Preview Environment Gone", http.StatusGone)
 		return
 	}
 

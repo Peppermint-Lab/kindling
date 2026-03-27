@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 	"os"
+	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -57,9 +59,12 @@ func setHostname(name string) {
 	}
 }
 
-func chrootIntoApp() {
+func chrootIntoApp(cfg *ConfigResponse) {
 	if root := mountDiskRootfs(); root != "" {
 		log.Printf("mounted block device rootfs at %s", root)
+		if cfg != nil {
+			mountPersistentVolume(root, cfg.VolumeMountPath)
+		}
 	}
 	root := resolveAppRoot(defaultAppRootCandidates, pathExistsMap(defaultAppRootCandidates))
 	if root == "" {
@@ -97,6 +102,34 @@ func mountDiskRootfs() string {
 		_ = syscall.Unmount(mountPoint, 0)
 	}
 	return ""
+}
+
+func mountPersistentVolume(root, mountPath string) {
+	mountPath = strings.TrimSpace(mountPath)
+	if mountPath == "" {
+		return
+	}
+	if !strings.HasPrefix(mountPath, "/") {
+		log.Printf("persistent volume mount path must be absolute: %q", mountPath)
+		return
+	}
+	clean := filepath.Clean(mountPath)
+	if clean == "/" {
+		log.Printf("persistent volume mount path cannot be root")
+		return
+	}
+	target := filepath.Join(root, strings.TrimPrefix(clean, "/"))
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		log.Printf("create persistent volume mountpoint %s: %v", target, err)
+		return
+	}
+	for _, dev := range []string{"/dev/vdb", "/dev/vdb1"} {
+		if err := syscall.Mount(dev, target, "ext4", 0, ""); err == nil {
+			log.Printf("mounted persistent volume %s at %s", dev, target)
+			return
+		}
+	}
+	log.Printf("persistent volume mount failed for %s", clean)
 }
 
 func pathExistsMap(candidates []string) map[string]bool {

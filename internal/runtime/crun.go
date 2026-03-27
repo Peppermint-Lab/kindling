@@ -78,6 +78,9 @@ func (r *CrunRuntime) Start(ctx context.Context, inst Instance) (string, error) 
 	if _, err := exec.LookPath("crun"); err != nil {
 		return "", fmt.Errorf("crun not found in PATH: %w (install crun for Linux deployments without KVM)", err)
 	}
+	if inst.PersistentVolume != nil {
+		return "", ErrPersistentVolumesUnsupported
+	}
 	return r.startCrun(ctx, inst)
 }
 
@@ -267,6 +270,9 @@ func (r *CrunRuntime) CreateTemplate(ctx context.Context, id uuid.UUID) (string,
 }
 
 func (r *CrunRuntime) StartClone(ctx context.Context, inst Instance, snapshotRef string, cloneSourceVMID uuid.UUID) (string, StartMetadata, error) {
+	if inst.PersistentVolume != nil {
+		return "", StartMetadata{}, ErrPersistentVolumesUnsupported
+	}
 	r.mu.Lock()
 	template, ok := r.templates[snapshotRef]
 	r.mu.Unlock()

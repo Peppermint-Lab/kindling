@@ -8,6 +8,7 @@ import {
   type GitHubSetup,
   type GitHead,
   type ProjectDomain,
+  type ProjectVolume,
   type ProjectSecret,
   type UsageCurrent,
   type UsageHistory,
@@ -42,6 +43,7 @@ import {
   ChevronRightIcon,
   GitPullRequestIcon,
   KeyRoundIcon,
+  HardDriveIcon,
 } from "lucide-react"
 import { DeploymentReachability } from "@/components/deployment-reachability"
 import { phaseLabel, phaseVariant } from "@/lib/deploy-badge"
@@ -76,6 +78,28 @@ async function copyText(label: string, text: string) {
     await navigator.clipboard.writeText(text)
   } catch {
     console.warn("clipboard failed", label)
+  }
+}
+
+function previewLifecycleLabel(state: PreviewEnvironment["lifecycle_state"]): string {
+  switch (state) {
+    case "active":
+      return "Active"
+    case "cleanup_due":
+      return "Cleanup due"
+    default:
+      return "Closed"
+  }
+}
+
+function previewLifecycleVariant(state: PreviewEnvironment["lifecycle_state"]): "default" | "secondary" | "destructive" {
+  switch (state) {
+    case "active":
+      return "default"
+    case "cleanup_due":
+      return "destructive"
+    default:
+      return "secondary"
   }
 }
 
@@ -147,6 +171,11 @@ export function ProjectDetailPage() {
   const [newDomainName, setNewDomainName] = useState("")
   const [domainSaving, setDomainSaving] = useState(false)
   const [verifyingId, setVerifyingId] = useState<string | null>(null)
+  const [projectVolume, setProjectVolume] = useState<ProjectVolume | null>(null)
+  const [volumeMountPath, setVolumeMountPath] = useState("/data")
+  const [volumeSizeGB, setVolumeSizeGB] = useState(10)
+  const [volumeSaving, setVolumeSaving] = useState(false)
+  const [volumeDeleting, setVolumeDeleting] = useState(false)
   const [secrets, setSecrets] = useState<ProjectSecret[]>([])
   const [secretsLoading, setSecretsLoading] = useState(false)
   const [secretName, setSecretName] = useState("")
@@ -162,6 +191,8 @@ export function ProjectDetailPage() {
 
   const [previews, setPreviews] = useState<PreviewEnvironment[]>([])
   const [previewsLoading, setPreviewsLoading] = useState(false)
+  const [previewActionId, setPreviewActionId] = useState<string | null>(null)
+  const [previewActionKind, setPreviewActionKind] = useState<"redeploy" | "delete" | null>(null)
 
   const loadPreviews = useCallback(async () => {
     if (!id) return
@@ -297,10 +328,22 @@ export function ProjectDetailPage() {
         setLoading(true)
         setError(null)
       }
-      return Promise.all([api.getProject(id), api.listDeployments(id)])
-        .then(([p, d]) => {
+      return Promise.all([
+        api.getProject(id),
+        api.listDeployments(id),
+        api.getProjectVolume(id).catch((e) => {
+          if (e instanceof APIError && e.status === 404) {
+            return null
+          }
+          throw e
+        }),
+      ])
+        .then(([p, d, v]) => {
           setProject(p)
           setDeployments(d)
+          setProjectVolume(v)
+          setVolumeMountPath(v?.mount_path || "/data")
+          setVolumeSizeGB(v?.size_gb ?? 10)
           const di = p.desired_instance_count
           setDesiredInstances(typeof di === "number" && di >= 1 ? di : 1)
           void loadGitHubSetup(id, Boolean(p.github_repository?.trim()))
@@ -323,6 +366,9 @@ export function ProjectDetailPage() {
 
   useEffect(() => {
     setDeploymentsPage(1)
+    setProjectVolume(null)
+    setVolumeMountPath("/data")
+    setVolumeSizeGB(10)
     setSecrets([])
     setSecretName("")
     setSecretValue("")
@@ -427,6 +473,39 @@ export function ProjectDetailPage() {
     }
   }
 
+  const handleRedeployPreview = async (previewId: string) => {
+    if (!id) return
+    setPreviewActionId(previewId)
+    setPreviewActionKind("redeploy")
+    setError(null)
+    try {
+      const dep = await api.redeployProjectPreview(id, previewId)
+      await loadPreviews()
+      navigate(`/deployments/${dep.id}`)
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not redeploy preview")
+    } finally {
+      setPreviewActionId(null)
+      setPreviewActionKind(null)
+    }
+  }
+
+  const handleDeletePreview = async (previewId: string) => {
+    if (!id) return
+    setPreviewActionId(previewId)
+    setPreviewActionKind("delete")
+    setError(null)
+    try {
+      await api.deleteProjectPreview(id, previewId)
+      await loadPreviews()
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not delete preview")
+    } finally {
+      setPreviewActionId(null)
+      setPreviewActionKind(null)
+    }
+  }
+
   const handleSaveScaling = async () => {
     if (!id) return
     const n = Math.max(1, Math.floor(Number(desiredInstances)) || 1)
@@ -456,6 +535,44 @@ export function ProjectDetailPage() {
       setError(e instanceof APIError ? e.message : "Could not update build rules")
     } finally {
       setBuildRuleSaving(false)
+    }
+  }
+
+  const handleSaveVolume = async () => {
+    if (!id) return
+    setVolumeSaving(true)
+    setError(null)
+    try {
+      const volume = await api.putProjectVolume(id, {
+        mount_path: volumeMountPath.trim() || "/data",
+        size_gb: Math.max(1, Math.floor(Number(volumeSizeGB)) || 10),
+      })
+      setProjectVolume(volume)
+      setVolumeMountPath(volume.mount_path)
+      setVolumeSizeGB(volume.size_gb)
+      const [p, d] = await Promise.all([api.getProject(id), api.listDeployments(id)])
+      setProject(p)
+      setDeployments(d)
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not save persistent volume")
+    } finally {
+      setVolumeSaving(false)
+    }
+  }
+
+  const handleDeleteVolume = async () => {
+    if (!id) return
+    setVolumeDeleting(true)
+    setError(null)
+    try {
+      await api.deleteProjectVolume(id)
+      setProjectVolume(null)
+      setVolumeMountPath("/data")
+      setVolumeSizeGB(10)
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not delete persistent volume")
+    } finally {
+      setVolumeDeleting(false)
     }
   }
 
@@ -706,6 +823,89 @@ export function ProjectDetailPage() {
                   >
                     {scalingSaving ? "Saving…" : "Save"}
                   </Button>
+                </div>
+              </SurfaceBody>
+              <SurfaceSeparator />
+              <SurfaceBody className="space-y-4">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-md border bg-muted/40 p-2 shrink-0">
+                    <HardDriveIcon className="size-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Persistent volume</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Attach one durable block volume at a mount path like <span className="font-mono">/data</span>.
+                      Volume-backed projects run as a single active instance on one Cloud Hypervisor worker, and redeploys may briefly stop the old VM before the new one starts.
+                    </p>
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Mount path</Label>
+                    <Input
+                      className="font-mono h-9"
+                      value={volumeMountPath}
+                      disabled={Boolean(projectVolume)}
+                      onChange={(e) => setVolumeMountPath(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Size (GB)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      className="font-mono h-9"
+                      value={volumeSizeGB}
+                      onChange={(e) => setVolumeSizeGB(Number(e.target.value))}
+                    />
+                  </div>
+                </div>
+                {projectVolume ? (
+                  <div className="rounded-lg border bg-muted/20 p-3 space-y-2 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant={projectVolume.status === "attached" ? "default" : "secondary"}>
+                        {projectVolume.status}
+                      </Badge>
+                      <span className="font-mono">{projectVolume.filesystem}</span>
+                    </div>
+                    <p>
+                      Pinned server:{" "}
+                      <span className="font-mono">{projectVolume.server_id || "unassigned"}</span>
+                    </p>
+                    <p>
+                      Attached VM:{" "}
+                      <span className="font-mono">{projectVolume.attached_vm_id || "detached"}</span>
+                    </p>
+                    {projectVolume.last_error ? (
+                      <p className="text-xs text-destructive">{projectVolume.last_error}</p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    No persistent volume attached yet. Saving one will pin this project to a single Cloud Hypervisor worker.
+                  </p>
+                )}
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    disabled={volumeSaving}
+                    onClick={() => void handleSaveVolume()}
+                  >
+                    {volumeSaving ? "Saving…" : projectVolume ? "Update volume" : "Enable volume"}
+                  </Button>
+                  {projectVolume ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={volumeDeleting || projectVolume.status === "attached"}
+                      onClick={() => void handleDeleteVolume()}
+                    >
+                      {volumeDeleting ? "Deleting…" : "Delete volume"}
+                    </Button>
+                  ) : null}
                 </div>
               </SurfaceBody>
               <SurfaceSeparator />
@@ -1180,8 +1380,8 @@ export function ProjectDetailPage() {
                 <Link to="/settings" className="text-primary underline-offset-4 hover:underline">
                   Settings
                 </Link>
-                . Stable URL tracks the latest healthy deployment; immutable URLs stay on a specific revision until
-                cleanup.
+                . Active previews can redeploy on demand, close immediately when the PR closes, and remain visible
+                here until automatic cleanup removes them.
               </p>
               <Button type="button" size="sm" variant="secondary" onClick={() => void loadPreviews()} disabled={previewsLoading}>
                 <RefreshCwIcon className={`mr-2 size-4 ${previewsLoading ? "animate-spin" : ""}`} /> Refresh
@@ -1216,48 +1416,118 @@ export function ProjectDetailPage() {
                 {previews.map((pv) => (
                   <Surface key={pv.id}>
                     <SurfaceHeader>
-                      <SurfaceTitle>
-                        PR #{pv.pr_number}{" "}
-                        <span className="text-muted-foreground font-normal text-sm font-mono">
-                          {pv.head_branch}:{pv.head_sha ? pv.head_sha.slice(0, 7) : "—"}
-                        </span>
-                      </SurfaceTitle>
-                      <SurfaceDescription className="flex flex-wrap gap-x-4 gap-y-1">
-                        {pv.closed_at != null && (
-                          <span>
-                            Closed:{" "}
-                            <span className="font-mono text-foreground">{new Date(pv.closed_at).toLocaleString()}</span>
-                          </span>
-                        )}
-                        {pv.expires_at != null && (
-                          <span>
-                            Cleanup:{" "}
-                            <span className="font-mono text-foreground">{new Date(pv.expires_at).toLocaleString()}</span>
-                          </span>
-                        )}
-                        {pv.latest_deployment_id != null && (
-                          <Link
-                            to={`/deployments/${pv.latest_deployment_id}`}
-                            className="text-primary underline-offset-4 hover:underline"
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="space-y-2">
+                          <SurfaceTitle className="flex flex-wrap items-center gap-2">
+                            <span>
+                              PR #{pv.pr_number}{" "}
+                              <span className="text-muted-foreground font-normal text-sm font-mono">
+                                {pv.head_branch}:{pv.head_sha ? pv.head_sha.slice(0, 7) : "—"}
+                              </span>
+                            </span>
+                            <Badge variant={previewLifecycleVariant(pv.lifecycle_state)}>
+                              {previewLifecycleLabel(pv.lifecycle_state)}
+                            </Badge>
+                          </SurfaceTitle>
+                          <SurfaceDescription className="flex flex-wrap gap-x-4 gap-y-1">
+                            {pv.closed_at != null && (
+                              <span>
+                                Closed:{" "}
+                                <span className="font-mono text-foreground">{new Date(pv.closed_at).toLocaleString()}</span>
+                              </span>
+                            )}
+                            {pv.expires_at != null && (
+                              <span>
+                                Cleanup:{" "}
+                                <span className="font-mono text-foreground">{new Date(pv.expires_at).toLocaleString()}</span>
+                              </span>
+                            )}
+                            {pv.latest_deployment != null && (
+                              <Link
+                                to={`/deployments/${pv.latest_deployment.id}`}
+                                className="text-primary underline-offset-4 hover:underline"
+                              >
+                                Latest deployment
+                              </Link>
+                            )}
+                          </SurfaceDescription>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={pv.lifecycle_state !== "active" || previewActionId === pv.id}
+                            onClick={() => void handleRedeployPreview(pv.id)}
                           >
-                            Latest deployment
-                          </Link>
-                        )}
-                      </SurfaceDescription>
+                            <RefreshCwIcon
+                              className={`size-4 ${previewActionId === pv.id && previewActionKind === "redeploy" ? "animate-spin" : ""}`}
+                            />
+                            {previewActionId === pv.id && previewActionKind === "redeploy" ? "Redeploying…" : "Redeploy"}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="destructive"
+                            disabled={previewActionId === pv.id}
+                            onClick={() => void handleDeletePreview(pv.id)}
+                          >
+                            <TrashIcon className="size-4" />
+                            {previewActionId === pv.id && previewActionKind === "delete" ? "Deleting…" : "Delete now"}
+                          </Button>
+                        </div>
+                      </div>
                     </SurfaceHeader>
                     <SurfaceBody className="space-y-4 text-sm">
+                      {pv.latest_deployment != null && (
+                        <div className="space-y-2">
+                          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Latest deployment</p>
+                          <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/20 px-3 py-2">
+                            <Badge variant={phaseVariant(pv.latest_deployment.phase)}>{phaseLabel(pv.latest_deployment.phase)}</Badge>
+                            <span className="font-mono text-xs sm:text-sm">
+                              {pv.latest_deployment.github_commit ? pv.latest_deployment.github_commit.slice(0, 7) : "manual"}
+                            </span>
+                            {pv.latest_deployment.build_status != null && pv.latest_deployment.build_status !== "" && (
+                              <span className="text-xs text-muted-foreground">Build: {pv.latest_deployment.build_status}</span>
+                            )}
+                            {pv.latest_deployment.preview_scaled_to_zero && (
+                              <Badge variant="outline">Scaled to zero</Badge>
+                            )}
+                            {pv.latest_deployment.wake_requested_at != null && (
+                              <Badge variant="secondary">Waking</Badge>
+                            )}
+                            {pv.latest_deployment.created_at != null && (
+                              <span className="text-xs text-muted-foreground">
+                                Created {new Date(pv.latest_deployment.created_at).toLocaleString()}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {pv.lifecycle_state !== "active" && (
+                        <div className="rounded-md border border-dashed bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                          This preview has been closed. URLs remain listed until cleanup, but they no longer accept
+                          traffic or cold-start the app.
+                        </div>
+                      )}
                       {pv.stable_url != null && pv.stable_url !== "" && (
                         <div>
-                          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1">Stable URL</p>
+                          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1">
+                            {pv.lifecycle_state === "active" ? "Stable URL" : "Stable URL (historical)"}
+                          </p>
                           <div className="flex flex-wrap items-center gap-2">
-                            <a
-                              href={pv.stable_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="font-mono text-primary break-all underline-offset-4 hover:underline"
-                            >
-                              {pv.stable_url}
-                            </a>
+                            {pv.lifecycle_state === "active" ? (
+                              <a
+                                href={pv.stable_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="font-mono text-primary break-all underline-offset-4 hover:underline"
+                              >
+                                {pv.stable_url}
+                              </a>
+                            ) : (
+                              <span className="font-mono break-all text-muted-foreground">{pv.stable_url}</span>
+                            )}
                             <Button
                               type="button"
                               size="icon"
@@ -1274,19 +1544,25 @@ export function ProjectDetailPage() {
                       {pv.immutable_urls != null && pv.immutable_urls.length > 0 && (
                         <div>
                           <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
-                            Immutable URLs
+                            {pv.lifecycle_state === "active" ? "Immutable URLs" : "Immutable URLs (historical)"}
                           </p>
                           <ul className="space-y-2">
                             {pv.immutable_urls.map((row) => (
                               <li key={`${row.url}-${row.deployment_id ?? ""}`} className="flex flex-wrap items-center gap-2 border rounded-md px-3 py-2 bg-muted/20">
-                                <a
-                                  href={row.url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="font-mono text-primary break-all text-xs sm:text-sm underline-offset-4 hover:underline min-w-0 flex-1"
-                                >
-                                  {row.url}
-                                </a>
+                                {pv.lifecycle_state === "active" ? (
+                                  <a
+                                    href={row.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="font-mono text-primary break-all text-xs sm:text-sm underline-offset-4 hover:underline min-w-0 flex-1"
+                                  >
+                                    {row.url}
+                                  </a>
+                                ) : (
+                                  <span className="font-mono break-all text-xs sm:text-sm text-muted-foreground min-w-0 flex-1">
+                                    {row.url}
+                                  </span>
+                                )}
                                 <Button
                                   type="button"
                                   size="icon"

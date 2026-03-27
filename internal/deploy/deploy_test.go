@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/runtime"
 )
 
 func TestEffectiveReplicaCount(t *testing.T) {
@@ -74,11 +75,11 @@ func TestSelectLaunchModePrefersResumeThenCloneThenCold(t *testing.T) {
 	templateID := "tmpl-1"
 
 	tests := []struct {
-		name      string
-		inst      queries.DeploymentInstance
-		vm        queries.Vm
-		template  string
-		wantMode  launchMode
+		name       string
+		inst       queries.DeploymentInstance
+		vm         queries.Vm
+		template   string
+		wantMode   launchMode
 		wantLaunch bool
 	}{
 		{
@@ -91,8 +92,8 @@ func TestSelectLaunchModePrefersResumeThenCloneThenCold(t *testing.T) {
 			vm: queries.Vm{
 				Status: vmStatusSuspended,
 			},
-			template: templateID,
-			wantMode: launchModeResume,
+			template:   templateID,
+			wantMode:   launchModeResume,
 			wantLaunch: true,
 		},
 		{
@@ -100,8 +101,8 @@ func TestSelectLaunchModePrefersResumeThenCloneThenCold(t *testing.T) {
 			inst: queries.DeploymentInstance{
 				Role: deploymentInstanceRoleActive,
 			},
-			template: templateID,
-			wantMode: launchModeClone,
+			template:   templateID,
+			wantMode:   launchModeClone,
 			wantLaunch: true,
 		},
 		{
@@ -109,7 +110,7 @@ func TestSelectLaunchModePrefersResumeThenCloneThenCold(t *testing.T) {
 			inst: queries.DeploymentInstance{
 				Role: deploymentInstanceRoleActive,
 			},
-			wantMode: launchModeCold,
+			wantMode:   launchModeCold,
 			wantLaunch: true,
 		},
 		{
@@ -133,5 +134,33 @@ func TestSelectLaunchModePrefersResumeThenCloneThenCold(t *testing.T) {
 				t.Fatalf("mode = %q, want %q", gotMode, tt.wantMode)
 			}
 		})
+	}
+}
+
+func TestPersistentVolumeMountFromRow(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	got := persistentVolumeMountFromRow(queries.ProjectVolume{
+		ID:         pgtype.UUID{Bytes: id, Valid: true},
+		MountPath:  "/data",
+		SizeGb:     12,
+		Filesystem: "ext4",
+	})
+
+	if got == nil {
+		t.Fatal("expected mount")
+	}
+	if got.ID != id {
+		t.Fatalf("id = %s, want %s", got.ID, id)
+	}
+	if got.HostPath != runtime.PersistentVolumePath(id) {
+		t.Fatalf("host path = %q, want %q", got.HostPath, runtime.PersistentVolumePath(id))
+	}
+	if got.MountPath != "/data" {
+		t.Fatalf("mount path = %q", got.MountPath)
+	}
+	if got.SizeGB != 12 {
+		t.Fatalf("size_gb = %d", got.SizeGB)
 	}
 }

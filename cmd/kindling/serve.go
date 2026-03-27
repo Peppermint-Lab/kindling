@@ -518,7 +518,9 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	// API server
 	if components.api {
 		api := rpc.NewAPI(q, cfgMgr, dashboardEvents)
+		api.SetDeploymentReconciler(deploymentReconciler)
 		webhookHandler := webhook.NewHandler(q)
+		webhookHandler.SetDeploymentReconciler(deploymentReconciler)
 
 		apiMux := http.NewServeMux()
 		apiMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -1003,7 +1005,20 @@ func corsBuildAllowList(ctx context.Context, q *queries.Queries, dashHost string
 	return out
 }
 
-func corsOriginAllowed(origin string, allow []string) bool {
+func requestHostIsLocal(r *http.Request) bool {
+	host := strings.TrimSpace(r.Host)
+	if host == "" {
+		return false
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	host = strings.ToLower(host)
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+func corsOriginAllowed(r *http.Request, origin string, allow []string) bool {
 	if origin == "" {
 		return false
 	}
@@ -1018,13 +1033,13 @@ func corsOriginAllowed(origin string, allow []string) bool {
 		return false
 	}
 	h := strings.ToLower(u.Hostname())
-	return h == "localhost" || h == "127.0.0.1"
+	return requestHostIsLocal(r) && (h == "localhost" || h == "127.0.0.1" || h == "::1")
 }
 
 func corsMiddleware(allow []string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" && corsOriginAllowed(origin, allow) {
+		if origin != "" && corsOriginAllowed(r, origin, allow) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 		}
