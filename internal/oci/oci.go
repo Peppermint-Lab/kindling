@@ -40,12 +40,12 @@ func ExportImageRootfs(ctx context.Context, imageRef, destDir string, auth *Auth
 
 	ociLayout := filepath.Join(tmp, "oci")
 	if err := PullToOCILayout(ctx, imageRef, ociLayout, auth); err != nil {
-		return err
+		return fmt.Errorf("pull OCI layout: %w", err)
 	}
 
 	bundleDir := filepath.Join(tmp, "bundle")
 	if err := UmociUnpack(ctx, ociLayout+":latest", bundleDir); err != nil {
-		return err
+		return fmt.Errorf("umoci unpack: %w", err)
 	}
 
 	rootfs := filepath.Join(bundleDir, "rootfs")
@@ -194,11 +194,11 @@ func BuildDockerfileWithOpts(ctx context.Context, engine BuildEngine, buildDir, 
 	cmd.Dir = buildDir
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return err
+		return fmt.Errorf("stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return err
+		return fmt.Errorf("stderr pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start %s build: %w", engine, err)

@@ -698,11 +698,11 @@ func (a *API) setExternalAuthState(w http.ResponseWriter, r *http.Request, state
 	}
 	b, err := json.Marshal(state)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal auth state: %w", err)
 	}
 	cipher, err := a.cfg.EncryptBytes(b)
 	if err != nil {
-		return err
+		return fmt.Errorf("encrypt auth state: %w", err)
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     externalAuthStateCookieName,

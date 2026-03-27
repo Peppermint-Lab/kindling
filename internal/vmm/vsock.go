@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -75,7 +76,7 @@ func (m *VsockManager) RegisterVM(vmID uuid.UUID, envVars []string, ipAddr, ipGW
 
 	lis, err := net.Listen("unix", udsPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("listen vsock UDS: %w", err)
 	}
 	m.listeners[vmID] = lis
 

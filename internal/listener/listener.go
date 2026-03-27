@@ -295,7 +295,7 @@ func (l *Listener) processCopyData(ctx context.Context, msg *pgproto3.CopyData) 
 			return fmt.Errorf("parse xlog data: %w", err)
 		}
 		if err := l.processWALData(ctx, xld.WALData); err != nil {
-			return err
+			return fmt.Errorf("process WAL data: %w", err)
 		}
 		if xld.WALStart > l.clientLSN {
 			l.clientLSN = xld.WALStart

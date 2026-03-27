@@ -63,7 +63,7 @@ func serveCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			databaseURL, err := bootstrap.ResolvePostgresDSN("")
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve postgres DSN: %w", err)
 			}
 			return runServe(cmd.Context(), databaseURL, serveOptions{
 				listenAddr:    listenAddr,
@@ -109,7 +109,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	publicBaseURL := opts.publicBaseURL
 	components, err := resolveServeComponents(opts.componentsRaw)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve serve components: %w", err)
 	}
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -645,7 +645,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 
 		slog.Info("listening", "addr", listenAddr)
 		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-			return err
+			return fmt.Errorf("listen and serve: %w", err)
 		}
 		return nil
 	}
@@ -677,16 +677,16 @@ func runProjectVolumeOperationRecoveryLoop(ctx context.Context, q *queries.Queri
 func controlPlaneEdgeHostsFromDB(ctx context.Context, q *queries.Queries, listenAddr string) ([]string, *url.URL, error) {
 	apiHost, err := publicAPIHostnameFromDB(ctx, q)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("public API hostname: %w", err)
 	}
 	dashHost, err := dashboardHostnameFromDB(ctx, q)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("dashboard hostname: %w", err)
 	}
 
 	apiURL, err := url.Parse(loopbackAPIOrigin(listenAddr))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("parse loopback API URL: %w", err)
 	}
 	if apiURL.Scheme != "http" {
 		return nil, nil, fmt.Errorf("api backend must be http, got %q", apiURL.Scheme)
@@ -902,17 +902,17 @@ func runIdleScaleDownOnce(ctx context.Context, databaseURL string, q *queries.Qu
 
 func seedClusterSettingsFromServeFlags(ctx context.Context, q *queries.Queries, opts serveOptions) error {
 	if err := seedClusterSettingIfUnset(ctx, q, config.SettingEdgeHTTPSAddr, opts.edgeHTTPSAddr); err != nil {
-		return err
+		return fmt.Errorf("seed edge HTTPS addr: %w", err)
 	}
 	if err := seedClusterSettingIfUnset(ctx, q, config.SettingEdgeHTTPAddr, opts.edgeHTTPAddr); err != nil {
-		return err
+		return fmt.Errorf("seed edge HTTP addr: %w", err)
 	}
 	if err := seedClusterSettingIfUnset(ctx, q, config.SettingACMEEmail, opts.acmeEmail); err != nil {
-		return err
+		return fmt.Errorf("seed ACME email: %w", err)
 	}
 	if opts.acmeStaging {
 		if err := seedClusterSettingIfUnset(ctx, q, config.SettingACMEStaging, "true"); err != nil {
-			return err
+			return fmt.Errorf("seed ACME staging: %w", err)
 		}
 	}
 	return nil
@@ -942,7 +942,7 @@ func seedClusterSettingIfUnset(ctx context.Context, q *queries.Queries, key, val
 		return nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return err
+		return fmt.Errorf("check cluster setting %s: %w", key, err)
 	}
 	return q.ClusterSettingUpsert(ctx, queries.ClusterSettingUpsertParams{Key: key, Value: value})
 }
@@ -969,7 +969,7 @@ func seedPublicBaseURLIfUnset(ctx context.Context, q *queries.Queries, fromFlag 
 		return nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return err
+		return fmt.Errorf("check public base URL setting: %w", err)
 	}
 	return q.ClusterSettingUpsert(ctx, queries.ClusterSettingUpsertParams{
 		Key:   rpc.ClusterSettingKeyPublicBaseURL,
@@ -1001,7 +1001,7 @@ func persistServerComponentStatus(ctx context.Context, q *queries.Queries, serve
 	if len(update.Metadata) > 0 {
 		b, err := json.Marshal(update.Metadata)
 		if err != nil {
-			return err
+			return fmt.Errorf("marshal metadata: %w", err)
 		}
 		metadata = b
 	}

@@ -30,19 +30,19 @@ func cliDomainListCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pid, err := resolveProjectFlag(projectID)
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve project: %w", err)
 			}
 			if _, err := uuid.Parse(pid); err != nil {
 				return fmt.Errorf("invalid project id: %w", err)
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
-				return err
+				return fmt.Errorf("create client: %w", err)
 			}
 			var out []map[string]any
 			path := fmt.Sprintf("/api/projects/%s/domains", pid)
 			if err := c.DoJSON(cmd.Context(), http.MethodGet, path, nil, &out); err != nil {
-				return err
+				return fmt.Errorf("list domains: %w", err)
 			}
 			return printRemote(out)
 		},
@@ -59,7 +59,7 @@ func cliDomainAddCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pid, err := resolveProjectFlag(projectID)
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve project: %w", err)
 			}
 			if _, err := uuid.Parse(pid); err != nil {
 				return fmt.Errorf("invalid project id: %w", err)
@@ -69,12 +69,12 @@ func cliDomainAddCmd() *cobra.Command {
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
-				return err
+				return fmt.Errorf("create client: %w", err)
 			}
 			path := fmt.Sprintf("/api/projects/%s/domains", pid)
 			var out map[string]any
 			if err := c.DoJSON(cmd.Context(), http.MethodPost, path, map[string]string{"domain_name": strings.TrimSpace(name)}, &out); err != nil {
-				return err
+				return fmt.Errorf("add domain: %w", err)
 			}
 			return printRemote(out)
 		},
@@ -92,7 +92,7 @@ func cliDomainVerifyCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pid, err := resolveProjectFlag(projectID)
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve project: %w", err)
 			}
 			if _, err := uuid.Parse(pid); err != nil {
 				return fmt.Errorf("invalid project id: %w", err)
@@ -106,12 +106,12 @@ func cliDomainVerifyCmd() *cobra.Command {
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
-				return err
+				return fmt.Errorf("create client: %w", err)
 			}
 			path := fmt.Sprintf("/api/projects/%s/domains/%s/verify", pid, did)
 			var out map[string]any
 			if err := c.DoJSON(cmd.Context(), http.MethodPost, path, nil, &out); err != nil {
-				return err
+				return fmt.Errorf("verify domain: %w", err)
 			}
 			return printRemote(out)
 		},
@@ -130,7 +130,7 @@ func cliDomainDeleteCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pid, err := resolveProjectFlag(projectID)
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve project: %w", err)
 			}
 			if _, err := uuid.Parse(pid); err != nil {
 				return fmt.Errorf("invalid project id: %w", err)
@@ -144,12 +144,12 @@ func cliDomainDeleteCmd() *cobra.Command {
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
-				return err
+				return fmt.Errorf("create client: %w", err)
 			}
 			path := fmt.Sprintf("/api/projects/%s/domains/%s", pid, did)
 			resp, err := c.Do(cmd.Context(), http.MethodDelete, path, nil)
 			if err != nil {
-				return err
+				return fmt.Errorf("delete domain request: %w", err)
 			}
 			defer resp.Body.Close()
 			b, _ := io.ReadAll(resp.Body)

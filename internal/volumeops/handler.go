@@ -64,7 +64,7 @@ func (h *Handler) Reconcile(ctx context.Context, operationID uuid.UUID) error {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("fetch volume operation: %w", err)
 	}
 	if op.Status == "succeeded" || op.Status == "failed" {
 		return nil
@@ -75,7 +75,7 @@ func (h *Handler) Reconcile(ctx context.Context, operationID uuid.UUID) error {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("fetch volume: %w", err)
 	}
 
 	if h.isStaleRunning(op) {
@@ -96,7 +96,7 @@ func (h *Handler) Reconcile(ctx context.Context, operationID uuid.UUID) error {
 	if op.Status == "pending" {
 		op, err = h.q.ProjectVolumeOperationUpdateRunning(ctx, op.ID)
 		if err != nil {
-			return err
+			return fmt.Errorf("mark operation running: %w", err)
 		}
 	}
 
@@ -120,7 +120,7 @@ func QueueRecoverableOperations(ctx context.Context, q *queries.Queries, sched *
 	}
 	pending, err := q.ProjectVolumeOperationFindStalePending(ctx, int64(defaultStalePendingAfter/time.Second))
 	if err != nil {
-		return err
+		return fmt.Errorf("find stale pending operations: %w", err)
 	}
 	for _, op := range pending {
 		if op.ID.Valid {
@@ -129,7 +129,7 @@ func QueueRecoverableOperations(ctx context.Context, q *queries.Queries, sched *
 	}
 	running, err := q.ProjectVolumeOperationFindStaleRunning(ctx, int64(defaultStaleRunningAfter/time.Second))
 	if err != nil {
-		return err
+		return fmt.Errorf("find stale running operations: %w", err)
 	}
 	for _, op := range running {
 		if op.ID.Valid {
@@ -222,7 +222,7 @@ func (h *Handler) runBackup(ctx context.Context, op queries.ProjectVolumeOperati
 			ResultMetadata:  mustJSON(result),
 			Error:           "",
 		}); err != nil {
-			return err
+			return fmt.Errorf("update operation state after backup: %w", err)
 		}
 		return h.q.ProjectVolumeSoftDelete(ctx, vol.ProjectID)
 	}
@@ -334,7 +334,10 @@ func (h *Handler) runMove(ctx context.Context, op queries.ProjectVolumeOperation
 			ResultMetadata:  resultBytes,
 			Error:           "",
 		})
-		return err
+		if err != nil {
+			return fmt.Errorf("update move operation state: %w", err)
+		}
+		return nil
 	case "download":
 		path := runtime.PersistentVolumePath(uuid.UUID(vol.ID.Bytes))
 		if err := downloadToPath(ctx, store, req.StorageKey, path); err != nil {
@@ -384,7 +387,7 @@ func (h *Handler) completeOperation(ctx context.Context, op queries.ProjectVolum
 		ResultMetadata:  resultBytes,
 		Error:           "",
 	}); err != nil {
-		return err
+		return fmt.Errorf("update completed operation: %w", err)
 	}
 	_, err := h.q.ProjectVolumeUpdateStatusAndHealth(ctx, queries.ProjectVolumeUpdateStatusAndHealthParams{
 		ProjectID: vol.ProjectID,
@@ -392,7 +395,10 @@ func (h *Handler) completeOperation(ctx context.Context, op queries.ProjectVolum
 		Health:    health,
 		LastError: strings.TrimSpace(lastError),
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("update volume status: %w", err)
+	}
+	return nil
 }
 
 func (h *Handler) failOperation(ctx context.Context, op queries.ProjectVolumeOperation, vol queries.ProjectVolume, message, health, backupID string) error {
@@ -424,7 +430,7 @@ func (h *Handler) failOperation(ctx context.Context, op queries.ProjectVolumeOpe
 		ResultMetadata:  op.ResultMetadata,
 		Error:           message,
 	}); err != nil {
-		return err
+		return fmt.Errorf("update failed operation: %w", err)
 	}
 	nextStatus := "detached"
 	nextHealth := strings.TrimSpace(health)
@@ -443,7 +449,10 @@ func (h *Handler) failOperation(ctx context.Context, op queries.ProjectVolumeOpe
 		Health:    nextHealth,
 		LastError: message,
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("update volume status after failure: %w", err)
+	}
+	return nil
 }
 
 func (h *Handler) backupStore(ctx context.Context) (volumebackup.Store, error) {
@@ -463,7 +472,7 @@ func (h *Handler) trimBackups(ctx context.Context, vol queries.ProjectVolume, st
 	}
 	backups, err := h.q.ProjectVolumeBackupFindByProjectID(ctx, vol.ProjectID)
 	if err != nil {
-		return err
+		return fmt.Errorf("list backups for trim: %w", err)
 	}
 	kept := int32(0)
 	for _, backup := range backups {
@@ -476,11 +485,11 @@ func (h *Handler) trimBackups(ctx context.Context, vol queries.ProjectVolume, st
 		}
 		if key := strings.TrimSpace(backup.StorageKey); key != "" {
 			if err := store.DeleteObject(ctx, key); err != nil {
-				return err
+				return fmt.Errorf("delete expired backup object: %w", err)
 			}
 		}
 		if err := h.q.ProjectVolumeBackupDeleteByID(ctx, backup.ID); err != nil {
-			return err
+			return fmt.Errorf("delete expired backup record: %w", err)
 		}
 	}
 	return nil
@@ -577,7 +586,7 @@ func downloadToPath(ctx context.Context, store volumebackup.Store, storageKey, d
 	}
 	defer os.Remove(tmpPath)
 	if err := store.DownloadFile(ctx, storageKey, tmpPath); err != nil {
-		return err
+		return fmt.Errorf("download backup file: %w", err)
 	}
 	if err := os.Rename(tmpPath, dstPath); err != nil {
 		return fmt.Errorf("replace destination volume: %w", err)

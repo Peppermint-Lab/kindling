@@ -987,7 +987,7 @@ func terminatePID(pid int) error {
 		return nil
 	}
 	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil && err != syscall.ESRCH {
-		return err
+		return fmt.Errorf("terminate process %d: %w", pid, err)
 	}
 	return nil
 }

@@ -294,7 +294,7 @@ func (m *Manager) ensureBaseImage(ctx context.Context, image queries.Image) erro
 	// Download OCI image with skopeo.
 	tmpDir, err := os.MkdirTemp("", "kindling-image-")
 	if err != nil {
-		return err
+		return fmt.Errorf("create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
@@ -311,7 +311,7 @@ func (m *Manager) ensureBaseImage(ctx context.Context, image queries.Image) erro
 
 	bundlePath := tmpDir + "/bundle"
 	if err := oci.UmociUnpack(ctx, ociPath+":latest", bundlePath); err != nil {
-		return err
+		return fmt.Errorf("umoci unpack: %w", err)
 	}
 
 	// Convert to qcow2 from unpacked rootfs (not the full OCI bundle with config.json).

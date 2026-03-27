@@ -47,11 +47,11 @@ func projectCreateCmd() *cobra.Command {
 			var err error
 			dbURL, err = resolveDBURL(dbURL)
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve database URL: %w", err)
 			}
 			pool, err := pgxpool.New(cmd.Context(), dbURL)
 			if err != nil {
-				return err
+				return fmt.Errorf("connect database: %w", err)
 			}
 			defer pool.Close()
 
@@ -114,18 +114,18 @@ func projectListCmd() *cobra.Command {
 			var err error
 			dbURL, err = resolveDBURL(dbURL)
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve database URL: %w", err)
 			}
 			pool, err := pgxpool.New(cmd.Context(), dbURL)
 			if err != nil {
-				return err
+				return fmt.Errorf("connect database: %w", err)
 			}
 			defer pool.Close()
 
 			q := queries.New(pool)
 			projects, err := q.ProjectFindAllByOrgID(cmd.Context(), pgtype.UUID{Bytes: auth.BootstrapOrganizationID, Valid: true})
 			if err != nil {
-				return err
+				return fmt.Errorf("list projects: %w", err)
 			}
 
 			if len(projects) == 0 {
@@ -157,11 +157,11 @@ func projectDeleteCmd() *cobra.Command {
 			var err error
 			dbURL, err = resolveDBURL(dbURL)
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve database URL: %w", err)
 			}
 			pool, err := pgxpool.New(cmd.Context(), dbURL)
 			if err != nil {
-				return err
+				return fmt.Errorf("connect database: %w", err)
 			}
 			defer pool.Close()
 
@@ -210,11 +210,11 @@ Private repositories need github_token stored encrypted in cluster_secrets (see 
 			var err error
 			dbURL, err = resolveDBURL(dbURL)
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve database URL: %w", err)
 			}
 			pool, err := pgxpool.New(cmd.Context(), dbURL)
 			if err != nil {
-				return err
+				return fmt.Errorf("connect database: %w", err)
 			}
 			defer pool.Close()
 
@@ -298,11 +298,11 @@ func adminLogsCmd() *cobra.Command {
 			var err error
 			dbURL, err = resolveDBURL(dbURL)
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve database URL: %w", err)
 			}
 			pool, err := pgxpool.New(cmd.Context(), dbURL)
 			if err != nil {
-				return err
+				return fmt.Errorf("connect database: %w", err)
 			}
 			defer pool.Close()
 
@@ -326,7 +326,7 @@ func adminLogsCmd() *cobra.Command {
 
 			logs, err := q.BuildLogsByBuildID(cmd.Context(), dep.BuildID)
 			if err != nil {
-				return err
+				return fmt.Errorf("fetch build logs: %w", err)
 			}
 
 			if len(logs) == 0 {

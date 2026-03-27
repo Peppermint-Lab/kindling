@@ -31,14 +31,14 @@ func cliDeployCreateCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pid, err := resolveProjectFlag(projectID)
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve project: %w", err)
 			}
 			if _, err := uuid.Parse(pid); err != nil {
 				return fmt.Errorf("invalid project id: use --project or kindling link\n%w", err)
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
-				return err
+				return fmt.Errorf("create client: %w", err)
 			}
 			co := strings.TrimSpace(commit)
 			if co == "" {
@@ -47,7 +47,7 @@ func cliDeployCreateCmd() *cobra.Command {
 			var out map[string]any
 			path := fmt.Sprintf("/api/projects/%s/deploy", pid)
 			if err := c.DoJSON(cmd.Context(), http.MethodPost, path, map[string]string{"commit": co}, &out); err != nil {
-				return err
+				return fmt.Errorf("trigger deploy: %w", err)
 			}
 			return printRemote(out)
 		},
@@ -72,11 +72,11 @@ func cliDeployGetCmd() *cobra.Command {
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
-				return err
+				return fmt.Errorf("create client: %w", err)
 			}
 			var out map[string]any
 			if err := c.DoJSON(cmd.Context(), http.MethodGet, "/api/deployments/"+id, nil, &out); err != nil {
-				return err
+				return fmt.Errorf("fetch deployment: %w", err)
 			}
 			return printRemote(out)
 		},
@@ -104,11 +104,11 @@ func cliDeployCancelCmd() *cobra.Command {
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
-				return err
+				return fmt.Errorf("create client: %w", err)
 			}
 			resp, err := c.Do(cmd.Context(), http.MethodPost, "/api/deployments/"+id+"/cancel", nil)
 			if err != nil {
-				return err
+				return fmt.Errorf("cancel deployment request: %w", err)
 			}
 			defer resp.Body.Close()
 			b, _ := io.ReadAll(resp.Body)

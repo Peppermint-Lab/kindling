@@ -20,7 +20,7 @@ func cliLinkCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path, fc, err := loadFileConfig()
 			if err != nil {
-				return err
+				return fmt.Errorf("load config: %w", err)
 			}
 			pid := strings.TrimSpace(projectID)
 			if pid != "" {
@@ -30,7 +30,7 @@ func cliLinkCmd() *cobra.Command {
 			}
 			fc.LinkedProjectID = pid
 			if err := cli.SaveFileConfig(path, fc); err != nil {
-				return err
+				return fmt.Errorf("save config: %w", err)
 			}
 			if pid == "" {
 				printRemoteMessage("link: cleared linked project")
@@ -56,7 +56,7 @@ func cliStatusCmd() *cobra.Command {
 			var out map[string]any
 			// session endpoint is public; still send auth if configured
 			if err := c.DoJSON(cmd.Context(), http.MethodGet, "/api/auth/session", nil, &out); err != nil {
-				return err
+				return fmt.Errorf("fetch session: %w", err)
 			}
 			if !remoteJSON {
 				fmt.Printf("api_url: %s\n", c.BaseURL)
@@ -74,7 +74,7 @@ func cliStatusCmd() *cobra.Command {
 func linkedProjectID() (string, error) {
 	_, fc, err := loadFileConfig()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("load config: %w", err)
 	}
 	return strings.TrimSpace(fc.LinkedProjectID), nil
 }

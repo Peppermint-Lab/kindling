@@ -170,7 +170,7 @@ func validateLiveMigrationProjectVolume(_ queries.ProjectVolume, err error) erro
 	case errors.Is(err, pgx.ErrNoRows):
 		return nil
 	default:
-		return err
+		return fmt.Errorf("check project volume: %w", err)
 	}
 }
 

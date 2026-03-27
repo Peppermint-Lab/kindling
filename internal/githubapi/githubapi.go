@@ -67,7 +67,7 @@ func ResolveCommit(ctx context.Context, client *http.Client, token, repo, ref st
 func githubGET(ctx context.Context, client *http.Client, token, reqURL string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("create github request: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "kindling")
@@ -77,7 +77,7 @@ func githubGET(ctx context.Context, client *http.Client, token, reqURL string, o
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("execute github request: %w", err)
 	}
 	defer resp.Body.Close()
 

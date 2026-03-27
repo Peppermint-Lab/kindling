@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -230,7 +231,7 @@ func ensureSession(ctx context.Context, t *testing.T, client *http.Client, base 
 	statusURL := base.ResolveReference(&url.URL{Path: "/api/auth/bootstrap-status"}).String()
 	resp, err := client.Get(statusURL)
 	if err != nil {
-		return err
+		return fmt.Errorf("get bootstrap status: %w", err)
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
@@ -238,18 +239,18 @@ func ensureSession(ctx context.Context, t *testing.T, client *http.Client, base 
 		NeedsBootstrap bool `json:"needs_bootstrap"`
 	}
 	if err := json.Unmarshal(body, &st); err != nil {
-		return err
+		return fmt.Errorf("unmarshal bootstrap status: %w", err)
 	}
 	if st.NeedsBootstrap {
 		payload := []byte(`{"email":"e2e-drain@kindling.local","password":"e2e-drain-password-9chars","display_name":"E2E"}`)
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, base.ResolveReference(&url.URL{Path: "/api/auth/bootstrap"}).String(), bytes.NewReader(payload))
 		if err != nil {
-			return err
+			return fmt.Errorf("build bootstrap request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := client.Do(req)
 		if err != nil {
-			return err
+			return fmt.Errorf("execute bootstrap request: %w", err)
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusCreated {
@@ -265,16 +266,16 @@ func ensureSession(ctx context.Context, t *testing.T, client *http.Client, base 
 	}
 	loginPayload, err := json.Marshal(map[string]string{"email": email, "password": pass})
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal login payload: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base.ResolveReference(&url.URL{Path: "/api/auth/login"}).String(), bytes.NewReader(loginPayload))
 	if err != nil {
-		return err
+		return fmt.Errorf("build login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp2, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("execute login request: %w", err)
 	}
 	defer resp2.Body.Close()
 	if resp2.StatusCode != http.StatusOK {

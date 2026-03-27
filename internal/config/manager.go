@@ -37,7 +37,7 @@ func NewManager(pool *pgxpool.Pool, serverID uuid.UUID, masterKey []byte) *Manag
 func (m *Manager) Reload(ctx context.Context) error {
 	s, err := LoadSnapshot(ctx, m.q, m.serverID, m.masterKey)
 	if err != nil {
-		return err
+		return fmt.Errorf("load config snapshot: %w", err)
 	}
 	m.snap.Store(s)
 	return nil

@@ -25,7 +25,7 @@ func debugBuilderVMSmokeCmd() *cobra.Command {
 (see CLAUDE.md). On macOS the kindling binary must be signed with the Virtualization entitlement—use "make build" not raw "go build".`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := builder.SmokeTestAppleBuilderVM(cmd.Context()); err != nil {
-				return err
+				return fmt.Errorf("builder VM smoke test: %w", err)
 			}
 			fmt.Println("builder-vm-smoke: ok")
 			return nil

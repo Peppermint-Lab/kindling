@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -153,7 +154,7 @@ func decryptSecretInto(ctx context.Context, q *queries.Queries, masterKey []byte
 			*dest = ""
 			return nil
 		}
-		return err
+		return fmt.Errorf("get cluster secret %q: %w", key, err)
 	}
 	if len(ct) == 0 {
 		*dest = ""
@@ -161,7 +162,7 @@ func decryptSecretInto(ctx context.Context, q *queries.Queries, masterKey []byte
 	}
 	plain, err := DecryptClusterSecret(masterKey, ct)
 	if err != nil {
-		return err
+		return fmt.Errorf("decrypt cluster secret %q: %w", key, err)
 	}
 	*dest = string(plain)
 	return nil

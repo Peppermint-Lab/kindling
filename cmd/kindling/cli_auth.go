@@ -38,7 +38,7 @@ Examples:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path, fc, err := loadFileConfig()
 			if err != nil {
-				return err
+				return fmt.Errorf("load config: %w", err)
 			}
 			name := strings.TrimSpace(remoteProfile)
 			if name == "" {
@@ -49,7 +49,7 @@ Examples:
 			}
 			p, _, err := cli.ResolveProfile(fc, name, remoteAPIURL, "")
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve profile: %w", err)
 			}
 			if strings.TrimSpace(email) == "" {
 				return fmt.Errorf("--email is required\n  kindling auth login --email you@example.com --password ...")
@@ -57,7 +57,7 @@ Examples:
 			if password == "" {
 				b, err := io.ReadAll(io.LimitReader(cmd.InOrStdin(), 1<<20))
 				if err != nil {
-					return err
+					return fmt.Errorf("read stdin: %w", err)
 				}
 				password = strings.TrimSpace(string(b))
 				if password == "" {
@@ -71,12 +71,12 @@ Examples:
 			u := strings.TrimRight(p.BaseURL, "/") + "/api/auth/login"
 			req, err := http.NewRequestWithContext(cmd.Context(), http.MethodPost, u, bytes.NewReader(body))
 			if err != nil {
-				return err
+				return fmt.Errorf("build login request: %w", err)
 			}
 			req.Header.Set("Content-Type", "application/json")
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
-				return err
+				return fmt.Errorf("login request: %w", err)
 			}
 			defer resp.Body.Close()
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -85,7 +85,7 @@ Examples:
 			}
 			hexVal, err := cli.SessionHexFromLoginResponse(resp)
 			if err != nil {
-				return err
+				return fmt.Errorf("parse login response: %w", err)
 			}
 			prof := fc.Profiles[name]
 			prof.BaseURL = p.BaseURL
@@ -97,7 +97,7 @@ Examples:
 			fc.Profiles[name] = prof
 			fc.CurrentProfile = name
 			if err := cli.SaveFileConfig(path, fc); err != nil {
-				return err
+				return fmt.Errorf("save config: %w", err)
 			}
 			printRemoteMessage("logged in; session saved to profile " + name)
 			return nil
@@ -115,7 +115,7 @@ func cliAuthLogoutCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path, fc, err := loadFileConfig()
 			if err != nil {
-				return err
+				return fmt.Errorf("load config: %w", err)
 			}
 			name := strings.TrimSpace(remoteProfile)
 			if name == "" {
@@ -141,7 +141,7 @@ func cliAuthLogoutCmd() *cobra.Command {
 			}
 			fc.Profiles[name] = prof
 			if err := cli.SaveFileConfig(path, fc); err != nil {
-				return err
+				return fmt.Errorf("save config: %w", err)
 			}
 			printRemoteMessage("logged out (local session cleared for profile " + name + ")")
 			return nil
@@ -156,11 +156,11 @@ func cliAuthWhoamiCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := mustRemoteClient()
 			if err != nil {
-				return err
+				return fmt.Errorf("create client: %w", err)
 			}
 			var out map[string]any
 			if err := c.DoJSON(cmd.Context(), http.MethodGet, "/api/auth/session", nil, &out); err != nil {
-				return err
+				return fmt.Errorf("fetch session: %w", err)
 			}
 			return printRemote(out)
 		},
@@ -185,11 +185,11 @@ func cliAuthAPIKeyListCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := mustRemoteClient()
 			if err != nil {
-				return err
+				return fmt.Errorf("create client: %w", err)
 			}
 			var out []map[string]any
 			if err := c.DoJSON(cmd.Context(), http.MethodGet, "/api/auth/api-keys", nil, &out); err != nil {
-				return err
+				return fmt.Errorf("list api keys: %w", err)
 			}
 			return printRemote(out)
 		},
@@ -209,11 +209,11 @@ func cliAuthAPIKeyCreateCmd() *cobra.Command {
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
-				return err
+				return fmt.Errorf("create client: %w", err)
 			}
 			var out map[string]any
 			if err := c.DoJSON(cmd.Context(), http.MethodPost, "/api/auth/api-keys", map[string]string{"name": strings.TrimSpace(name)}, &out); err != nil {
-				return err
+				return fmt.Errorf("create api key: %w", err)
 			}
 			return printRemote(out)
 		},
@@ -233,12 +233,12 @@ func cliAuthAPIKeyRevokeCmd() *cobra.Command {
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
-				return err
+				return fmt.Errorf("create client: %w", err)
 			}
 			var out map[string]any
 			err = c.DoJSON(cmd.Context(), http.MethodDelete, "/api/auth/api-keys/"+strings.TrimSpace(id), nil, &out)
 			if err != nil {
-				return err
+				return fmt.Errorf("revoke api key: %w", err)
 			}
 			return printRemote(out)
 		},

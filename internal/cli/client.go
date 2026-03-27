@@ -113,12 +113,12 @@ func (c *Client) DoStream(ctx context.Context, method, path string) (*http.Respo
 func (c *Client) DoJSON(ctx context.Context, method, path string, body any, out any) error {
 	resp, err := c.Do(ctx, method, path, body)
 	if err != nil {
-		return err
+		return fmt.Errorf("execute request: %w", err)
 	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		return fmt.Errorf("read response body: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var ae struct {

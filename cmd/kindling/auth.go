@@ -51,7 +51,7 @@ Use --revoke-other-sessions to invalidate existing browser sessions for this use
 			}
 			url, err := resolveDBURL(dbURL)
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve database URL: %w", err)
 			}
 			pool, err := pgxpool.New(ctx, url)
 			if err != nil {
@@ -71,7 +71,7 @@ Use --revoke-other-sessions to invalidate existing browser sessions for this use
 			u, err := q.UserByEmail(ctx, email)
 			if err != nil {
 				if err != pgx.ErrNoRows {
-					return err
+					return fmt.Errorf("lookup user by email: %w", err)
 				}
 				userID = uuid.New()
 				dn := displayName

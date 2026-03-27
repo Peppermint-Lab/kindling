@@ -252,7 +252,7 @@ func (s *Service) Stop(ctx context.Context) error {
 func (s *Service) loadRoutes(ctx context.Context) error {
 	rows, err := s.q.RouteFindActive(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("load active routes: %w", err)
 	}
 
 	redirects := make(map[string]Route)

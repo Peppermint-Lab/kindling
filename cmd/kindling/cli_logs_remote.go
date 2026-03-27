@@ -30,24 +30,26 @@ func cliLogsRemoteCmd() *cobra.Command {
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
-				return err
+				return fmt.Errorf("create client: %w", err)
 			}
 			if follow {
 				resp, err := c.DoStream(cmd.Context(), http.MethodGet, "/api/deployments/"+id+"/stream")
 				if err != nil {
-					return err
+					return fmt.Errorf("stream logs: %w", err)
 				}
 				defer resp.Body.Close()
 				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 					b, _ := io.ReadAll(resp.Body)
 					return fmt.Errorf("stream failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(b)))
 				}
-				_, err = io.Copy(os.Stdout, resp.Body)
-				return err
+				if _, err = io.Copy(os.Stdout, resp.Body); err != nil {
+					return fmt.Errorf("copy stream to stdout: %w", err)
+				}
+				return nil
 			}
 			var out []map[string]any
 			if err := c.DoJSON(cmd.Context(), http.MethodGet, "/api/deployments/"+id+"/logs", nil, &out); err != nil {
-				return err
+				return fmt.Errorf("fetch logs: %w", err)
 			}
 			if remoteJSON {
 				return printRemote(out)

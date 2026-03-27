@@ -2,6 +2,7 @@ package preview
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/google/uuid"
@@ -38,7 +39,7 @@ func StopEnvironmentDeployments(ctx context.Context, q *queries.Queries, deploym
 // reconciler cleanup, and deletes the preview environment immediately.
 func CleanupEnvironmentNow(ctx context.Context, q *queries.Queries, deploymentReconciler *reconciler.Scheduler, previewEnvironmentID pgtype.UUID) error {
 	if _, err := StopEnvironmentDeployments(ctx, q, deploymentReconciler, previewEnvironmentID); err != nil {
-		return err
+		return fmt.Errorf("stop environment deployments: %w", err)
 	}
 	return q.PreviewEnvironmentDelete(ctx, previewEnvironmentID)
 }

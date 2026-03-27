@@ -15,7 +15,7 @@ import (
 func ListenAndServe(ctx context.Context, addr, vsockUDS string, guestPort uint32) error {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return err
+		return fmt.Errorf("listen tcp %s: %w", addr, err)
 	}
 	defer ln.Close()
 
@@ -31,7 +31,7 @@ func ListenAndServe(ctx context.Context, addr, vsockUDS string, guestPort uint32
 			case <-ctx.Done():
 				return nil
 			default:
-				return err
+				return fmt.Errorf("accept connection: %w", err)
 			}
 		}
 		go Relay(conn, vsockUDS, guestPort)

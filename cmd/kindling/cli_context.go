@@ -25,7 +25,7 @@ func cliContextListCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, fc, err := loadFileConfig()
 			if err != nil {
-				return err
+				return fmt.Errorf("load config: %w", err)
 			}
 			if remoteJSON {
 				out := map[string]any{
@@ -65,7 +65,7 @@ Examples:
 			}
 			path, fc, err := loadFileConfig()
 			if err != nil {
-				return err
+				return fmt.Errorf("load config: %w", err)
 			}
 			prof := fc.Profiles[name]
 			if remoteAPIURL != "" {
@@ -81,7 +81,7 @@ Examples:
 			fc.Profiles[name] = prof
 			fc.CurrentProfile = name
 			if err := cli.SaveFileConfig(path, fc); err != nil {
-				return err
+				return fmt.Errorf("save config: %w", err)
 			}
 			printRemoteMessage("context: active profile is now " + name)
 			return nil

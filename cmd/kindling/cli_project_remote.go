@@ -31,11 +31,11 @@ func cliProjectListCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := mustRemoteClient()
 			if err != nil {
-				return err
+				return fmt.Errorf("create client: %w", err)
 			}
 			var out []map[string]any
 			if err := c.DoJSON(cmd.Context(), http.MethodGet, "/api/projects", nil, &out); err != nil {
-				return err
+				return fmt.Errorf("list projects: %w", err)
 			}
 			if !remoteJSON {
 				for _, p := range out {
@@ -56,18 +56,18 @@ func cliProjectGetCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := resolveProjectFlag(projectID)
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve project: %w", err)
 			}
 			if _, err := uuid.Parse(id); err != nil {
 				return fmt.Errorf("invalid project id: use --project or kindling link --project <uuid>\n%w", err)
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
-				return err
+				return fmt.Errorf("create client: %w", err)
 			}
 			var out map[string]any
 			if err := c.DoJSON(cmd.Context(), http.MethodGet, "/api/projects/"+id, nil, &out); err != nil {
-				return err
+				return fmt.Errorf("fetch project: %w", err)
 			}
 			return printRemote(out)
 		},
@@ -101,11 +101,11 @@ func cliProjectCreateCmd() *cobra.Command {
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
-				return err
+				return fmt.Errorf("create client: %w", err)
 			}
 			var out map[string]any
 			if err := c.DoJSON(cmd.Context(), http.MethodPost, "/api/projects", body, &out); err != nil {
-				return err
+				return fmt.Errorf("create project: %w", err)
 			}
 			return printRemote(out)
 		},
@@ -126,7 +126,7 @@ func cliProjectDeleteCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := resolveProjectFlag(projectID)
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve project: %w", err)
 			}
 			if _, err := uuid.Parse(id); err != nil {
 				return fmt.Errorf("invalid project id: %w", err)
@@ -136,11 +136,11 @@ func cliProjectDeleteCmd() *cobra.Command {
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
-				return err
+				return fmt.Errorf("create client: %w", err)
 			}
 			resp, err := c.Do(cmd.Context(), http.MethodDelete, "/api/projects/"+id, nil)
 			if err != nil {
-				return err
+				return fmt.Errorf("delete project request: %w", err)
 			}
 			defer resp.Body.Close()
 			b, _ := io.ReadAll(resp.Body)

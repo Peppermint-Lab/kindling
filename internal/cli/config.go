@@ -80,16 +80,16 @@ func LoadFileConfig(path string) (FileConfig, error) {
 // SaveFileConfig writes the config file atomically.
 func SaveFileConfig(path string, c FileConfig) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+		return fmt.Errorf("create config directory: %w", err)
 	}
 	c.Version = configVersion
 	b, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal config: %w", err)
 	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
+		return fmt.Errorf("write config file: %w", err)
 	}
 	return os.Rename(tmp, path)
 }

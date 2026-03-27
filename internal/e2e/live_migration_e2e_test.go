@@ -539,7 +539,7 @@ func upsertWorkerStatus(ctx context.Context, q *queries.Queries, serverID uuid.U
 		"shared_rootfs_dir":        sharedRootfs,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal worker status metadata: %w", err)
 	}
 	return q.ServerComponentStatusUpsert(ctx, queries.ServerComponentStatusUpsertParams{
 		ServerID:         pguuid.ToPgtype(serverID),
