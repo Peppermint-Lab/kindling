@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -291,7 +292,11 @@ func (h *Handler) streamDeployment(w http.ResponseWriter, r *http.Request) {
 
 	var logs []queries.BuildLog
 	if dep.BuildID.Valid {
-		logs, _ = h.Q.BuildLogsByBuildID(r.Context(), dep.BuildID)
+		var logErr error
+		logs, logErr = h.Q.BuildLogsByBuildID(r.Context(), dep.BuildID)
+		if logErr != nil {
+			slog.Warn("failed to fetch build logs for SSE stream", "build_id", dep.BuildID, "error", logErr)
+		}
 	}
 	out := h.ToOutCtx(r.Context(), dep)
 	if err := writeEvent("deployment", out); err != nil {

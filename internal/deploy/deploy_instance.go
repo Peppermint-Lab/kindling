@@ -46,7 +46,7 @@ func (d *Deployer) reconcileOneInstance(
 		}
 	}
 
-	inst, err = d.resetStaleInstance(ctx, inst, persistentVolume)
+	inst, err = d.resetStaleInstance(ctx, dep, inst, persistentVolume)
 	if err != nil {
 		return err
 	}
@@ -212,6 +212,7 @@ func (d *Deployer) isRunningInstanceHealthy(ctx context.Context, inst queries.De
 // resetStaleInstance cleans up a stale VM/instance and prepares it for retry.
 func (d *Deployer) resetStaleInstance(
 	ctx context.Context,
+	dep queries.Deployment,
 	inst queries.DeploymentInstance,
 	persistentVolume *runtime.PersistentVolumeMount,
 ) (queries.DeploymentInstance, error) {
@@ -223,10 +224,7 @@ func (d *Deployer) resetStaleInstance(
 	}
 	if inst.VmID.Valid {
 		if persistentVolume != nil {
-			dep, depErr := d.q.DeploymentFirstByID(ctx, inst.DeploymentID)
-			if depErr == nil {
-				_ = d.detachProjectVolumeIfAttached(ctx, dep.ProjectID, inst.VmID, "available", "")
-			}
+			_ = d.detachProjectVolumeIfAttached(ctx, dep.ProjectID, inst.VmID, "available", "")
 		}
 		_ = d.q.VMSoftDelete(ctx, inst.VmID)
 	}
