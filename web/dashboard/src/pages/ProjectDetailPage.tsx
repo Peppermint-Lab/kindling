@@ -66,6 +66,8 @@ import {
   SurfaceSeparator,
 } from "@/components/page-surface"
 
+const DEPLOYMENTS_PER_PAGE = 10
+
 async function copyText(label: string, text: string) {
   try {
     await navigator.clipboard.writeText(text)
@@ -114,6 +116,7 @@ export function ProjectDetailPage() {
   const navigate = useNavigate()
   const [project, setProject] = useState<Project | null>(null)
   const [deployments, setDeployments] = useState<Deployment[]>([])
+  const [deploymentsPage, setDeploymentsPage] = useState(1)
   const [ghSetup, setGhSetup] = useState<GitHubSetup | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -270,6 +273,15 @@ export function ProjectDetailPage() {
     }, 0)
     return () => clearTimeout(id)
   }, [loadProjectPage])
+
+  useEffect(() => {
+    setDeploymentsPage(1)
+  }, [id])
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(deployments.length / DEPLOYMENTS_PER_PAGE))
+    setDeploymentsPage((page) => Math.min(page, totalPages))
+  }, [deployments.length])
 
   useEffect(() => {
     if (!id) return
@@ -486,6 +498,11 @@ export function ProjectDetailPage() {
   if (!project) return null
 
   const latestRunningDeployment = selectLatestRunningDeployment(deployments)
+  const totalDeploymentPages = Math.max(1, Math.ceil(deployments.length / DEPLOYMENTS_PER_PAGE))
+  const deploymentStart = (deploymentsPage - 1) * DEPLOYMENTS_PER_PAGE
+  const pagedDeployments = deployments.slice(deploymentStart, deploymentStart + DEPLOYMENTS_PER_PAGE)
+  const visibleDeploymentsStart = deployments.length === 0 ? 0 : deploymentStart + 1
+  const visibleDeploymentsEnd = Math.min(deploymentStart + DEPLOYMENTS_PER_PAGE, deployments.length)
 
   return (
     <PageContainer size="wide">
@@ -916,8 +933,36 @@ export function ProjectDetailPage() {
               </Surface>
             ) : (
               <Surface>
+                <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    Showing {visibleDeploymentsStart}-{visibleDeploymentsEnd} of {deployments.length} deployments
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setDeploymentsPage((page) => Math.max(1, page - 1))}
+                      disabled={deploymentsPage <= 1}
+                    >
+                      Previous
+                    </Button>
+                    <span className="text-xs text-muted-foreground">
+                      Page {deploymentsPage} of {totalDeploymentPages}
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setDeploymentsPage((page) => Math.min(totalDeploymentPages, page + 1))}
+                      disabled={deploymentsPage >= totalDeploymentPages}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
                 <ul className="divide-y">
-                  {deployments.map((dep) => (
+                  {pagedDeployments.map((dep) => (
                     <li key={dep.id}>
                       <Link to={`/deployments/${dep.id}`} className="list-row group">
                         <div className="flex flex-wrap items-center gap-2 min-w-0">
