@@ -1,0 +1,21 @@
+{
+  "featureId": "fnd-unify-helpers",
+  "reviewedAt": "2026-03-27T21:27:06Z",
+  "commitId": "c40ac8f",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The feature implementation correctly deduplicates helper logic by introducing shared canonical helpers (`internal/shared/httputil` and `internal/shared/conv`) and updating call sites in `internal/auth`, `internal/rpc`, and `internal/migrationreconcile` without changing response formats or introducing import-layer violations.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The validation contract evidence for VAL-FND-015 is too name-specific and can misclassify valid refactors that rename the canonical helper.",
+      "evidence": "validation-contract.md line 74 expects `grep -rn 'func metadataString\\|func stringValue' ... | wc -l` to be `1`, but this feature consolidated to `internal/shared/conv.String` (commit c40ac8f), making that count `0` while still satisfying the stated intent ('Only one canonical definition should exist')."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Pass. The commit achieves the feature goals: auth no longer defines its own `writeAPIError`, RPC delegates error writing to a shared canonical implementation, and duplicated metadata string-casting helpers were consolidated into one shared helper. No blocking correctness issues were identified in the reviewed diff."
+}

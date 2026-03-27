@@ -40,7 +40,8 @@ internal/
   runtime/             — VM/container lifecycle (Cloud Hypervisor, crun, Apple VZ)
   server/              — Server registration + heartbeat
   serverreconcile/     — Server drain/failover reconciler
-  shared/uuid/         — Shared UUID/pgtype conversion helpers
+  shared/pguuid/       — Shared UUID/pgtype conversion helpers
+  shared/uuid/         — Shared UUID utilities
   usage/               — Resource usage polling
   vmm/                 — VM monitor (process lifecycle)
   volumebackup/        — Volume backup executor

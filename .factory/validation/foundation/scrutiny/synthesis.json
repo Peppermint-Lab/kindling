@@ -1,0 +1,66 @@
+{
+  "milestone": "foundation",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go test ./...",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "go build ./...",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "go vet ./...",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 4,
+    "passed": 3,
+    "failed": 1,
+    "failedFeatures": [
+      "fnd-fix-critical-errors"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "fnd-fix-critical-errors",
+      "severity": "blocking",
+      "description": "internal/rpc/api.go triggerDeploy treats io.EOF from json.Decoder.Decode as malformed JSON and returns 400, which breaks existing empty-body POST behavior that should default commit to \"main\"."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Updated .factory/library/architecture.md package map to reflect internal/shared/pguuid as the UUID/pgtype conversion helper location.",
+      "sourceFeature": "fnd-extract-uuid-helpers"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add a mission-authoring rule that feature requirements should avoid relying on edits to gitignored files (or explicitly document expected validation/commit behavior for them).",
+      "evidence": "Feature fnd-dead-code-stale-refs required CLAUDE.md edits while .gitignore excludes CLAUDE.md, so commit-based scrutiny could not verify doc changes from git diff alone.",
+      "isSystemic": false
+    },
+    {
+      "target": "scrutiny-validator skill",
+      "suggestion": "Prefer assertion evidence that checks behavior/semantic intent rather than exact helper symbol names when validating deduplication/refactors.",
+      "evidence": "Feature fnd-unify-helpers consolidated metadata string casting into internal/shared/conv.String; contract evidence keyed only on metadataString|stringValue names would mark this valid refactor as failing.",
+      "isSystemic": true
+    },
+    {
+      "target": "refactor-worker skill",
+      "suggestion": "Add explicit handling guidance for requirements involving gitignored files (whether to modify locally only, produce alternate evidence, and how to report in handoff).",
+      "evidence": "Feature fnd-dead-code-stale-refs transcript showed attempted forced add/rollback churn around CLAUDE.md because procedure lacked a gitignored-file path.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": null
+}

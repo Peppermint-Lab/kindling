@@ -1,0 +1,22 @@
+{
+  "featureId": "fnd-fix-critical-errors",
+  "reviewedAt": "2026-03-27T21:28:53.676081+00:00",
+  "commitId": "7ac78f6",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Most targeted silent-error sites were updated correctly, but one API regression was introduced in triggerDeploy request parsing.",
+    "issues": [
+      {
+        "file": "internal/rpc/api.go",
+        "line": 740,
+        "severity": "blocking",
+        "description": "triggerDeploy now treats any Decode error as malformed JSON. For an empty request body, json.Decoder.Decode returns io.EOF, so the handler returns HTTP 400 and never reaches the existing default-to-main fallback (line 744). This changes prior behavior and can break clients that POST with no body; EOF should be treated as an empty payload, while truly malformed JSON should return 400."
+      }
+    ]
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Review failed due to a blocking API behavior regression: triggerDeploy now rejects empty request bodies with 400 instead of allowing default commit resolution to main."
+}
