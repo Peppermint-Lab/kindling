@@ -85,9 +85,9 @@ jobs:
 
       - name: Stage artifact tree
         run: |
-          mkdir -p _deploy/bin _deploy/web/dashboard
-          cp bin/kindling _deploy/bin/
-          cp -r web/dashboard/dist/. _deploy/web/dashboard/
+          mkdir -p _deploy/bin _deploy/web/dashboard/dist
+          install -m 755 bin/kindling _deploy/bin/kindling
+          cp -r web/dashboard/dist/. _deploy/web/dashboard/dist/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -178,6 +178,9 @@ jobs:
           name: kindling-package
           path: pkg
 
+      - name: Restore executable bit on artifact binary
+        run: chmod 755 pkg/bin/kindling
+
       - uses: actions/download-artifact@v4
         if: needs.paths-filter.outputs.kernel == 'true'
         with:
@@ -221,11 +224,12 @@ jobs:
           echo "Deploying package to KINDLING_HOME=$KH"
           # Dashboard: rsync to dashboard.new then swap in one SSH — never rsync --delete
           # directly into the live tree (canceled jobs can brick static assets mid-transfer).
-          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" "mkdir -p '$KH/bin' '$KH/web/dashboard.new'"
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
+            "mkdir -p '$KH/bin'; rm -rf '$KH/web/dashboard.new'; mkdir -p '$KH/web/dashboard.new/dist'"
           rsync -az -e "ssh -p $PORT -o StrictHostKeyChecking=yes" \
             pkg/bin/kindling "$H:$KH/bin/kindling.new"
           rsync -az --delete -e "ssh -p $PORT -o StrictHostKeyChecking=yes" \
-            pkg/web/dashboard/ "$H:$KH/web/dashboard.new/"
+            pkg/web/dashboard/dist/ "$H:$KH/web/dashboard.new/dist/"
 
           if [ -f extra/vmlinuz.bin ]; then
             echo "Installing vmlinuz.bin to $DATA"
@@ -245,6 +249,8 @@ jobs:
               "mv -f '$DATA/initramfs.cpio.gz.new' '$DATA/initramfs.cpio.gz'"
           fi
 
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
+            "chmod 755 '$KH/bin/kindling.new'"
           ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
             "sudo setcap cap_net_admin,cap_net_bind_service+ep '$KH/bin/kindling.new'"
           ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
