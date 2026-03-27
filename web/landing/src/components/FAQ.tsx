@@ -21,7 +21,7 @@ const faqs = [
   },
   {
     q: "Is it production-ready?",
-    a: "Kindling is pre-1.0. The core deploy pipeline works: git push to build to microVM to live URL with TLS. Horizontal scaling, dead server detection, and custom domains are implemented. Auth, secrets management, and multi-server networking are on the roadmap.",
+    a: "Kindling is pre-1.0. The core deploy pipeline works: git push to build to microVM to live URL with TLS. Horizontal scaling, dead server detection, custom domains, and encrypted project secrets are implemented. Multi-server networking and deeper operational hardening are still on the roadmap.",
   },
   {
     q: "What's the tech stack?",
