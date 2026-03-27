@@ -1,0 +1,15 @@
+{
+  "featureId": "err-wrap-rpc-builder-migration",
+  "reviewedAt": "2026-03-27T22:33:09Z",
+  "commitId": "3b6f6e2",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed handoff, transcript skeleton, and commit 3b6f6e2. The implementation wraps bare errors with contextual %w across internal/rpc, internal/builder, and internal/migrationreconcile while preserving behavior and respecting delegator exceptions. No actionable defects were identified in the reviewed changes.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Pass. Feature requirements were met and the diff is consistent with mission conventions for error wrapping."
+}

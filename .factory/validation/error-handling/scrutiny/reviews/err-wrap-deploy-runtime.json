@@ -1,0 +1,15 @@
+{
+  "featureId": "err-wrap-deploy-runtime",
+  "reviewedAt": "2026-03-27T22:33:22Z",
+  "commitId": "6e27e0e",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed commit 6e27e0e and matching handoff/transcript artifacts. Error wrapping was added across internal/deploy and internal/runtime using contextual fmt.Errorf(... %w ...), preserving error chains and meeting the feature target (deploy bare returns reduced to 0; runtime reduced to 1 one-line delegate return).",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Feature implementation matches the described scope and expected behavior; no actionable defects were found in the reviewed diff."
+}
