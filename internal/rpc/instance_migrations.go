@@ -200,7 +200,10 @@ func (a *API) pickLiveMigrationDestination(ctx context.Context, sourceServer que
 		if !ok {
 			continue
 		}
-		meta := parseLiveMigrationWorkerMetadata(status)
+		meta, err := parseLiveMigrationWorkerMetadata(status)
+		if err != nil {
+			continue
+		}
 		if err := validateLiveMigrationDestination(sourceWorker, server, meta); err != nil {
 			continue
 		}
@@ -228,7 +231,10 @@ func (a *API) liveMigrationWorkerMetadataForServer(ctx context.Context, serverID
 		if status.Component != "worker" {
 			continue
 		}
-		meta := parseLiveMigrationWorkerMetadata(status)
+		meta, err := parseLiveMigrationWorkerMetadata(status)
+		if err != nil {
+			return liveMigrationWorkerMetadata{}, err
+		}
 		if err := validateLiveMigrationSource(meta); err != nil {
 			return liveMigrationWorkerMetadata{}, err
 		}
@@ -239,9 +245,11 @@ func (a *API) liveMigrationWorkerMetadataForServer(ctx context.Context, serverID
 
 var errNoLiveMigrationDestination = errors.New("no active cloud-hypervisor destination server is available for live migration")
 
-func parseLiveMigrationWorkerMetadata(status queries.ServerComponentStatus) liveMigrationWorkerMetadata {
+func parseLiveMigrationWorkerMetadata(status queries.ServerComponentStatus) (liveMigrationWorkerMetadata, error) {
 	var raw map[string]any
-	_ = json.Unmarshal(status.Metadata, &raw)
+	if err := json.Unmarshal(status.Metadata, &raw); err != nil {
+		return liveMigrationWorkerMetadata{}, fmt.Errorf("unmarshal worker metadata: %w", err)
+	}
 	meta := liveMigrationWorkerMetadata{
 		Runtime:                strings.TrimSpace(conv.String(raw["runtime"])),
 		CloudHypervisorVersion: strings.TrimSpace(conv.String(raw["cloud_hypervisor_version"])),
@@ -250,7 +258,7 @@ func parseLiveMigrationWorkerMetadata(status queries.ServerComponentStatus) live
 	if b, ok := raw["live_migration_enabled"].(bool); ok {
 		meta.LiveMigrationEnabled = b
 	}
-	return meta
+	return meta, nil
 }
 
 func validateLiveMigrationSource(meta liveMigrationWorkerMetadata) error {

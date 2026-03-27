@@ -737,7 +737,10 @@ func (a *API) triggerDeploy(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Commit string `json:"commit"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "malformed JSON body")
+		return
+	}
 	if req.Commit == "" {
 		req.Commit = "main"
 	}

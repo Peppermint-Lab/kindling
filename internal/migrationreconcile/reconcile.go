@@ -371,7 +371,9 @@ func liveMigrationWorkerMetadataFromStatuses(statuses []queries.ServerComponentS
 			continue
 		}
 		var raw map[string]any
-		_ = json.Unmarshal(status.Metadata, &raw)
+		if err := json.Unmarshal(status.Metadata, &raw); err != nil {
+			return liveMigrationWorkerMetadata{}, fmt.Errorf("unmarshal worker metadata: %w", err)
+		}
 		meta := liveMigrationWorkerMetadata{
 			Runtime:                strings.TrimSpace(conv.String(raw["runtime"])),
 			CloudHypervisorVersion: strings.TrimSpace(conv.String(raw["cloud_hypervisor_version"])),

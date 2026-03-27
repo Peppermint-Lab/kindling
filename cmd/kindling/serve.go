@@ -136,11 +136,15 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 
 	// Register this server in the database.
 	if components.worker || components.edge {
+		ipRange, err := netip.ParsePrefix("10.0.0.0/20")
+		if err != nil {
+			return fmt.Errorf("parse server IP range: %w", err)
+		}
 		_, err = q.ServerRegister(ctx, queries.ServerRegisterParams{
 			ID:         pgtype.UUID{Bytes: serverID, Valid: true},
 			Hostname:   hostname(),
 			InternalIp: detectInternalIP(),
-			IpRange:    mustParseCIDR("10.0.0.0/20"),
+			IpRange:    ipRange,
 		})
 		if err != nil {
 			return fmt.Errorf("register server: %w", err)
@@ -1089,14 +1093,6 @@ func cloudHypervisorVersion() string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
-}
-
-func mustParseCIDR(s string) netip.Prefix {
-	p, err := netip.ParsePrefix(s)
-	if err != nil {
-		panic(err)
-	}
-	return p
 }
 
 func loadServerID() uuid.UUID {

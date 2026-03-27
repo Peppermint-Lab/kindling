@@ -22,10 +22,13 @@ func TestParseLiveMigrationWorkerMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	meta := parseLiveMigrationWorkerMetadata(queries.ServerComponentStatus{
+	meta, err := parseLiveMigrationWorkerMetadata(queries.ServerComponentStatus{
 		Component: "worker",
 		Metadata:  payload,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if meta.Runtime != "cloud-hypervisor" {
 		t.Fatalf("Runtime = %q, want cloud-hypervisor", meta.Runtime)
 	}

@@ -542,8 +542,19 @@ func (r *CloudHypervisorRuntime) FinalizeMigrationTarget(ctx context.Context, id
 	if !ok {
 		return "", StartMetadata{}, ErrInstanceNotRunning
 	}
-	prepared.hostPort, _ = pickFreeTCPPort()
-	prepared.ip, _ = applyAdvertisedHost(net.JoinHostPort("0.0.0.0", strconv.Itoa(prepared.hostPort)), r.advertiseHost)
+	var err error
+	prepared.hostPort, err = pickFreeTCPPort()
+	if err != nil {
+		_ = terminatePID(prepared.cmd.Process.Pid)
+		_ = os.RemoveAll(prepared.workDir)
+		return "", StartMetadata{}, fmt.Errorf("pick free TCP port: %w", err)
+	}
+	prepared.ip, err = applyAdvertisedHost(net.JoinHostPort("0.0.0.0", strconv.Itoa(prepared.hostPort)), r.advertiseHost)
+	if err != nil {
+		_ = terminatePID(prepared.cmd.Process.Pid)
+		_ = os.RemoveAll(prepared.workDir)
+		return "", StartMetadata{}, fmt.Errorf("apply advertised host: %w", err)
+	}
 	bridgeCmd, err := startCloudHypervisorBridgeHelper(prepared.hostPort, prepared.socketBase)
 	if err != nil {
 		_ = terminatePID(prepared.cmd.Process.Pid)

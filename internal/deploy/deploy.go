@@ -291,10 +291,12 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 					return fmt.Errorf("preview routes: %w", err)
 				}
 			} else {
-				d.q.DomainUpdateDeploymentForProject(ctx, queries.DomainUpdateDeploymentForProjectParams{
+				if err := d.q.DomainUpdateDeploymentForProject(ctx, queries.DomainUpdateDeploymentForProjectParams{
 					DeploymentID: dep.ID,
 					ProjectID:    dep.ProjectID,
-				})
+				}); err != nil {
+					return fmt.Errorf("update domain deployment: %w", err)
+				}
 				d.drainOldDeployments(ctx, dep)
 			}
 		}
@@ -389,10 +391,12 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 				return fmt.Errorf("preview routes: %w", err)
 			}
 		} else {
-			d.q.DomainUpdateDeploymentForProject(ctx, queries.DomainUpdateDeploymentForProjectParams{
+			if err := d.q.DomainUpdateDeploymentForProject(ctx, queries.DomainUpdateDeploymentForProjectParams{
 				DeploymentID: dep.ID,
 				ProjectID:    dep.ProjectID,
-			})
+			}); err != nil {
+				return fmt.Errorf("update domain deployment: %w", err)
+			}
 			d.drainOldDeployments(ctx, dep)
 		}
 	}
@@ -681,7 +685,10 @@ func (d *Deployer) reconcileOneInstance(
 				if _, err := d.q.DeploymentInstancePrepareRetry(ctx, inst.ID); err != nil {
 					return fmt.Errorf("reset instance for pinned volume server: %w", err)
 				}
-				inst, _ = d.q.DeploymentInstanceFirstByID(ctx, inst.ID)
+				inst, err = d.q.DeploymentInstanceFirstByID(ctx, inst.ID)
+				if err != nil {
+					return fmt.Errorf("re-fetch instance after volume server reset: %w", err)
+				}
 				if !inst.ServerID.Valid {
 					return nil
 				}
@@ -703,7 +710,10 @@ func (d *Deployer) reconcileOneInstance(
 				if _, err := d.q.DeploymentInstancePrepareRetry(ctx, inst.ID); err != nil {
 					return fmt.Errorf("release instance from draining server: %w", err)
 				}
-				inst, _ = d.q.DeploymentInstanceFirstByID(ctx, inst.ID)
+				inst, err = d.q.DeploymentInstanceFirstByID(ctx, inst.ID)
+				if err != nil {
+					return fmt.Errorf("re-fetch instance after draining server release: %w", err)
+				}
 			}
 		}
 	}
@@ -798,7 +808,11 @@ func (d *Deployer) reconcileOneInstance(
 		if _, err := d.q.DeploymentInstancePrepareRetry(ctx, inst.ID); err != nil {
 			return fmt.Errorf("prepare retry: %w", err)
 		}
-		inst, _ = d.q.DeploymentInstanceFirstByID(ctx, inst.ID)
+		var refetchErr error
+		inst, refetchErr = d.q.DeploymentInstanceFirstByID(ctx, inst.ID)
+		if refetchErr != nil {
+			return fmt.Errorf("re-fetch instance after prepare retry: %w", refetchErr)
+		}
 	}
 
 	if !inst.ServerID.Valid {
