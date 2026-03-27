@@ -3,6 +3,7 @@ package rpc
 import (
 	"net/http"
 
+	"github.com/kindlingvm/kindling/internal/rpc/rpcutil"
 	"github.com/kindlingvm/kindling/internal/shared/httputil"
 )
 
@@ -15,3 +16,5 @@ func writeAPIError(w http.ResponseWriter, status int, code, message string) {
 func writeAPIErrorFromErr(w http.ResponseWriter, status int, code string, err error) {
 	httputil.WriteAPIErrorFromErr(w, status, code, err)
 }
+
+func isPgUniqueViolation(err error) bool { return rpcutil.IsPgUniqueViolation(err) }

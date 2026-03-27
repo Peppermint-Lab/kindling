@@ -1,4 +1,5 @@
-package rpc
+// Package servers provides server management API handlers.
+package servers
 
 import (
 	"context"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/rpc/rpcutil"
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
@@ -20,6 +22,19 @@ const (
 )
 
 var serverComponentOrder = []string{"api", "edge", "worker", "usage_poller"}
+
+// Handler provides server management API handlers.
+type Handler struct {
+	Q *queries.Queries
+}
+
+// RegisterRoutes mounts server management routes on the given mux.
+func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/servers", h.listServers)
+	mux.HandleFunc("GET /api/servers/{id}/details", h.getServerDetails)
+	mux.HandleFunc("POST /api/servers/{id}/drain", h.postServerDrain)
+	mux.HandleFunc("POST /api/servers/{id}/activate", h.postServerActivate)
+}
 
 type serverComponentOut struct {
 	Component        string         `json:"component"`
@@ -89,7 +104,8 @@ type serverDetailOut struct {
 	Volumes   []serverVolumeOut   `json:"volumes"`
 }
 
-func buildServerVolumeOut(volume queries.ProjectVolume, projectName string) serverVolumeOut {
+// BuildServerVolumeOut converts a volume and project name into the API output.
+func BuildServerVolumeOut(volume queries.ProjectVolume, projectName string) serverVolumeOut {
 	projectName = strings.TrimSpace(projectName)
 	if projectName == "" {
 		projectName = pguuid.ToString(volume.ProjectID)
@@ -98,8 +114,8 @@ func buildServerVolumeOut(volume queries.ProjectVolume, projectName string) serv
 		ID:           pguuid.ToString(volume.ID),
 		ProjectID:    pguuid.ToString(volume.ProjectID),
 		ProjectName:  projectName,
-		ServerID:     optionalUUIDString(volume.ServerID),
-		AttachedVMID: optionalUUIDString(volume.AttachedVmID),
+		ServerID:     rpcutil.OptionalUUIDString(volume.ServerID),
+		AttachedVMID: rpcutil.OptionalUUIDString(volume.AttachedVmID),
 		MountPath:    volume.MountPath,
 		SizeGB:       volume.SizeGb,
 		Filesystem:   volume.Filesystem,
@@ -109,12 +125,13 @@ func buildServerVolumeOut(volume queries.ProjectVolume, projectName string) serv
 	}
 }
 
-func (a *API) serverOverviewRows(ctx context.Context) ([]serverSummaryOut, error) {
-	servers, err := a.q.ServerFindAll(ctx)
+// OverviewRows returns server summaries for all servers.
+func (h *Handler) OverviewRows(ctx context.Context) ([]serverSummaryOut, error) {
+	servers, err := h.Q.ServerFindAll(ctx)
 	if err != nil {
 		return nil, err
 	}
-	statuses, err := a.q.ServerComponentStatusFindAll(ctx)
+	statuses, err := h.Q.ServerComponentStatusFindAll(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -126,11 +143,11 @@ func (a *API) serverOverviewRows(ctx context.Context) ([]serverSummaryOut, error
 	now := time.Now().UTC()
 	out := make([]serverSummaryOut, 0, len(servers))
 	for _, server := range servers {
-		instanceCount, err := a.q.DeploymentInstanceCountByServerID(ctx, server.ID)
+		instanceCount, err := h.Q.DeploymentInstanceCountByServerID(ctx, server.ID)
 		if err != nil {
 			return nil, err
 		}
-		activeCount, err := a.q.DeploymentInstanceActiveCountByServerID(ctx, server.ID)
+		activeCount, err := h.Q.DeploymentInstanceActiveCountByServerID(ctx, server.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -139,50 +156,132 @@ func (a *API) serverOverviewRows(ctx context.Context) ([]serverSummaryOut, error
 	return out, nil
 }
 
-func (a *API) getServerDetails(w http.ResponseWriter, r *http.Request) {
-	p, ok := mustPrincipal(w, r)
+func (h *Handler) listServers(w http.ResponseWriter, r *http.Request) {
+	p, ok := rpcutil.MustPrincipal(w, r)
 	if !ok {
 		return
 	}
-	if !requirePlatformAdmin(w, p) {
+	if !rpcutil.RequirePlatformAdmin(w, p) {
 		return
 	}
-	id, err := parseUUID(r.PathValue("id"))
+	out, err := h.OverviewRows(r.Context())
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid server id")
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "list_servers", err)
+		return
+	}
+	rpcutil.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) postServerDrain(w http.ResponseWriter, r *http.Request) {
+	p, ok := rpcutil.MustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !rpcutil.RequirePlatformAdmin(w, p) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		rpcutil.WriteAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
+		return
+	}
+	id, err := rpcutil.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_id", "invalid server id")
+		return
+	}
+	srv, err := h.Q.ServerFindByID(r.Context(), id)
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "server not found")
+		return
+	}
+	if srv.Status != "active" {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_state", "only active servers can be drained")
+		return
+	}
+	if err := h.Q.ServerSetDraining(r.Context(), id); err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_drain", err)
+		return
+	}
+	rpcutil.WriteJSON(w, http.StatusOK, map[string]string{"status": "draining"})
+}
+
+func (h *Handler) postServerActivate(w http.ResponseWriter, r *http.Request) {
+	p, ok := rpcutil.MustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !rpcutil.RequirePlatformAdmin(w, p) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		rpcutil.WriteAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
+		return
+	}
+	id, err := rpcutil.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_id", "invalid server id")
+		return
+	}
+	srv, err := h.Q.ServerFindByID(r.Context(), id)
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "server not found")
+		return
+	}
+	if srv.Status != "draining" && srv.Status != "drained" {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_state", "only draining or drained servers can be reactivated")
+		return
+	}
+	if err := h.Q.ServerSetActive(r.Context(), id); err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_activate", err)
+		return
+	}
+	rpcutil.WriteJSON(w, http.StatusOK, map[string]string{"status": "active"})
+}
+
+func (h *Handler) getServerDetails(w http.ResponseWriter, r *http.Request) {
+	p, ok := rpcutil.MustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !rpcutil.RequirePlatformAdmin(w, p) {
+		return
+	}
+	id, err := rpcutil.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_id", "invalid server id")
 		return
 	}
 
-	server, err := a.q.ServerFindByID(r.Context(), id)
+	server, err := h.Q.ServerFindByID(r.Context(), id)
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "not_found", "server not found")
+		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "server not found")
 		return
 	}
 
 	ctx := r.Context()
-	instanceCount, err := a.q.DeploymentInstanceCountByServerID(ctx, id)
+	instanceCount, err := h.Q.DeploymentInstanceCountByServerID(ctx, id)
 	if err != nil {
-		writeAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
 		return
 	}
-	activeCount, err := a.q.DeploymentInstanceActiveCountByServerID(ctx, id)
+	activeCount, err := h.Q.DeploymentInstanceActiveCountByServerID(ctx, id)
 	if err != nil {
-		writeAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
 		return
 	}
-	statuses, err := a.q.ServerComponentStatusFindByServerID(ctx, id)
+	statuses, err := h.Q.ServerComponentStatusFindByServerID(ctx, id)
 	if err != nil {
-		writeAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
 		return
 	}
-	rows, err := a.q.ServerInstanceUsageLatest(ctx, id)
+	rows, err := h.Q.ServerInstanceUsageLatest(ctx, id)
 	if err != nil {
-		writeAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
 		return
 	}
-	volumesByServer, err := a.q.ProjectVolumeFindByServerID(ctx, id)
+	volumesByServer, err := h.Q.ProjectVolumeFindByServerID(ctx, id)
 	if err != nil {
-		writeAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
 		return
 	}
 
@@ -226,9 +325,9 @@ func (a *API) getServerDetails(w http.ResponseWriter, r *http.Request) {
 			VmID:                 vmID,
 			Role:                 row.Role,
 			Status:               row.Status,
-			CreatedAt:            formatTS(row.CreatedAt),
-			UpdatedAt:            formatTS(row.UpdatedAt),
-			SampledAt:            formatTS(row.SampledAt),
+			CreatedAt:            rpcutil.FormatTS(row.CreatedAt),
+			UpdatedAt:            rpcutil.FormatTS(row.UpdatedAt),
+			SampledAt:            rpcutil.FormatTS(row.SampledAt),
 			SampleAgeSeconds:     sampleAgeSeconds,
 			ResourceHealth:       resourceHealth,
 			CPUPercent:           cpu,
@@ -270,15 +369,15 @@ func (a *API) getServerDetails(w http.ResponseWriter, r *http.Request) {
 	volumes := make([]serverVolumeOut, 0, len(volumesByServer))
 	for _, vol := range volumesByServer {
 		projectName := ""
-		project, err := a.q.ProjectFirstByID(ctx, vol.ProjectID)
+		project, err := h.Q.ProjectFirstByID(ctx, vol.ProjectID)
 		switch {
 		case err == nil:
 			projectName = project.Name
 		case err != nil && err != pgx.ErrNoRows:
-			writeAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
+			rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
 			return
 		}
-		volumes = append(volumes, buildServerVolumeOut(vol, projectName))
+		volumes = append(volumes, BuildServerVolumeOut(vol, projectName))
 	}
 	slices.SortFunc(volumes, func(a, b serverVolumeOut) int {
 		if a.ProjectName != b.ProjectName {
@@ -302,7 +401,7 @@ func (a *API) getServerDetails(w http.ResponseWriter, r *http.Request) {
 		return 0
 	})
 
-	writeJSON(w, http.StatusOK, serverDetailOut{
+	rpcutil.WriteJSON(w, http.StatusOK, serverDetailOut{
 		Summary:   buildServerSummary(server, instanceCount, activeCount, runningCount, statuses, now),
 		Instances: instances,
 		Volumes:   volumes,
@@ -393,9 +492,9 @@ func buildComponentOut(row queries.ServerComponentStatus, now time.Time) serverC
 		Enabled:          true,
 		Health:           health,
 		RawStatus:        row.Status,
-		ObservedAt:       formatTS(row.ObservedAt),
-		LastSuccessAt:    formatTS(row.LastSuccessAt),
-		LastErrorAt:      formatTS(row.LastErrorAt),
+		ObservedAt:       rpcutil.FormatTS(row.ObservedAt),
+		LastSuccessAt:    rpcutil.FormatTS(row.LastSuccessAt),
+		LastErrorAt:      rpcutil.FormatTS(row.LastErrorAt),
 		LastErrorMessage: row.LastErrorMessage,
 		Metadata:         metadata,
 	}

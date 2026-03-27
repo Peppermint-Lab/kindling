@@ -1,4 +1,4 @@
-package rpc
+package servers
 
 import (
 	"testing"
@@ -17,7 +17,7 @@ func TestBuildServerVolumeOut(t *testing.T) {
 	serverID := uuid.MustParse("99999999-8888-7777-6666-555555555555")
 	vmID := uuid.MustParse("12345678-1234-1234-1234-1234567890ab")
 
-	out := buildServerVolumeOut(queries.ProjectVolume{
+	out := BuildServerVolumeOut(queries.ProjectVolume{
 		ID:           pgtype.UUID{Bytes: volumeID, Valid: true},
 		ProjectID:    pgtype.UUID{Bytes: projectID, Valid: true},
 		ServerID:     pgtype.UUID{Bytes: serverID, Valid: true},

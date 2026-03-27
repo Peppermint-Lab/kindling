@@ -1,4 +1,4 @@
-package rpc
+package deployments
 
 import (
 	"net/netip"
@@ -11,7 +11,7 @@ import (
 func TestDecorateDeploymentOutWithUnavailableVolumeSetsBlockedReason(t *testing.T) {
 	t.Parallel()
 
-	out := deploymentOut{}
+	out := DeploymentOut{}
 	dep := queries.Deployment{}
 	vol := queries.ProjectVolume{
 		ID:        pgtype.UUID{Valid: true},
@@ -35,7 +35,7 @@ func TestDecorateDeploymentOutWithUnavailableVolumeSetsBlockedReason(t *testing.
 func TestDecorateDeploymentOutWithRunningDeploymentKeepsBlockedReasonEmpty(t *testing.T) {
 	t.Parallel()
 
-	out := deploymentOut{}
+	out := DeploymentOut{}
 	dep := queries.Deployment{
 		RunningAt: pgtype.Timestamptz{Valid: true},
 	}
@@ -66,7 +66,7 @@ func TestBuildDeploymentReachabilityRuntimeOnly(t *testing.T) {
 		Port:      pgtype.Int4{Int32: 32768, Valid: true},
 	}
 
-	got := buildDeploymentReachabilityFromVMs([]*queries.Vm{vm}, nil)
+	got := BuildDeploymentReachabilityFromVMs([]*queries.Vm{vm}, nil)
 	if got == nil {
 		t.Fatal("expected reachability")
 	}
@@ -101,7 +101,7 @@ func TestBuildDeploymentReachabilityWithMixedPublicEndpoints(t *testing.T) {
 		},
 	}
 
-	got := buildDeploymentReachabilityFromVMs([]*queries.Vm{vm}, domains)
+	got := BuildDeploymentReachabilityFromVMs([]*queries.Vm{vm}, domains)
 	if got == nil {
 		t.Fatal("expected reachability")
 	}
@@ -136,7 +136,7 @@ func TestBuildDeploymentReachabilityFormatsIPv6RuntimeURL(t *testing.T) {
 		Port:      pgtype.Int4{Int32: 3000, Valid: true},
 	}
 
-	got := buildDeploymentReachabilityFromVMs([]*queries.Vm{vm}, nil)
+	got := BuildDeploymentReachabilityFromVMs([]*queries.Vm{vm}, nil)
 	if got == nil {
 		t.Fatal("expected reachability")
 	}
@@ -148,7 +148,7 @@ func TestBuildDeploymentReachabilityFormatsIPv6RuntimeURL(t *testing.T) {
 func TestBuildDeploymentReachabilityReturnsNilWhenEmpty(t *testing.T) {
 	t.Parallel()
 
-	if got := buildDeploymentReachabilityFromVMs(nil, nil); got != nil {
+	if got := BuildDeploymentReachabilityFromVMs(nil, nil); got != nil {
 		t.Fatalf("expected nil, got %#v", got)
 	}
 }
