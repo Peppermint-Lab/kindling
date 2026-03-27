@@ -29,6 +29,7 @@ func (a *API) registerAuthRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auth/login", a.authLogin)
 	mux.HandleFunc("POST /api/auth/logout", a.authLogout)
 	mux.HandleFunc("POST /api/auth/switch-org", a.authSwitchOrg)
+	a.registerExternalAuthRoutes(mux)
 }
 
 func (a *API) authBootstrapStatus(w http.ResponseWriter, r *http.Request) {
@@ -60,9 +61,10 @@ func (a *API) authSuccessPayload(ctx context.Context, u queries.User, org querie
 			"email":        u.Email,
 			"display_name": u.DisplayName,
 		},
-		"organization":  organizationJSON(org),
-		"role":          role,
-		"organizations": sl,
+		"platform_admin": u.IsPlatformAdmin,
+		"organization":   organizationJSON(org),
+		"role":           role,
+		"organizations":  sl,
 	}
 }
 
@@ -106,8 +108,9 @@ func (a *API) sessionPayload(r *http.Request) map[string]any {
 			"email":        u.Email,
 			"display_name": u.DisplayName,
 		},
-		"organization": organizationJSON(org),
-		"role":         mem.Role,
+		"platform_admin": u.IsPlatformAdmin,
+		"organization":   organizationJSON(org),
+		"role":           mem.Role,
 		"organizations": func() []any {
 			sl := make([]any, 0, len(orgs))
 			for _, o := range orgs {
@@ -168,11 +171,12 @@ func (a *API) authBootstrap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := uuid.New()
-	_, err = a.q.UserCreate(r.Context(), queries.UserCreateParams{
-		ID:           pgtype.UUID{Bytes: userID, Valid: true},
-		Email:        req.Email,
-		PasswordHash: hash,
-		DisplayName:  req.DisplayName,
+	uRow, err := a.q.UserCreate(r.Context(), queries.UserCreateParams{
+		ID:              pgtype.UUID{Bytes: userID, Valid: true},
+		Email:           req.Email,
+		PasswordHash:    hash,
+		DisplayName:     req.DisplayName,
+		IsPlatformAdmin: true,
 	})
 	if err != nil {
 		if isPgUniqueViolation(err) {
@@ -194,40 +198,13 @@ func (a *API) authBootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawTok, err := auth.NewSessionToken()
-	if err != nil {
-		writeAPIErrorFromErr(w, http.StatusInternalServerError, "session_token", err)
-		return
-	}
-	sessID := uuid.New()
-	_, err = a.q.UserSessionCreate(r.Context(), queries.UserSessionCreateParams{
-		ID:                    pgtype.UUID{Bytes: sessID, Valid: true},
-		UserID:                pgtype.UUID{Bytes: userID, Valid: true},
-		TokenHash:             auth.HashSessionToken(rawTok),
-		CurrentOrganizationID: auth.PgUUID(auth.BootstrapOrganizationID),
-		ExpiresAt:             pgtype.Timestamptz{Time: auth.SessionDBExpiry(), Valid: true},
-	})
+	rawTok, orgRow, role, allOrgs, err := a.issueSessionForUser(r.Context(), uRow)
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "session", err)
 		return
 	}
-
-	uRow, err := a.q.UserByID(r.Context(), pgtype.UUID{Bytes: userID, Valid: true})
-	if err != nil {
-		writeAPIErrorFromErr(w, http.StatusInternalServerError, "user_reload", err)
-		return
-	}
-	orgRow, err := a.q.OrganizationByID(r.Context(), auth.PgUUID(auth.BootstrapOrganizationID))
-	if err != nil {
-		writeAPIErrorFromErr(w, http.StatusInternalServerError, "org_reload", err)
-		return
-	}
-	allOrgs, err := a.q.OrganizationsForUser(r.Context(), pgtype.UUID{Bytes: userID, Valid: true})
-	if err != nil {
-		allOrgs = []queries.Organization{orgRow}
-	}
 	auth.SetSessionCookie(w, r, rawTok, auth.RequestUsesHTTPS(r))
-	writeJSON(w, http.StatusCreated, a.authSuccessPayload(r.Context(), uRow, orgRow, "owner", allOrgs))
+	writeJSON(w, http.StatusCreated, a.authSuccessPayload(r.Context(), uRow, orgRow, role, allOrgs))
 }
 
 func configuredBootstrapToken() string {
@@ -307,41 +284,13 @@ func (a *API) authLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orgs, err := a.q.OrganizationsForUser(r.Context(), u.ID)
-	if err != nil || len(orgs) == 0 {
-		writeAPIError(w, http.StatusForbidden, "no_org", "user has no organization memberships")
-		return
-	}
-
-	orgID := orgs[0].ID
-	mem, err := a.q.OrganizationMembershipByUserAndOrg(r.Context(), queries.OrganizationMembershipByUserAndOrgParams{
-		UserID:         u.ID,
-		OrganizationID: orgID,
-	})
+	rawTok, orgRow, role, orgs, err := a.issueSessionForUser(r.Context(), u)
 	if err != nil {
-		writeAPIErrorFromErr(w, http.StatusInternalServerError, "membership", err)
+		writeAPIError(w, http.StatusForbidden, "no_org", err.Error())
 		return
 	}
-	rawTok, err := auth.NewSessionToken()
-	if err != nil {
-		writeAPIErrorFromErr(w, http.StatusInternalServerError, "session_token", err)
-		return
-	}
-	sessID := uuid.New()
-	_, err = a.q.UserSessionCreate(r.Context(), queries.UserSessionCreateParams{
-		ID:                    pgtype.UUID{Bytes: sessID, Valid: true},
-		UserID:                u.ID,
-		TokenHash:             auth.HashSessionToken(rawTok),
-		CurrentOrganizationID: orgID,
-		ExpiresAt:             pgtype.Timestamptz{Time: auth.SessionDBExpiry(), Valid: true},
-	})
-	if err != nil {
-		writeAPIErrorFromErr(w, http.StatusInternalServerError, "session", err)
-		return
-	}
-
 	auth.SetSessionCookie(w, r, rawTok, auth.RequestUsesHTTPS(r))
-	writeJSON(w, http.StatusOK, a.authSuccessPayload(r.Context(), u, orgs[0], mem.Role, orgs))
+	writeJSON(w, http.StatusOK, a.authSuccessPayload(r.Context(), u, orgRow, role, orgs))
 }
 
 func (a *API) authLogout(w http.ResponseWriter, r *http.Request) {

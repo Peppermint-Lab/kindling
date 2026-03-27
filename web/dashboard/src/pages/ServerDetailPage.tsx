@@ -57,6 +57,7 @@ export function ServerDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [serverActionBusy, setServerActionBusy] = useState(false)
+  const [instanceActionBusy, setInstanceActionBusy] = useState<string | null>(null)
 
   const canManageServers =
     session?.authenticated && (session.role === "owner" || session.role === "admin")
@@ -135,6 +136,19 @@ export function ServerDetailPage() {
       setError(e instanceof APIError ? e.message : String(e))
     } finally {
       setServerActionBusy(false)
+    }
+  }
+
+  async function handleInstanceLiveMigrate(instanceId: string) {
+    setInstanceActionBusy(instanceId)
+    setError(null)
+    try {
+      await api.liveMigrateDeploymentInstance(instanceId)
+      await load()
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : String(e))
+    } finally {
+      setInstanceActionBusy(null)
     }
   }
 
@@ -301,6 +315,7 @@ export function ServerDetailPage() {
                     <th className="py-2 pr-4 font-medium text-xs">Resources</th>
                     <th className="py-2 pr-4 font-medium text-xs">Sample</th>
                     <th className="py-2 pr-4 font-medium text-xs">Runtime</th>
+                    <th className="py-2 pr-4 font-medium text-xs">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -324,7 +339,15 @@ export function ServerDetailPage() {
                           <Badge variant="outline" className={healthChipClass(instance.status === "failed" ? "stale" : "unknown")}>
                             {instance.status}
                           </Badge>
+                          {instance.migration_state ? (
+                            <Badge variant="outline" className="border-sky-500/30 bg-sky-500/5 text-sky-700 dark:text-sky-200">
+                              migration: {instance.migration_state}
+                            </Badge>
+                          ) : null}
                         </div>
+                        {instance.migration_failure ? (
+                          <p className="mt-2 text-xs text-muted-foreground">{instance.migration_failure}</p>
+                        ) : null}
                       </td>
                       <td className="py-3 pr-4">
                         <p className="tabular-nums">{instance.cpu_percent != null ? `${instance.cpu_percent.toFixed(1)}% CPU` : "— CPU"}</p>
@@ -347,6 +370,20 @@ export function ServerDetailPage() {
                         </div>
                       </td>
                       <td className="py-3 pr-4 text-xs text-muted-foreground">{instance.source || "—"}</td>
+                      <td className="py-3 pr-4">
+                        {canManageServers && server.status === "active" && instance.role === "active" && instance.status === "running" ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={instanceActionBusy === instance.deployment_instance_id || Boolean(instance.migration_state)}
+                            onClick={() => void handleInstanceLiveMigrate(instance.deployment_instance_id)}
+                          >
+                            {instanceActionBusy === instance.deployment_instance_id ? "Migrating…" : "Live migrate"}
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

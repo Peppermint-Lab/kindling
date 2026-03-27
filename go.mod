@@ -17,6 +17,8 @@ require (
 require (
 	github.com/Code-Hex/go-infinity-channel v1.0.0 // indirect
 	github.com/caddyserver/zerossl v0.1.5 // indirect
+	github.com/coreos/go-oidc/v3 v3.17.0 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgio v1.0.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -34,6 +36,7 @@ require (
 	go.uber.org/zap/exp v0.3.0 // indirect
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/net v0.50.0 // indirect
+	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 	golang.org/x/tools v0.42.0 // indirect

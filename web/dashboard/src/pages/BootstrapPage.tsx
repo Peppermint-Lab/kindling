@@ -43,7 +43,7 @@ export function BootstrapPage() {
         <div className="space-y-2 text-center">
           <h1 className="text-2xl font-semibold tracking-tight">Create admin</h1>
           <p className="text-muted-foreground text-sm">
-            First user becomes owner of the default organization.
+            First user becomes platform admin and owner of the default organization.
           </p>
           <p className="text-muted-foreground text-xs">
             Remote bootstrap requires a server bootstrap token. Local bootstrap works from loopback.

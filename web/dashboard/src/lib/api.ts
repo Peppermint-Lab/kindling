@@ -95,10 +95,40 @@ export type AuthSession =
   | {
       authenticated: true
       user: AuthUser
+      platform_admin: boolean
       organization: AuthOrganization
       role: string
       organizations: AuthOrganization[]
     }
+
+export type AuthPublicProvider = {
+  provider: "github" | "oidc"
+  display_name: string
+}
+
+export type AuthAdminProvider = {
+  provider: "github" | "oidc"
+  display_name: string
+  enabled: boolean
+  configured: boolean
+  client_id: string
+  has_client_secret: boolean
+  issuer_url: string
+  scopes: string
+  callback_url: string
+  created_at: string
+  updated_at: string
+}
+
+export type AuthIdentity = {
+  provider: "github" | "oidc"
+  provider_login: string
+  provider_email: string
+  provider_display_name: string
+  created_at: string
+  updated_at: string
+  last_login_at?: string | null
+}
 
 export type Deployment = {
   id: string
@@ -203,11 +233,32 @@ export type ServerInstanceDetail = {
   disk_read_bytes: number
   disk_write_bytes: number
   source?: string
+  migration_id?: string
+  migration_state?: string
+  migration_failure?: string
 }
 
 export type ServerDetail = {
   summary: Server
   instances: ServerInstanceDetail[]
+}
+
+export type DeploymentInstanceMigration = {
+  id: string
+  deployment_instance_id: string
+  source_server_id: string
+  destination_server_id: string
+  source_vm_id: string
+  state: string
+  mode: string
+  receive_addr?: string
+  destination_runtime_url?: string
+  failure_code?: string
+  failure_message?: string
+  started_at?: string
+  completed_at?: string
+  failed_at?: string
+  aborted_at?: string
 }
 
 export type UsageInstance = {
@@ -384,6 +435,7 @@ export const api = {
       "/api/auth/bootstrap-status"
     ),
   authSession: () => request<AuthSession>("/api/auth/session"),
+  authProviders: () => request<AuthPublicProvider[]>("/api/auth/providers"),
   authBootstrap: (data: {
     email: string
     password: string
@@ -416,6 +468,25 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ organization_id }),
     }),
+  listAdminAuthProviders: () =>
+    request<AuthAdminProvider[]>("/api/auth/admin/providers"),
+  updateAdminAuthProvider: (
+    provider: "github" | "oidc",
+    data: {
+      display_name?: string
+      enabled: boolean
+      client_id?: string
+      client_secret?: string
+      clear_client_secret?: boolean
+      issuer_url?: string
+      scopes?: string
+    }
+  ) =>
+    request<AuthAdminProvider>(`/api/auth/admin/providers/${provider}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  listAuthIdentities: () => request<AuthIdentity[]>("/api/auth/identities"),
 
   listOrgProviderConnections: () =>
     request<
@@ -550,6 +621,13 @@ export const api = {
 
   getDeployment: (id: string) => request<Deployment>(`/api/deployments/${id}`),
   getDeploymentLogs: (id: string) => request<BuildLog[]>(`/api/deployments/${id}/logs`),
+  getDeploymentInstanceMigration: (id: string) =>
+    request<{ migration: DeploymentInstanceMigration | null }>(`/api/deployment-instances/${id}/migration`),
+  liveMigrateDeploymentInstance: (id: string) =>
+    request<DeploymentInstanceMigration>(`/api/deployment-instances/${id}/live-migrate`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
 
   triggerDeploy: (projectId: string, commit: string) =>
     request<Deployment>(`/api/projects/${projectId}/deploy`, {
@@ -577,6 +655,17 @@ export const api = {
     request<unknown>(
       `/api/projects/${projectId}/usage/history${window != null && window !== "" ? `?window=${encodeURIComponent(window)}` : ""}`,
     ).then(parseUsageHistory),
+}
+
+export function authProviderStartURL(
+  provider: "github" | "oidc",
+  mode: "login" | "link" = "login",
+  returnTo?: string,
+) {
+  const path = mode === "link" ? `/api/auth/providers/${provider}/link` : `/api/auth/providers/${provider}/start`
+  const url = new URL(`${API_BASE}${path}`)
+  if (returnTo) url.searchParams.set("return_to", returnTo)
+  return url.toString()
 }
 
 /** Topics for GET /api/events (must match server `internal/rpc` dashboard invalidation names). */

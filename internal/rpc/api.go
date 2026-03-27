@@ -75,6 +75,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/deployments/{id}", a.getDeployment)
 	mux.HandleFunc("GET /api/deployments/{id}/logs", a.getDeploymentLogs)
 	mux.HandleFunc("GET /api/deployments/{id}/stream", a.streamDeployment)
+	mux.HandleFunc("GET /api/deployment-instances/{id}/migration", a.getDeploymentInstanceMigration)
+	mux.HandleFunc("POST /api/deployment-instances/{id}/live-migrate", a.postDeploymentInstanceLiveMigrate)
 	mux.HandleFunc("GET /api/events", a.streamDashboardEvents)
 	mux.HandleFunc("POST /api/projects/{id}/deploy", a.triggerDeploy)
 	mux.HandleFunc("POST /api/deployments/{id}/cancel", a.cancelDeployment)
@@ -88,7 +90,11 @@ func (a *API) Register(mux *http.ServeMux) {
 }
 
 func (a *API) getMeta(w http.ResponseWriter, r *http.Request) {
-	if _, ok := mustPrincipal(w, r); !ok {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !requirePlatformAdmin(w, p) {
 		return
 	}
 	base, err := a.publicBaseURL(r.Context())
@@ -118,7 +124,7 @@ func (a *API) putMeta(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !requireOrgAdmin(w, p) {
+	if !requirePlatformAdmin(w, p) {
 		return
 	}
 	var req struct {
@@ -757,7 +763,11 @@ func (a *API) cancelDeployment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) listServers(w http.ResponseWriter, r *http.Request) {
-	if _, ok := mustPrincipal(w, r); !ok {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !requirePlatformAdmin(w, p) {
 		return
 	}
 	out, err := a.serverOverviewRows(r.Context())
@@ -773,7 +783,7 @@ func (a *API) postServerDrain(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !requireOrgAdmin(w, p) {
+	if !requirePlatformAdmin(w, p) {
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -806,7 +816,7 @@ func (a *API) postServerActivate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !requireOrgAdmin(w, p) {
+	if !requirePlatformAdmin(w, p) {
 		return
 	}
 	if r.Method != http.MethodPost {

@@ -33,9 +33,10 @@ func authCreateSuperuserCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "create-superuser",
-		Short: "Create or update a user and grant owner on every organization",
+		Short: "Create or update a platform admin and grant owner on every organization",
 		Long: `Creates a dashboard user (or updates password if the email exists) and sets their
-membership role to owner for all Kindling organizations. Intended for recovery or
+membership role to owner for all Kindling organizations, while marking them as a platform admin.
+Intended for recovery or
 initial privileged access; requires a PostgreSQL DSN (same as other kindling commands).
 
 Use --revoke-other-sessions to invalidate existing browser sessions for this user.`,
@@ -75,10 +76,11 @@ Use --revoke-other-sessions to invalidate existing browser sessions for this use
 				userID = uuid.New()
 				dn := displayName
 				_, err = q.UserCreate(ctx, queries.UserCreateParams{
-					ID:           pgtype.UUID{Bytes: userID, Valid: true},
-					Email:        email,
-					PasswordHash: hash,
-					DisplayName:  dn,
+					ID:              pgtype.UUID{Bytes: userID, Valid: true},
+					Email:           email,
+					PasswordHash:    hash,
+					DisplayName:     dn,
+					IsPlatformAdmin: true,
 				})
 				if err != nil {
 					return fmt.Errorf("create user: %w", err)
@@ -101,6 +103,12 @@ Use --revoke-other-sessions to invalidate existing browser sessions for this use
 					}
 				}
 				fmt.Printf("Updated password for existing user %s (%s)\n", email, userID)
+			}
+			if err := q.UserSetPlatformAdmin(ctx, queries.UserSetPlatformAdminParams{
+				ID:              pgtype.UUID{Bytes: userID, Valid: true},
+				IsPlatformAdmin: true,
+			}); err != nil {
+				return fmt.Errorf("grant platform admin: %w", err)
 			}
 
 			orgs, err := q.OrganizationsListAll(ctx)

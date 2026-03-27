@@ -72,6 +72,7 @@ func Middleware(q *queries.Queries, next http.Handler) http.Handler {
 		p := Principal{
 			UserID:         uuid.UUID(u.ID.Bytes),
 			Email:          u.Email,
+			PlatformAdmin:  u.IsPlatformAdmin,
 			OrgID:          uuid.UUID(sess.CurrentOrganizationID.Bytes),
 			OrgRole:        mem.Role,
 			SessionID:      uuid.UUID(sess.ID.Bytes),
@@ -110,6 +111,14 @@ func PublicRoute(r *http.Request) bool {
 	}
 	if path == "/api/auth/bootstrap-status" && r.Method == http.MethodGet {
 		return true
+	}
+	if path == "/api/auth/providers" && r.Method == http.MethodGet {
+		return true
+	}
+	if strings.HasPrefix(path, "/api/auth/providers/") && r.Method == http.MethodGet {
+		if strings.HasSuffix(path, "/start") || strings.HasSuffix(path, "/callback") {
+			return true
+		}
 	}
 	return false
 }

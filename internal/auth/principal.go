@@ -15,6 +15,7 @@ const principalKey ctxKey = iota
 type Principal struct {
 	UserID         uuid.UUID
 	Email          string
+	PlatformAdmin  bool
 	OrgID          uuid.UUID
 	OrgRole        string
 	SessionID      uuid.UUID

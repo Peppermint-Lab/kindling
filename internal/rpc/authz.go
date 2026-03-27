@@ -17,3 +17,11 @@ func requireOrgAdmin(w http.ResponseWriter, p auth.Principal) bool {
 	writeAPIError(w, http.StatusForbidden, "forbidden", "owner or admin role required")
 	return false
 }
+
+func requirePlatformAdmin(w http.ResponseWriter, p auth.Principal) bool {
+	if p.PlatformAdmin {
+		return true
+	}
+	writeAPIError(w, http.StatusForbidden, "forbidden", "platform admin required")
+	return false
+}
