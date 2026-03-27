@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -38,6 +39,59 @@ func bearerValue(r *http.Request) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(parts[1]), true
+}
+
+func requiresTrustedOrigin(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		return false
+	default:
+		return true
+	}
+}
+
+func requestTargetOrigin(r *http.Request) string {
+	scheme := "http"
+	if RequestUsesHTTPS(r) {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
+}
+
+func originMatchesTarget(raw, target string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return false
+	}
+	want, err := url.Parse(target)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Scheme, want.Scheme) && strings.EqualFold(u.Host, want.Host)
+}
+
+func cookieRequestHasTrustedOrigin(r *http.Request) bool {
+	if !requiresTrustedOrigin(r.Method) {
+		return true
+	}
+	target := requestTargetOrigin(r)
+	if origin := r.Header.Get("Origin"); strings.TrimSpace(origin) != "" {
+		return originMatchesTarget(origin, target)
+	}
+	if referer := r.Header.Get("Referer"); strings.TrimSpace(referer) != "" {
+		return originMatchesTarget(referer, target)
+	}
+	return false
+}
+
+// RequestHasTrustedOrigin reports whether a request's Origin/Referer matches the
+// current request origin for state-changing browser requests.
+func RequestHasTrustedOrigin(r *http.Request) bool {
+	return cookieRequestHasTrustedOrigin(r)
 }
 
 // Middleware enforces session cookies or API keys (Bearer knd_...) on API routes except PublicRoute.
@@ -89,6 +143,10 @@ func Middleware(q *queries.Queries, next http.Handler) http.Handler {
 		cookie, err := r.Cookie(SessionCookieName)
 		if err != nil || cookie.Value == "" {
 			writeUnauthorized(w)
+			return
+		}
+		if !RequestHasTrustedOrigin(r) {
+			writeAPIError(w, http.StatusForbidden, "csrf_forbidden", "request origin is not allowed")
 			return
 		}
 		raw, err := hex.DecodeString(strings.TrimSpace(cookie.Value))

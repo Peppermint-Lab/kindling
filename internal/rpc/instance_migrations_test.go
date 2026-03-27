@@ -2,10 +2,12 @@ package rpc
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
@@ -95,5 +97,14 @@ func TestValidateLiveMigrationDestination(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "shared rootfs") {
 		t.Fatalf("validateLiveMigrationDestination shared rootfs mismatch error = %v", err)
+	}
+}
+
+func TestValidateLiveMigrationProjectVolume(t *testing.T) {
+	if err := validateLiveMigrationProjectVolume(queries.ProjectVolume{}, pgx.ErrNoRows); err != nil {
+		t.Fatalf("expected no project volume to allow live migration, got %v", err)
+	}
+	if err := validateLiveMigrationProjectVolume(queries.ProjectVolume{}, nil); !errors.Is(err, errLiveMigrationPersistentVolume) {
+		t.Fatalf("expected persistent volume error, got %v", err)
 	}
 }

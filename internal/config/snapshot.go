@@ -27,26 +27,32 @@ func DefaultSnapshot() *Snapshot {
 
 // Snapshot is an immutable view of runtime configuration loaded from Postgres.
 type Snapshot struct {
-	GitHubToken      string
-	RegistryURL      string
-	RegistryUsername string
-	RegistryPassword string
+	GitHubToken                   string
+	RegistryURL                   string
+	RegistryUsername              string
+	RegistryPassword              string
+	VolumeBackupS3AccessKeyID     string
+	VolumeBackupS3SecretAccessKey string
+	VolumeBackupS3Bucket          string
+	VolumeBackupS3Region          string
+	VolumeBackupS3Endpoint        string
+	VolumeBackupS3Prefix          string
 
 	EdgeHTTPSAddr string
 	EdgeHTTPAddr  string
 	ACMEEmail     string
 	ACMEStaging   bool
 
-	ColdStartTimeout                   time.Duration
-	ScaleToZeroIdleSeconds             int64
+	ColdStartTimeout                  time.Duration
+	ScaleToZeroIdleSeconds            int64
 	PreviewBaseDomain                 string
 	PreviewRetentionAfterCloseSeconds int64
 	PreviewIdleSeconds                int64
 
-	ServerRuntimeOverride             string
-	ServerAdvertiseHost               string
-	ServerCloudHypervisorBin          string
-	ServerCloudHypervisorKernelPath   string
+	ServerRuntimeOverride              string
+	ServerAdvertiseHost                string
+	ServerCloudHypervisorBin           string
+	ServerCloudHypervisorKernelPath    string
 	ServerCloudHypervisorInitramfsPath string
 }
 
@@ -75,6 +81,10 @@ func LoadSnapshot(ctx context.Context, q *queries.Queries, serverID uuid.UUID, m
 	if v := strings.TrimSpace(settings[SettingRegistryUsername]); v != "" {
 		s.RegistryUsername = v
 	}
+	s.VolumeBackupS3Bucket = strings.TrimSpace(settings[SettingVolumeBackupS3Bucket])
+	s.VolumeBackupS3Region = strings.TrimSpace(settings[SettingVolumeBackupS3Region])
+	s.VolumeBackupS3Endpoint = strings.TrimSpace(settings[SettingVolumeBackupS3Endpoint])
+	s.VolumeBackupS3Prefix = strings.Trim(strings.TrimSpace(settings[SettingVolumeBackupS3Prefix]), "/")
 	s.EdgeHTTPSAddr = strings.TrimSpace(settings[SettingEdgeHTTPSAddr])
 	s.EdgeHTTPAddr = strings.TrimSpace(settings[SettingEdgeHTTPAddr])
 	if s.EdgeHTTPAddr == "" {
@@ -124,6 +134,12 @@ func LoadSnapshot(ctx context.Context, q *queries.Queries, serverID uuid.UUID, m
 		return nil, err
 	}
 	if err := decryptSecretInto(ctx, q, masterKey, SecretRegistryPassword, &s.RegistryPassword); err != nil {
+		return nil, err
+	}
+	if err := decryptSecretInto(ctx, q, masterKey, SecretVolumeBackupS3AccessKeyID, &s.VolumeBackupS3AccessKeyID); err != nil {
+		return nil, err
+	}
+	if err := decryptSecretInto(ctx, q, masterKey, SecretVolumeBackupS3SecretAccessKey, &s.VolumeBackupS3SecretAccessKey); err != nil {
 		return nil, err
 	}
 

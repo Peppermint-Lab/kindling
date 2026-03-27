@@ -9,7 +9,9 @@ import {
   type GitHead,
   type ProjectDomain,
   type ProjectVolume,
+  type ProjectVolumeBackup,
   type ProjectSecret,
+  type Server,
   type UsageCurrent,
   type UsageHistory,
   APIError,
@@ -172,10 +174,18 @@ export function ProjectDetailPage() {
   const [domainSaving, setDomainSaving] = useState(false)
   const [verifyingId, setVerifyingId] = useState<string | null>(null)
   const [projectVolume, setProjectVolume] = useState<ProjectVolume | null>(null)
+  const [volumeBackups, setVolumeBackups] = useState<ProjectVolumeBackup[]>([])
   const [volumeMountPath, setVolumeMountPath] = useState("/data")
   const [volumeSizeGB, setVolumeSizeGB] = useState(10)
+  const [volumeBackupSchedule, setVolumeBackupSchedule] = useState<"off" | "manual" | "daily" | "weekly">("manual")
+  const [volumeBackupRetentionCount, setVolumeBackupRetentionCount] = useState(7)
+  const [volumePreDeleteBackupEnabled, setVolumePreDeleteBackupEnabled] = useState(false)
+  const [volumeTargetServerID, setVolumeTargetServerID] = useState("")
   const [volumeSaving, setVolumeSaving] = useState(false)
   const [volumeDeleting, setVolumeDeleting] = useState(false)
+  const [volumeActionKind, setVolumeActionKind] = useState<"backup" | "restore" | "move" | "repair" | null>(null)
+  const [volumeActionBackupID, setVolumeActionBackupID] = useState<string | null>(null)
+  const [servers, setServers] = useState<Server[]>([])
   const [secrets, setSecrets] = useState<ProjectSecret[]>([])
   const [secretsLoading, setSecretsLoading] = useState(false)
   const [secretName, setSecretName] = useState("")
@@ -337,13 +347,26 @@ export function ProjectDetailPage() {
           }
           throw e
         }),
+        api.listProjectVolumeBackups(id).catch((e) => {
+          if (e instanceof APIError && e.status === 404) {
+            return []
+          }
+          throw e
+        }),
+        api.listServers().catch(() => []),
       ])
-        .then(([p, d, v]) => {
+        .then(([p, d, v, backups, serverList]) => {
           setProject(p)
           setDeployments(d)
           setProjectVolume(v)
+          setVolumeBackups(backups)
+          setServers(serverList)
           setVolumeMountPath(v?.mount_path || "/data")
           setVolumeSizeGB(v?.size_gb ?? 10)
+          setVolumeBackupSchedule(v?.backup_policy?.schedule ?? "manual")
+          setVolumeBackupRetentionCount(v?.backup_policy?.retention_count ?? 7)
+          setVolumePreDeleteBackupEnabled(Boolean(v?.backup_policy?.pre_delete_backup_enabled))
+          setVolumeTargetServerID(v?.server_id || "")
           const di = p.desired_instance_count
           setDesiredInstances(typeof di === "number" && di >= 1 ? di : 1)
           void loadGitHubSetup(id, Boolean(p.github_repository?.trim()))
@@ -367,8 +390,13 @@ export function ProjectDetailPage() {
   useEffect(() => {
     setDeploymentsPage(1)
     setProjectVolume(null)
+    setVolumeBackups([])
     setVolumeMountPath("/data")
     setVolumeSizeGB(10)
+    setVolumeBackupSchedule("manual")
+    setVolumeBackupRetentionCount(7)
+    setVolumePreDeleteBackupEnabled(false)
+    setVolumeTargetServerID("")
     setSecrets([])
     setSecretName("")
     setSecretValue("")
@@ -546,10 +574,16 @@ export function ProjectDetailPage() {
       const volume = await api.putProjectVolume(id, {
         mount_path: volumeMountPath.trim() || "/data",
         size_gb: Math.max(1, Math.floor(Number(volumeSizeGB)) || 10),
+        backup_schedule: volumeBackupSchedule,
+        backup_retention_count: Math.max(1, Math.floor(Number(volumeBackupRetentionCount)) || 7),
+        pre_delete_backup_enabled: volumePreDeleteBackupEnabled,
       })
       setProjectVolume(volume)
       setVolumeMountPath(volume.mount_path)
       setVolumeSizeGB(volume.size_gb)
+      setVolumeBackupSchedule(volume.backup_policy.schedule)
+      setVolumeBackupRetentionCount(volume.backup_policy.retention_count)
+      setVolumePreDeleteBackupEnabled(volume.backup_policy.pre_delete_backup_enabled)
       const [p, d] = await Promise.all([api.getProject(id), api.listDeployments(id)])
       setProject(p)
       setDeployments(d)
@@ -566,13 +600,77 @@ export function ProjectDetailPage() {
     setError(null)
     try {
       await api.deleteProjectVolume(id)
-      setProjectVolume(null)
-      setVolumeMountPath("/data")
-      setVolumeSizeGB(10)
+      await loadProjectPage()
     } catch (e) {
       setError(e instanceof APIError ? e.message : "Could not delete persistent volume")
     } finally {
       setVolumeDeleting(false)
+    }
+  }
+
+  const handleCreateVolumeBackup = async () => {
+    if (!id || !projectVolume) return
+    setVolumeActionKind("backup")
+    setVolumeActionBackupID(null)
+    setError(null)
+    try {
+      await api.createProjectVolumeBackup(id)
+      await loadProjectPage()
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not create a volume backup")
+    } finally {
+      setVolumeActionKind(null)
+    }
+  }
+
+  const handleRepairVolume = async () => {
+    if (!id || !projectVolume) return
+    setVolumeActionKind("repair")
+    setVolumeActionBackupID(null)
+    setError(null)
+    try {
+      await api.repairProjectVolume(id)
+      await loadProjectPage()
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not repair the volume")
+    } finally {
+      setVolumeActionKind(null)
+    }
+  }
+
+  const handleMoveVolume = async () => {
+    if (!id || !projectVolume) return
+    setVolumeActionKind("move")
+    setVolumeActionBackupID(null)
+    setError(null)
+    try {
+      await api.moveProjectVolume(id, {
+        target_server_id: volumeTargetServerID.trim() || undefined,
+      })
+      await loadProjectPage()
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not move the volume")
+    } finally {
+      setVolumeActionKind(null)
+    }
+  }
+
+  const handleRestoreVolume = async (backupId: string) => {
+    if (!id || !projectVolume) return
+    setVolumeActionKind("restore")
+    setVolumeActionBackupID(backupId)
+    setError(null)
+    try {
+      await api.restoreProjectVolume(id, {
+        backup_id: backupId,
+        target_server_id: volumeTargetServerID.trim() || undefined,
+      })
+      await loadProjectPage()
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not restore the volume from backup")
+    } finally {
+      setVolumeActionKind(null)
+      setVolumeActionBackupID(null)
     }
   }
 
@@ -702,6 +800,12 @@ export function ProjectDetailPage() {
   const pagedDeployments = deployments.slice(deploymentStart, deploymentStart + DEPLOYMENTS_PER_PAGE)
   const visibleDeploymentsStart = deployments.length === 0 ? 0 : deploymentStart + 1
   const visibleDeploymentsEnd = Math.min(deploymentStart + DEPLOYMENTS_PER_PAGE, deployments.length)
+  const volumeBusy =
+    projectVolume?.current_operation != null &&
+    (projectVolume.current_operation.status === "pending" || projectVolume.current_operation.status === "running")
+  const activeCloudHypervisorServers = servers.filter(
+    (server) => server.status === "active" && server.runtime === "cloud-hypervisor",
+  )
 
   return (
     <PageContainer size="wide">
@@ -860,11 +964,48 @@ export function ProjectDetailPage() {
                     />
                   </div>
                 </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Backup schedule</Label>
+                    <select
+                      className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                      value={volumeBackupSchedule}
+                      onChange={(e) => setVolumeBackupSchedule(e.target.value as "off" | "manual" | "daily" | "weekly")}
+                    >
+                      <option value="off">Off</option>
+                      <option value="manual">Manual</option>
+                      <option value="daily">Daily</option>
+                      <option value="weekly">Weekly</option>
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Backup retention</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      className="font-mono h-9"
+                      value={volumeBackupRetentionCount}
+                      onChange={(e) => setVolumeBackupRetentionCount(Number(e.target.value))}
+                    />
+                  </div>
+                  <label className="flex items-center gap-3 rounded-lg border px-3 py-2 md:mt-6">
+                    <input
+                      type="checkbox"
+                      className="size-4"
+                      checked={volumePreDeleteBackupEnabled}
+                      onChange={(e) => setVolumePreDeleteBackupEnabled(e.target.checked)}
+                    />
+                    <span className="text-sm">Backup before delete</span>
+                  </label>
+                </div>
                 {projectVolume ? (
-                  <div className="rounded-lg border bg-muted/20 p-3 space-y-2 text-sm">
+                  <div className="rounded-lg border bg-muted/20 p-3 space-y-3 text-sm">
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge variant={projectVolume.status === "attached" ? "default" : "secondary"}>
                         {projectVolume.status}
+                      </Badge>
+                      <Badge variant={projectVolume.health === "healthy" ? "default" : "secondary"}>
+                        {projectVolume.health}
                       </Badge>
                       <span className="font-mono">{projectVolume.filesystem}</span>
                     </div>
@@ -876,6 +1017,27 @@ export function ProjectDetailPage() {
                       Attached VM:{" "}
                       <span className="font-mono">{projectVolume.attached_vm_id || "detached"}</span>
                     </p>
+                    {projectVolume.last_successful_backup_at ? (
+                      <p>
+                        Last backup:{" "}
+                        <span className="font-mono">{new Date(projectVolume.last_successful_backup_at).toLocaleString()}</span>
+                      </p>
+                    ) : null}
+                    {projectVolume.current_operation ? (
+                      <div className="rounded-md border bg-background/70 px-3 py-2">
+                        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Current operation</p>
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <Badge variant="secondary">{projectVolume.current_operation.kind}</Badge>
+                          <Badge variant="outline">{projectVolume.current_operation.status}</Badge>
+                          {projectVolume.current_operation.target_server_id ? (
+                            <span className="font-mono text-xs">{projectVolume.current_operation.target_server_id}</span>
+                          ) : null}
+                        </div>
+                        {projectVolume.current_operation.error ? (
+                          <p className="mt-2 text-xs text-destructive">{projectVolume.current_operation.error}</p>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {projectVolume.last_error ? (
                       <p className="text-xs text-destructive">{projectVolume.last_error}</p>
                     ) : null}
@@ -890,7 +1052,7 @@ export function ProjectDetailPage() {
                     type="button"
                     size="sm"
                     variant="secondary"
-                    disabled={volumeSaving}
+                    disabled={volumeSaving || volumeBusy}
                     onClick={() => void handleSaveVolume()}
                   >
                     {volumeSaving ? "Saving…" : projectVolume ? "Update volume" : "Enable volume"}
@@ -900,13 +1062,109 @@ export function ProjectDetailPage() {
                       type="button"
                       size="sm"
                       variant="outline"
-                      disabled={volumeDeleting || projectVolume.status === "attached"}
+                      disabled={volumeDeleting || projectVolume.status === "attached" || volumeBusy}
                       onClick={() => void handleDeleteVolume()}
                     >
-                      {volumeDeleting ? "Deleting…" : "Delete volume"}
+                      {volumeDeleting ? "Deleting…" : volumePreDeleteBackupEnabled ? "Delete with backup" : "Delete volume"}
                     </Button>
                   ) : null}
                 </div>
+                {projectVolume ? (
+                  <>
+                    <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto_auto] md:items-end">
+                      <div className="space-y-1">
+                        <Label className="text-xs text-muted-foreground">Target server</Label>
+                        <Input
+                          list="project-volume-target-servers"
+                          className="font-mono h-9"
+                          value={volumeTargetServerID}
+                          onChange={(e) => setVolumeTargetServerID(e.target.value)}
+                          placeholder={projectVolume.server_id || "server UUID"}
+                        />
+                        <datalist id="project-volume-target-servers">
+                          {activeCloudHypervisorServers.map((server) => (
+                            <option key={server.id} value={server.id}>
+                              {server.hostname}
+                            </option>
+                          ))}
+                        </datalist>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={volumeBusy || volumeActionKind === "backup"}
+                        onClick={() => void handleCreateVolumeBackup()}
+                      >
+                        {volumeActionKind === "backup" ? "Backing up…" : "Create backup"}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={volumeBusy || volumeActionKind === "move"}
+                        onClick={() => void handleMoveVolume()}
+                      >
+                        {volumeActionKind === "move" ? "Moving…" : "Move detached volume"}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={volumeBusy || volumeActionKind === "repair"}
+                        onClick={() => void handleRepairVolume()}
+                      >
+                        {volumeActionKind === "repair" ? "Repairing…" : "Run repair"}
+                      </Button>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Backup history</p>
+                        <p className="text-xs text-muted-foreground">
+                          Cold backups only. The volume must stay detached while backup, restore, move, or repair runs.
+                        </p>
+                      </div>
+                      {volumeBackups.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">No backups recorded yet.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {volumeBackups.map((backup) => (
+                            <div key={backup.id} className="rounded-lg border bg-background/60 px-3 py-2">
+                              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <Badge variant="secondary">{backup.kind}</Badge>
+                                    <Badge variant={backup.status === "succeeded" ? "default" : "outline"}>
+                                      {backup.status}
+                                    </Badge>
+                                    <span className="text-xs text-muted-foreground">{formatBytes(backup.size_bytes)}</span>
+                                  </div>
+                                  <p className="mt-1 text-xs text-muted-foreground">
+                                    {backup.completed_at
+                                      ? `Completed ${new Date(backup.completed_at).toLocaleString()}`
+                                      : backup.created_at
+                                        ? `Created ${new Date(backup.created_at).toLocaleString()}`
+                                        : "Pending"}
+                                  </p>
+                                  {backup.error ? <p className="mt-1 text-xs text-destructive">{backup.error}</p> : null}
+                                </div>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={backup.status !== "succeeded" || volumeBusy || volumeActionKind === "restore"}
+                                  onClick={() => void handleRestoreVolume(backup.id)}
+                                >
+                                  {volumeActionKind === "restore" && volumeActionBackupID === backup.id ? "Restoring…" : "Restore"}
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : null}
               </SurfaceBody>
               <SurfaceSeparator />
               <SurfaceBody className="space-y-3">

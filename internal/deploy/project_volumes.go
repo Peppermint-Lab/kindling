@@ -49,6 +49,13 @@ func (d *Deployer) projectVolumeForProject(ctx context.Context, projectID pgtype
 		}
 		return nil, nil, err
 	}
+	if isProjectVolumeTransitionalStatus(vol.Status) {
+		msg := strings.TrimSpace(vol.LastError)
+		if msg == "" {
+			msg = fmt.Sprintf("project volume is %s", vol.Status)
+		}
+		return &vol, persistentVolumeMountFromRow(vol), &projectVolumeUnavailableError{message: msg}
+	}
 	return &vol, persistentVolumeMountFromRow(vol), nil
 }
 
@@ -63,11 +70,21 @@ func (d *Deployer) publishProjectVolumeEvents(projectID pgtype.UUID) {
 
 func persistentVolumeMountFromRow(vol queries.ProjectVolume) *runtime.PersistentVolumeMount {
 	return &runtime.PersistentVolumeMount{
-		ID:         uuidFromPgtype(vol.ID),
-		HostPath:   runtime.PersistentVolumePath(uuidFromPgtype(vol.ID)),
-		MountPath:  vol.MountPath,
-		SizeGB:     int(vol.SizeGb),
-		Filesystem: vol.Filesystem,
+		ID:              uuidFromPgtype(vol.ID),
+		HostPath:        runtime.PersistentVolumePath(uuidFromPgtype(vol.ID)),
+		MountPath:       vol.MountPath,
+		SizeGB:          int(vol.SizeGb),
+		Filesystem:      vol.Filesystem,
+		CreateIfMissing: vol.Health == "unknown",
+	}
+}
+
+func isProjectVolumeTransitionalStatus(status string) bool {
+	switch strings.TrimSpace(status) {
+	case "backing_up", "restoring", "repairing", "deleting":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -246,18 +246,55 @@ type ProjectHttpUsageRollup struct {
 }
 
 type ProjectVolume struct {
-	ID           pgtype.UUID        `json:"id"`
-	ProjectID    pgtype.UUID        `json:"project_id"`
-	ServerID     pgtype.UUID        `json:"server_id"`
-	AttachedVmID pgtype.UUID        `json:"attached_vm_id"`
-	MountPath    string             `json:"mount_path"`
-	SizeGb       int32              `json:"size_gb"`
-	Filesystem   string             `json:"filesystem"`
-	Status       string             `json:"status"`
-	LastError    string             `json:"last_error"`
-	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	ID                     pgtype.UUID        `json:"id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	ServerID               pgtype.UUID        `json:"server_id"`
+	AttachedVmID           pgtype.UUID        `json:"attached_vm_id"`
+	MountPath              string             `json:"mount_path"`
+	SizeGb                 int32              `json:"size_gb"`
+	Filesystem             string             `json:"filesystem"`
+	Status                 string             `json:"status"`
+	Health                 string             `json:"health"`
+	BackupSchedule         string             `json:"backup_schedule"`
+	BackupRetentionCount   int32              `json:"backup_retention_count"`
+	PreDeleteBackupEnabled bool               `json:"pre_delete_backup_enabled"`
+	LastError              string             `json:"last_error"`
+	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProjectVolumeBackup struct {
+	ID              pgtype.UUID        `json:"id"`
+	ProjectVolumeID pgtype.UUID        `json:"project_volume_id"`
+	Kind            string             `json:"kind"`
+	StorageUrl      string             `json:"storage_url"`
+	StorageKey      string             `json:"storage_key"`
+	SizeBytes       int64              `json:"size_bytes"`
+	Status          string             `json:"status"`
+	Error           string             `json:"error"`
+	Metadata        []byte             `json:"metadata"`
+	StartedAt       pgtype.Timestamptz `json:"started_at"`
+	CompletedAt     pgtype.Timestamptz `json:"completed_at"`
+	FailedAt        pgtype.Timestamptz `json:"failed_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProjectVolumeOperation struct {
+	ID              pgtype.UUID        `json:"id"`
+	ProjectVolumeID pgtype.UUID        `json:"project_volume_id"`
+	ServerID        pgtype.UUID        `json:"server_id"`
+	Kind            string             `json:"kind"`
+	Status          string             `json:"status"`
+	RequestMetadata []byte             `json:"request_metadata"`
+	ResultMetadata  []byte             `json:"result_metadata"`
+	Error           string             `json:"error"`
+	StartedAt       pgtype.Timestamptz `json:"started_at"`
+	CompletedAt     pgtype.Timestamptz `json:"completed_at"`
+	FailedAt        pgtype.Timestamptz `json:"failed_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Server struct {

@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 )
@@ -48,5 +49,30 @@ func TestBootstrapRequestAllowedRejectsRemoteWithoutToken(t *testing.T) {
 
 	if bootstrapRequestAllowed(req) {
 		t.Fatal("expected remote bootstrap request without token to be rejected")
+	}
+}
+
+func TestAuthLogoutRejectsMissingOrigin(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "https://kindling.example.com/api/auth/logout", nil)
+	rec := httptest.NewRecorder()
+
+	api := &API{}
+	api.authLogout(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestAuthLogoutAllowsSameOriginWithoutSession(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "https://kindling.example.com/api/auth/logout", nil)
+	req.Header.Set("Origin", "https://kindling.example.com")
+	rec := httptest.NewRecorder()
+
+	api := &API{}
+	api.authLogout(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 }

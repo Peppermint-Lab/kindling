@@ -23,6 +23,8 @@ type liveMigrationWorkerMetadata struct {
 	SharedRootfsDir        string
 }
 
+var errLiveMigrationPersistentVolume = errors.New("live migration does not support workloads with persistent volumes yet")
+
 type deploymentInstanceMigrationOut struct {
 	ID                    string  `json:"id"`
 	DeploymentInstanceID  string  `json:"deployment_instance_id"`
@@ -101,6 +103,19 @@ func (a *API) postDeploymentInstanceLiveMigrate(w http.ResponseWriter, r *http.R
 		writeAPIError(w, http.StatusConflict, "shared_rootfs_missing", "live migration requires a shared rootfs reference")
 		return
 	}
+	dep, err := a.q.DeploymentFirstByID(r.Context(), inst.DeploymentID)
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "deployment", err)
+		return
+	}
+	if err := validateLiveMigrationProjectVolume(a.q.ProjectVolumeFindByProjectID(r.Context(), dep.ProjectID)); err != nil {
+		if errors.Is(err, errLiveMigrationPersistentVolume) {
+			writeAPIError(w, http.StatusConflict, "unsupported_volume", err.Error())
+			return
+		}
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "project_volume", err)
+		return
+	}
 	if _, err := a.q.InstanceMigrationFindActiveByDeploymentInstanceID(r.Context(), instanceID); err == nil {
 		writeAPIError(w, http.StatusConflict, "migration_in_progress", "an active migration already exists for this instance")
 		return
@@ -144,6 +159,17 @@ func (a *API) postDeploymentInstanceLiveMigrate(w http.ResponseWriter, r *http.R
 		return
 	}
 	writeJSON(w, http.StatusAccepted, migrationToOut(mig))
+}
+
+func validateLiveMigrationProjectVolume(_ queries.ProjectVolume, err error) error {
+	switch {
+	case err == nil:
+		return errLiveMigrationPersistentVolume
+	case errors.Is(err, pgx.ErrNoRows):
+		return nil
+	default:
+		return err
+	}
 }
 
 func (a *API) pickLiveMigrationDestination(ctx context.Context, sourceServer queries.Server, sourceWorker liveMigrationWorkerMetadata) (uuid.UUID, error) {

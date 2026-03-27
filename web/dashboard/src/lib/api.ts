@@ -66,7 +66,46 @@ export type ProjectVolume = {
   size_gb: number
   filesystem: string
   status: string
+  health: string
+  backup_policy: ProjectVolumeBackupPolicy
+  current_operation?: ProjectVolumeOperation | null
+  last_successful_backup_at?: string | null
   last_error?: string
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export type ProjectVolumeBackupPolicy = {
+  schedule: "off" | "manual" | "daily" | "weekly"
+  retention_count: number
+  pre_delete_backup_enabled: boolean
+}
+
+export type ProjectVolumeOperation = {
+  id: string
+  kind: "backup" | "restore" | "move" | "repair"
+  status: "pending" | "running" | "succeeded" | "failed"
+  server_id?: string | null
+  target_server_id?: string | null
+  backup_id?: string | null
+  error?: string
+  started_at?: string | null
+  completed_at?: string | null
+  failed_at?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export type ProjectVolumeBackup = {
+  id: string
+  kind: "manual" | "scheduled" | "pre_delete"
+  status: "pending" | "running" | "succeeded" | "failed"
+  storage_url?: string
+  size_bytes: number
+  error?: string
+  started_at?: string | null
+  completed_at?: string | null
+  failed_at?: string | null
   created_at?: string | null
   updated_at?: string | null
 }
@@ -163,6 +202,7 @@ export type DeploymentPersistentVolume = {
   size_gb: number
   filesystem: string
   status: string
+  health: string
   last_error?: string
 }
 
@@ -268,6 +308,7 @@ export type ServerVolumeDetail = {
   size_gb: number
   filesystem: string
   status: string
+  health: string
   last_error?: string
 }
 
@@ -569,9 +610,18 @@ export const api = {
   getProject: (id: string) => request<Project>(`/api/projects/${id}`),
 
   getProjectVolume: (id: string) => request<ProjectVolume>(`/api/projects/${id}/volume`),
-  putProjectVolume: (id: string, data: { mount_path?: string; size_gb?: number }) =>
+  putProjectVolume: (id: string, data: { mount_path?: string; size_gb?: number; backup_schedule?: string; backup_retention_count?: number; pre_delete_backup_enabled?: boolean }) =>
     request<ProjectVolume>(`/api/projects/${id}/volume`, { method: "PUT", body: JSON.stringify(data) }),
-  deleteProjectVolume: (id: string) => request<void>(`/api/projects/${id}/volume`, { method: "DELETE" }),
+  deleteProjectVolume: (id: string) => request<void | ProjectVolumeOperation>(`/api/projects/${id}/volume`, { method: "DELETE" }),
+  listProjectVolumeBackups: (id: string) => request<ProjectVolumeBackup[]>(`/api/projects/${id}/volume/backups`),
+  createProjectVolumeBackup: (id: string) =>
+    request<ProjectVolumeOperation>(`/api/projects/${id}/volume/backups`, { method: "POST", body: JSON.stringify({}) }),
+  restoreProjectVolume: (id: string, data: { backup_id: string; target_server_id?: string }) =>
+    request<ProjectVolumeOperation>(`/api/projects/${id}/volume/restore`, { method: "POST", body: JSON.stringify(data) }),
+  moveProjectVolume: (id: string, data: { target_server_id?: string }) =>
+    request<ProjectVolumeOperation>(`/api/projects/${id}/volume/move`, { method: "POST", body: JSON.stringify(data) }),
+  repairProjectVolume: (id: string) =>
+    request<ProjectVolumeOperation>(`/api/projects/${id}/volume/repair`, { method: "POST", body: JSON.stringify({}) }),
 
   patchProject: (
     id: string,

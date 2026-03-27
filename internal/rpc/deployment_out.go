@@ -67,6 +67,7 @@ type deploymentVolumeOut struct {
 	SizeGB       int32   `json:"size_gb"`
 	Filesystem   string  `json:"filesystem"`
 	Status       string  `json:"status"`
+	Health       string  `json:"health"`
 	LastError    string  `json:"last_error,omitempty"`
 }
 
@@ -104,7 +105,17 @@ func deploymentVolumeToOut(v queries.ProjectVolume) deploymentVolumeOut {
 		SizeGB:       v.SizeGb,
 		Filesystem:   v.Filesystem,
 		Status:       v.Status,
+		Health:       v.Health,
 		LastError:    strings.TrimSpace(v.LastError),
+	}
+}
+
+func isProjectVolumeTransitionalStatus(status string) bool {
+	switch status {
+	case "backing_up", "restoring", "repairing", "deleting":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -114,8 +125,11 @@ func decorateDeploymentOutWithVolume(out *deploymentOut, dep queries.Deployment,
 	}
 	volOut := deploymentVolumeToOut(*vol)
 	out.PersistentVolume = &volOut
-	if vol.Status == "unavailable" && !dep.RunningAt.Valid {
+	if !dep.RunningAt.Valid && (vol.Status == "unavailable" || isProjectVolumeTransitionalStatus(vol.Status)) {
 		out.BlockedReason = strings.TrimSpace(vol.LastError)
+		if out.BlockedReason == "" {
+			out.BlockedReason = "persistent volume is busy"
+		}
 	}
 }
 

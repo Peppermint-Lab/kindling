@@ -42,14 +42,15 @@ type Config struct {
 	PublicationName string
 
 	// Handlers for each table.
-	OnDeployment         Handler
-	OnDeploymentInstance Handler
-	OnProject            Handler
-	OnBuild              Handler
-	OnVM                 Handler
-	OnDomain             Handler
-	OnServer             Handler
-	OnInstanceMigration  Handler
+	OnDeployment             Handler
+	OnDeploymentInstance     Handler
+	OnProject                Handler
+	OnBuild                  Handler
+	OnVM                     Handler
+	OnDomain                 Handler
+	OnServer                 Handler
+	OnInstanceMigration      Handler
+	OnProjectVolumeOperation Handler
 }
 
 // Listener streams PostgreSQL WAL changes and dispatches to handlers.
@@ -91,6 +92,7 @@ var publicationTables = []string{
 	"servers",
 	"preview_environments",
 	"instance_migrations",
+	"project_volume_operations",
 }
 
 func defaultSlotName() string {
@@ -382,6 +384,10 @@ func (l *Listener) dispatch(ctx context.Context, relationID uint32, tuple *pglog
 	case "instance_migrations":
 		if l.cfg.OnInstanceMigration != nil {
 			l.cfg.OnInstanceMigration(ctx, id)
+		}
+	case "project_volume_operations":
+		if l.cfg.OnProjectVolumeOperation != nil {
+			l.cfg.OnProjectVolumeOperation(ctx, id)
 		}
 	}
 

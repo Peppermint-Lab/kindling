@@ -134,6 +134,24 @@ func (h *Handler) sendFromSource(ctx context.Context, mig queries.InstanceMigrat
 	if h.rt == nil || !h.rt.Supports(runtime.CapabilityLiveMigration) {
 		return nil
 	}
+	inst, err := h.q.DeploymentInstanceFirstByID(ctx, mig.DeploymentInstanceID)
+	if err != nil {
+		return err
+	}
+	dep, err := h.q.DeploymentFirstByID(ctx, inst.DeploymentID)
+	if err != nil {
+		return err
+	}
+	if _, err := h.q.ProjectVolumeFindByProjectID(ctx, dep.ProjectID); err == nil {
+		_, _ = h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
+			ID:             mig.ID,
+			FailureCode:    "unsupported_volume",
+			FailureMessage: "live migration does not support workloads with persistent volumes yet",
+		})
+		return nil
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
 	vm, err := h.q.VMFirstByID(ctx, mig.SourceVmID)
 	if err != nil {
 		return err

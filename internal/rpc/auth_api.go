@@ -366,6 +366,10 @@ func (a *API) authLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) authLogout(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequestHasTrustedOrigin(r) {
+		writeAPIError(w, http.StatusForbidden, "csrf_forbidden", "request origin is not allowed")
+		return
+	}
 	cookie, err := r.Cookie(auth.SessionCookieName)
 	if err == nil && cookie.Value != "" {
 		if raw, err := hex.DecodeString(strings.TrimSpace(cookie.Value)); err == nil && len(raw) == auth.SessionTokenBytes {

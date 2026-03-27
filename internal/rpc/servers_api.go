@@ -78,6 +78,7 @@ type serverVolumeOut struct {
 	SizeGB       int32   `json:"size_gb"`
 	Filesystem   string  `json:"filesystem"`
 	Status       string  `json:"status"`
+	Health       string  `json:"health"`
 	LastError    string  `json:"last_error,omitempty"`
 }
 
@@ -102,6 +103,7 @@ func buildServerVolumeOut(volume queries.ProjectVolume, projectName string) serv
 		SizeGB:       volume.SizeGb,
 		Filesystem:   volume.Filesystem,
 		Status:       volume.Status,
+		Health:       volume.Health,
 		LastError:    strings.TrimSpace(volume.LastError),
 	}
 }

@@ -4409,7 +4409,7 @@ SET server_id = $2,
     updated_at = NOW()
 WHERE project_id = $1
   AND deleted_at IS NULL
-RETURNING id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, last_error, deleted_at, created_at, updated_at
+RETURNING id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled, last_error, deleted_at, created_at, updated_at
 `
 
 type ProjectVolumeAssignServerParams struct {
@@ -4429,6 +4429,10 @@ func (q *Queries) ProjectVolumeAssignServer(ctx context.Context, arg ProjectVolu
 		&i.SizeGb,
 		&i.Filesystem,
 		&i.Status,
+		&i.Health,
+		&i.BackupSchedule,
+		&i.BackupRetentionCount,
+		&i.PreDeleteBackupEnabled,
 		&i.LastError,
 		&i.DeletedAt,
 		&i.CreatedAt,
@@ -4442,11 +4446,12 @@ UPDATE project_volumes
 SET server_id = $2,
     attached_vm_id = $3,
     status = 'attached',
+    health = 'healthy',
     last_error = '',
     updated_at = NOW()
 WHERE project_id = $1
   AND deleted_at IS NULL
-RETURNING id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, last_error, deleted_at, created_at, updated_at
+RETURNING id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled, last_error, deleted_at, created_at, updated_at
 `
 
 type ProjectVolumeAttachVMParams struct {
@@ -4467,6 +4472,10 @@ func (q *Queries) ProjectVolumeAttachVM(ctx context.Context, arg ProjectVolumeAt
 		&i.SizeGb,
 		&i.Filesystem,
 		&i.Status,
+		&i.Health,
+		&i.BackupSchedule,
+		&i.BackupRetentionCount,
+		&i.PreDeleteBackupEnabled,
 		&i.LastError,
 		&i.DeletedAt,
 		&i.CreatedAt,
@@ -4475,21 +4484,237 @@ func (q *Queries) ProjectVolumeAttachVM(ctx context.Context, arg ProjectVolumeAt
 	return i, err
 }
 
+const projectVolumeBackupCreate = `-- name: ProjectVolumeBackupCreate :one
+INSERT INTO project_volume_backups (
+    id, project_volume_id, kind, status, storage_url, storage_key, size_bytes, error, metadata
+) VALUES (
+    $1, $2, $3, 'pending', '', '', 0, '', $4
+)
+RETURNING id, project_volume_id, kind, storage_url, storage_key, size_bytes, status, error, metadata, started_at, completed_at, failed_at, created_at, updated_at
+`
+
+type ProjectVolumeBackupCreateParams struct {
+	ID              pgtype.UUID `json:"id"`
+	ProjectVolumeID pgtype.UUID `json:"project_volume_id"`
+	Kind            string      `json:"kind"`
+	Metadata        []byte      `json:"metadata"`
+}
+
+func (q *Queries) ProjectVolumeBackupCreate(ctx context.Context, arg ProjectVolumeBackupCreateParams) (ProjectVolumeBackup, error) {
+	row := q.db.QueryRow(ctx, projectVolumeBackupCreate,
+		arg.ID,
+		arg.ProjectVolumeID,
+		arg.Kind,
+		arg.Metadata,
+	)
+	var i ProjectVolumeBackup
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectVolumeID,
+		&i.Kind,
+		&i.StorageUrl,
+		&i.StorageKey,
+		&i.SizeBytes,
+		&i.Status,
+		&i.Error,
+		&i.Metadata,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const projectVolumeBackupDeleteByID = `-- name: ProjectVolumeBackupDeleteByID :exec
+DELETE FROM project_volume_backups
+WHERE id = $1
+`
+
+func (q *Queries) ProjectVolumeBackupDeleteByID(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, projectVolumeBackupDeleteByID, id)
+	return err
+}
+
+const projectVolumeBackupFindByID = `-- name: ProjectVolumeBackupFindByID :one
+SELECT id, project_volume_id, kind, storage_url, storage_key, size_bytes, status, error, metadata, started_at, completed_at, failed_at, created_at, updated_at FROM project_volume_backups
+WHERE id = $1
+`
+
+func (q *Queries) ProjectVolumeBackupFindByID(ctx context.Context, id pgtype.UUID) (ProjectVolumeBackup, error) {
+	row := q.db.QueryRow(ctx, projectVolumeBackupFindByID, id)
+	var i ProjectVolumeBackup
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectVolumeID,
+		&i.Kind,
+		&i.StorageUrl,
+		&i.StorageKey,
+		&i.SizeBytes,
+		&i.Status,
+		&i.Error,
+		&i.Metadata,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const projectVolumeBackupFindByProjectID = `-- name: ProjectVolumeBackupFindByProjectID :many
+SELECT b.id, b.project_volume_id, b.kind, b.storage_url, b.storage_key, b.size_bytes, b.status, b.error, b.metadata, b.started_at, b.completed_at, b.failed_at, b.created_at, b.updated_at
+FROM project_volume_backups b
+JOIN project_volumes v ON v.id = b.project_volume_id
+WHERE v.project_id = $1
+  AND v.deleted_at IS NULL
+ORDER BY b.created_at DESC
+`
+
+func (q *Queries) ProjectVolumeBackupFindByProjectID(ctx context.Context, projectID pgtype.UUID) ([]ProjectVolumeBackup, error) {
+	rows, err := q.db.Query(ctx, projectVolumeBackupFindByProjectID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectVolumeBackup{}
+	for rows.Next() {
+		var i ProjectVolumeBackup
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectVolumeID,
+			&i.Kind,
+			&i.StorageUrl,
+			&i.StorageKey,
+			&i.SizeBytes,
+			&i.Status,
+			&i.Error,
+			&i.Metadata,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.FailedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const projectVolumeBackupFindLastSuccessfulByProjectID = `-- name: ProjectVolumeBackupFindLastSuccessfulByProjectID :one
+SELECT b.id, b.project_volume_id, b.kind, b.storage_url, b.storage_key, b.size_bytes, b.status, b.error, b.metadata, b.started_at, b.completed_at, b.failed_at, b.created_at, b.updated_at
+FROM project_volume_backups b
+JOIN project_volumes v ON v.id = b.project_volume_id
+WHERE v.project_id = $1
+  AND v.deleted_at IS NULL
+  AND b.status = 'succeeded'
+ORDER BY b.completed_at DESC, b.created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) ProjectVolumeBackupFindLastSuccessfulByProjectID(ctx context.Context, projectID pgtype.UUID) (ProjectVolumeBackup, error) {
+	row := q.db.QueryRow(ctx, projectVolumeBackupFindLastSuccessfulByProjectID, projectID)
+	var i ProjectVolumeBackup
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectVolumeID,
+		&i.Kind,
+		&i.StorageUrl,
+		&i.StorageKey,
+		&i.SizeBytes,
+		&i.Status,
+		&i.Error,
+		&i.Metadata,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const projectVolumeBackupUpdateState = `-- name: ProjectVolumeBackupUpdateState :one
+UPDATE project_volume_backups
+SET status = $2,
+    storage_url = $3,
+    storage_key = $4,
+    size_bytes = $5,
+    error = $6,
+    metadata = $7,
+    started_at = CASE WHEN $2 = 'running' AND started_at IS NULL THEN NOW() ELSE started_at END,
+    completed_at = CASE WHEN $2 = 'succeeded' THEN NOW() ELSE completed_at END,
+    failed_at = CASE WHEN $2 = 'failed' THEN NOW() ELSE failed_at END,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, project_volume_id, kind, storage_url, storage_key, size_bytes, status, error, metadata, started_at, completed_at, failed_at, created_at, updated_at
+`
+
+type ProjectVolumeBackupUpdateStateParams struct {
+	ID         pgtype.UUID `json:"id"`
+	Status     string      `json:"status"`
+	StorageUrl string      `json:"storage_url"`
+	StorageKey string      `json:"storage_key"`
+	SizeBytes  int64       `json:"size_bytes"`
+	Error      string      `json:"error"`
+	Metadata   []byte      `json:"metadata"`
+}
+
+func (q *Queries) ProjectVolumeBackupUpdateState(ctx context.Context, arg ProjectVolumeBackupUpdateStateParams) (ProjectVolumeBackup, error) {
+	row := q.db.QueryRow(ctx, projectVolumeBackupUpdateState,
+		arg.ID,
+		arg.Status,
+		arg.StorageUrl,
+		arg.StorageKey,
+		arg.SizeBytes,
+		arg.Error,
+		arg.Metadata,
+	)
+	var i ProjectVolumeBackup
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectVolumeID,
+		&i.Kind,
+		&i.StorageUrl,
+		&i.StorageKey,
+		&i.SizeBytes,
+		&i.Status,
+		&i.Error,
+		&i.Metadata,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const projectVolumeCreate = `-- name: ProjectVolumeCreate :one
 INSERT INTO project_volumes (
-    id, project_id, mount_path, size_gb, filesystem, status
+    id, project_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled
 ) VALUES (
-    $1, $2, $3, $4, $5, 'detached'
+    $1, $2, $3, $4, $5, 'detached', 'unknown', $6, $7, $8
 )
-RETURNING id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, last_error, deleted_at, created_at, updated_at
+RETURNING id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled, last_error, deleted_at, created_at, updated_at
 `
 
 type ProjectVolumeCreateParams struct {
-	ID         pgtype.UUID `json:"id"`
-	ProjectID  pgtype.UUID `json:"project_id"`
-	MountPath  string      `json:"mount_path"`
-	SizeGb     int32       `json:"size_gb"`
-	Filesystem string      `json:"filesystem"`
+	ID                     pgtype.UUID `json:"id"`
+	ProjectID              pgtype.UUID `json:"project_id"`
+	MountPath              string      `json:"mount_path"`
+	SizeGb                 int32       `json:"size_gb"`
+	Filesystem             string      `json:"filesystem"`
+	BackupSchedule         string      `json:"backup_schedule"`
+	BackupRetentionCount   int32       `json:"backup_retention_count"`
+	PreDeleteBackupEnabled bool        `json:"pre_delete_backup_enabled"`
 }
 
 func (q *Queries) ProjectVolumeCreate(ctx context.Context, arg ProjectVolumeCreateParams) (ProjectVolume, error) {
@@ -4499,6 +4724,9 @@ func (q *Queries) ProjectVolumeCreate(ctx context.Context, arg ProjectVolumeCrea
 		arg.MountPath,
 		arg.SizeGb,
 		arg.Filesystem,
+		arg.BackupSchedule,
+		arg.BackupRetentionCount,
+		arg.PreDeleteBackupEnabled,
 	)
 	var i ProjectVolume
 	err := row.Scan(
@@ -4510,6 +4738,10 @@ func (q *Queries) ProjectVolumeCreate(ctx context.Context, arg ProjectVolumeCrea
 		&i.SizeGb,
 		&i.Filesystem,
 		&i.Status,
+		&i.Health,
+		&i.BackupSchedule,
+		&i.BackupRetentionCount,
+		&i.PreDeleteBackupEnabled,
 		&i.LastError,
 		&i.DeletedAt,
 		&i.CreatedAt,
@@ -4526,7 +4758,7 @@ SET attached_vm_id = NULL,
     updated_at = NOW()
 WHERE project_id = $1
   AND deleted_at IS NULL
-RETURNING id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, last_error, deleted_at, created_at, updated_at
+RETURNING id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled, last_error, deleted_at, created_at, updated_at
 `
 
 type ProjectVolumeDetachVMParams struct {
@@ -4547,6 +4779,10 @@ func (q *Queries) ProjectVolumeDetachVM(ctx context.Context, arg ProjectVolumeDe
 		&i.SizeGb,
 		&i.Filesystem,
 		&i.Status,
+		&i.Health,
+		&i.BackupSchedule,
+		&i.BackupRetentionCount,
+		&i.PreDeleteBackupEnabled,
 		&i.LastError,
 		&i.DeletedAt,
 		&i.CreatedAt,
@@ -4556,7 +4792,7 @@ func (q *Queries) ProjectVolumeDetachVM(ctx context.Context, arg ProjectVolumeDe
 }
 
 const projectVolumeFindAnyByProjectID = `-- name: ProjectVolumeFindAnyByProjectID :one
-SELECT id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, last_error, deleted_at, created_at, updated_at FROM project_volumes
+SELECT id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled, last_error, deleted_at, created_at, updated_at FROM project_volumes
 WHERE project_id = $1
 LIMIT 1
 `
@@ -4573,6 +4809,40 @@ func (q *Queries) ProjectVolumeFindAnyByProjectID(ctx context.Context, projectID
 		&i.SizeGb,
 		&i.Filesystem,
 		&i.Status,
+		&i.Health,
+		&i.BackupSchedule,
+		&i.BackupRetentionCount,
+		&i.PreDeleteBackupEnabled,
+		&i.LastError,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const projectVolumeFindByID = `-- name: ProjectVolumeFindByID :one
+SELECT id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled, last_error, deleted_at, created_at, updated_at FROM project_volumes
+WHERE id = $1
+  AND deleted_at IS NULL
+`
+
+func (q *Queries) ProjectVolumeFindByID(ctx context.Context, id pgtype.UUID) (ProjectVolume, error) {
+	row := q.db.QueryRow(ctx, projectVolumeFindByID, id)
+	var i ProjectVolume
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServerID,
+		&i.AttachedVmID,
+		&i.MountPath,
+		&i.SizeGb,
+		&i.Filesystem,
+		&i.Status,
+		&i.Health,
+		&i.BackupSchedule,
+		&i.BackupRetentionCount,
+		&i.PreDeleteBackupEnabled,
 		&i.LastError,
 		&i.DeletedAt,
 		&i.CreatedAt,
@@ -4583,7 +4853,7 @@ func (q *Queries) ProjectVolumeFindAnyByProjectID(ctx context.Context, projectID
 
 const projectVolumeFindByProjectID = `-- name: ProjectVolumeFindByProjectID :one
 
-SELECT id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, last_error, deleted_at, created_at, updated_at FROM project_volumes
+SELECT id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled, last_error, deleted_at, created_at, updated_at FROM project_volumes
 WHERE project_id = $1 AND deleted_at IS NULL
 `
 
@@ -4600,6 +4870,10 @@ func (q *Queries) ProjectVolumeFindByProjectID(ctx context.Context, projectID pg
 		&i.SizeGb,
 		&i.Filesystem,
 		&i.Status,
+		&i.Health,
+		&i.BackupSchedule,
+		&i.BackupRetentionCount,
+		&i.PreDeleteBackupEnabled,
 		&i.LastError,
 		&i.DeletedAt,
 		&i.CreatedAt,
@@ -4609,7 +4883,7 @@ func (q *Queries) ProjectVolumeFindByProjectID(ctx context.Context, projectID pg
 }
 
 const projectVolumeFindByServerID = `-- name: ProjectVolumeFindByServerID :many
-SELECT id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, last_error, deleted_at, created_at, updated_at FROM project_volumes
+SELECT id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled, last_error, deleted_at, created_at, updated_at FROM project_volumes
 WHERE server_id = $1 AND deleted_at IS NULL
 ORDER BY created_at ASC
 `
@@ -4632,6 +4906,10 @@ func (q *Queries) ProjectVolumeFindByServerID(ctx context.Context, serverID pgty
 			&i.SizeGb,
 			&i.Filesystem,
 			&i.Status,
+			&i.Health,
+			&i.BackupSchedule,
+			&i.BackupRetentionCount,
+			&i.PreDeleteBackupEnabled,
 			&i.LastError,
 			&i.DeletedAt,
 			&i.CreatedAt,
@@ -4647,6 +4925,271 @@ func (q *Queries) ProjectVolumeFindByServerID(ctx context.Context, serverID pgty
 	return items, nil
 }
 
+const projectVolumeOperationCreate = `-- name: ProjectVolumeOperationCreate :one
+INSERT INTO project_volume_operations (
+    id, project_volume_id, server_id, kind, status, request_metadata, result_metadata, error
+) VALUES (
+    $1, $2, $3, $4, 'pending', $5, '{}'::jsonb, ''
+)
+RETURNING id, project_volume_id, server_id, kind, status, request_metadata, result_metadata, error, started_at, completed_at, failed_at, created_at, updated_at
+`
+
+type ProjectVolumeOperationCreateParams struct {
+	ID              pgtype.UUID `json:"id"`
+	ProjectVolumeID pgtype.UUID `json:"project_volume_id"`
+	ServerID        pgtype.UUID `json:"server_id"`
+	Kind            string      `json:"kind"`
+	RequestMetadata []byte      `json:"request_metadata"`
+}
+
+func (q *Queries) ProjectVolumeOperationCreate(ctx context.Context, arg ProjectVolumeOperationCreateParams) (ProjectVolumeOperation, error) {
+	row := q.db.QueryRow(ctx, projectVolumeOperationCreate,
+		arg.ID,
+		arg.ProjectVolumeID,
+		arg.ServerID,
+		arg.Kind,
+		arg.RequestMetadata,
+	)
+	var i ProjectVolumeOperation
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectVolumeID,
+		&i.ServerID,
+		&i.Kind,
+		&i.Status,
+		&i.RequestMetadata,
+		&i.ResultMetadata,
+		&i.Error,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const projectVolumeOperationFindByID = `-- name: ProjectVolumeOperationFindByID :one
+SELECT id, project_volume_id, server_id, kind, status, request_metadata, result_metadata, error, started_at, completed_at, failed_at, created_at, updated_at FROM project_volume_operations
+WHERE id = $1
+`
+
+func (q *Queries) ProjectVolumeOperationFindByID(ctx context.Context, id pgtype.UUID) (ProjectVolumeOperation, error) {
+	row := q.db.QueryRow(ctx, projectVolumeOperationFindByID, id)
+	var i ProjectVolumeOperation
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectVolumeID,
+		&i.ServerID,
+		&i.Kind,
+		&i.Status,
+		&i.RequestMetadata,
+		&i.ResultMetadata,
+		&i.Error,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const projectVolumeOperationFindCurrentByVolumeID = `-- name: ProjectVolumeOperationFindCurrentByVolumeID :one
+SELECT id, project_volume_id, server_id, kind, status, request_metadata, result_metadata, error, started_at, completed_at, failed_at, created_at, updated_at FROM project_volume_operations
+WHERE project_volume_id = $1
+  AND status IN ('pending', 'running')
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) ProjectVolumeOperationFindCurrentByVolumeID(ctx context.Context, projectVolumeID pgtype.UUID) (ProjectVolumeOperation, error) {
+	row := q.db.QueryRow(ctx, projectVolumeOperationFindCurrentByVolumeID, projectVolumeID)
+	var i ProjectVolumeOperation
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectVolumeID,
+		&i.ServerID,
+		&i.Kind,
+		&i.Status,
+		&i.RequestMetadata,
+		&i.ResultMetadata,
+		&i.Error,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const projectVolumeOperationFindStalePending = `-- name: ProjectVolumeOperationFindStalePending :many
+SELECT id, project_volume_id, server_id, kind, status, request_metadata, result_metadata, error, started_at, completed_at, failed_at, created_at, updated_at FROM project_volume_operations
+WHERE status = 'pending'
+  AND created_at < NOW() - ($1::bigint * INTERVAL '1 second')
+ORDER BY created_at ASC
+`
+
+func (q *Queries) ProjectVolumeOperationFindStalePending(ctx context.Context, dollar_1 int64) ([]ProjectVolumeOperation, error) {
+	rows, err := q.db.Query(ctx, projectVolumeOperationFindStalePending, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectVolumeOperation{}
+	for rows.Next() {
+		var i ProjectVolumeOperation
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectVolumeID,
+			&i.ServerID,
+			&i.Kind,
+			&i.Status,
+			&i.RequestMetadata,
+			&i.ResultMetadata,
+			&i.Error,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.FailedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const projectVolumeOperationFindStaleRunning = `-- name: ProjectVolumeOperationFindStaleRunning :many
+SELECT id, project_volume_id, server_id, kind, status, request_metadata, result_metadata, error, started_at, completed_at, failed_at, created_at, updated_at FROM project_volume_operations
+WHERE status = 'running'
+  AND started_at IS NOT NULL
+  AND started_at < NOW() - ($1::bigint * INTERVAL '1 second')
+ORDER BY started_at ASC
+`
+
+func (q *Queries) ProjectVolumeOperationFindStaleRunning(ctx context.Context, dollar_1 int64) ([]ProjectVolumeOperation, error) {
+	rows, err := q.db.Query(ctx, projectVolumeOperationFindStaleRunning, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectVolumeOperation{}
+	for rows.Next() {
+		var i ProjectVolumeOperation
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectVolumeID,
+			&i.ServerID,
+			&i.Kind,
+			&i.Status,
+			&i.RequestMetadata,
+			&i.ResultMetadata,
+			&i.Error,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.FailedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const projectVolumeOperationUpdateRunning = `-- name: ProjectVolumeOperationUpdateRunning :one
+UPDATE project_volume_operations
+SET status = 'running',
+    error = '',
+    started_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, project_volume_id, server_id, kind, status, request_metadata, result_metadata, error, started_at, completed_at, failed_at, created_at, updated_at
+`
+
+func (q *Queries) ProjectVolumeOperationUpdateRunning(ctx context.Context, id pgtype.UUID) (ProjectVolumeOperation, error) {
+	row := q.db.QueryRow(ctx, projectVolumeOperationUpdateRunning, id)
+	var i ProjectVolumeOperation
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectVolumeID,
+		&i.ServerID,
+		&i.Kind,
+		&i.Status,
+		&i.RequestMetadata,
+		&i.ResultMetadata,
+		&i.Error,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const projectVolumeOperationUpdateState = `-- name: ProjectVolumeOperationUpdateState :one
+UPDATE project_volume_operations
+SET server_id = $2,
+    status = $3,
+    request_metadata = $4,
+    result_metadata = $5,
+    error = $6,
+    started_at = CASE WHEN $3 = 'running' AND started_at IS NULL THEN NOW() ELSE started_at END,
+    completed_at = CASE WHEN $3 = 'succeeded' THEN NOW() ELSE completed_at END,
+    failed_at = CASE WHEN $3 = 'failed' THEN NOW() ELSE failed_at END,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, project_volume_id, server_id, kind, status, request_metadata, result_metadata, error, started_at, completed_at, failed_at, created_at, updated_at
+`
+
+type ProjectVolumeOperationUpdateStateParams struct {
+	ID              pgtype.UUID `json:"id"`
+	ServerID        pgtype.UUID `json:"server_id"`
+	Status          string      `json:"status"`
+	RequestMetadata []byte      `json:"request_metadata"`
+	ResultMetadata  []byte      `json:"result_metadata"`
+	Error           string      `json:"error"`
+}
+
+func (q *Queries) ProjectVolumeOperationUpdateState(ctx context.Context, arg ProjectVolumeOperationUpdateStateParams) (ProjectVolumeOperation, error) {
+	row := q.db.QueryRow(ctx, projectVolumeOperationUpdateState,
+		arg.ID,
+		arg.ServerID,
+		arg.Status,
+		arg.RequestMetadata,
+		arg.ResultMetadata,
+		arg.Error,
+	)
+	var i ProjectVolumeOperation
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectVolumeID,
+		&i.ServerID,
+		&i.Kind,
+		&i.Status,
+		&i.RequestMetadata,
+		&i.ResultMetadata,
+		&i.Error,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.FailedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const projectVolumeRevive = `-- name: ProjectVolumeRevive :one
 UPDATE project_volumes
 SET size_gb = $2,
@@ -4654,21 +5197,35 @@ SET size_gb = $2,
     server_id = NULL,
     attached_vm_id = NULL,
     status = 'detached',
+    health = 'unknown',
+    backup_schedule = $4,
+    backup_retention_count = $5,
+    pre_delete_backup_enabled = $6,
     last_error = '',
     deleted_at = NULL,
     updated_at = NOW()
 WHERE project_id = $1
-RETURNING id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, last_error, deleted_at, created_at, updated_at
+RETURNING id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled, last_error, deleted_at, created_at, updated_at
 `
 
 type ProjectVolumeReviveParams struct {
-	ProjectID  pgtype.UUID `json:"project_id"`
-	SizeGb     int32       `json:"size_gb"`
-	Filesystem string      `json:"filesystem"`
+	ProjectID              pgtype.UUID `json:"project_id"`
+	SizeGb                 int32       `json:"size_gb"`
+	Filesystem             string      `json:"filesystem"`
+	BackupSchedule         string      `json:"backup_schedule"`
+	BackupRetentionCount   int32       `json:"backup_retention_count"`
+	PreDeleteBackupEnabled bool        `json:"pre_delete_backup_enabled"`
 }
 
 func (q *Queries) ProjectVolumeRevive(ctx context.Context, arg ProjectVolumeReviveParams) (ProjectVolume, error) {
-	row := q.db.QueryRow(ctx, projectVolumeRevive, arg.ProjectID, arg.SizeGb, arg.Filesystem)
+	row := q.db.QueryRow(ctx, projectVolumeRevive,
+		arg.ProjectID,
+		arg.SizeGb,
+		arg.Filesystem,
+		arg.BackupSchedule,
+		arg.BackupRetentionCount,
+		arg.PreDeleteBackupEnabled,
+	)
 	var i ProjectVolume
 	err := row.Scan(
 		&i.ID,
@@ -4679,6 +5236,10 @@ func (q *Queries) ProjectVolumeRevive(ctx context.Context, arg ProjectVolumeRevi
 		&i.SizeGb,
 		&i.Filesystem,
 		&i.Status,
+		&i.Health,
+		&i.BackupSchedule,
+		&i.BackupRetentionCount,
+		&i.PreDeleteBackupEnabled,
 		&i.LastError,
 		&i.DeletedAt,
 		&i.CreatedAt,
@@ -4692,6 +5253,7 @@ UPDATE project_volumes
 SET server_id = NULL,
     attached_vm_id = NULL,
     status = 'detached',
+    health = 'unknown',
     last_error = '',
     deleted_at = NOW(),
     updated_at = NOW()
@@ -4704,24 +5266,24 @@ func (q *Queries) ProjectVolumeSoftDelete(ctx context.Context, projectID pgtype.
 	return err
 }
 
-const projectVolumeUpdateSpec = `-- name: ProjectVolumeUpdateSpec :one
+const projectVolumeUpdateHealth = `-- name: ProjectVolumeUpdateHealth :one
 UPDATE project_volumes
-SET size_gb = $2,
-    filesystem = $3,
+SET health = $2,
+    last_error = $3,
     updated_at = NOW()
 WHERE project_id = $1
   AND deleted_at IS NULL
-RETURNING id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, last_error, deleted_at, created_at, updated_at
+RETURNING id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled, last_error, deleted_at, created_at, updated_at
 `
 
-type ProjectVolumeUpdateSpecParams struct {
-	ProjectID  pgtype.UUID `json:"project_id"`
-	SizeGb     int32       `json:"size_gb"`
-	Filesystem string      `json:"filesystem"`
+type ProjectVolumeUpdateHealthParams struct {
+	ProjectID pgtype.UUID `json:"project_id"`
+	Health    string      `json:"health"`
+	LastError string      `json:"last_error"`
 }
 
-func (q *Queries) ProjectVolumeUpdateSpec(ctx context.Context, arg ProjectVolumeUpdateSpecParams) (ProjectVolume, error) {
-	row := q.db.QueryRow(ctx, projectVolumeUpdateSpec, arg.ProjectID, arg.SizeGb, arg.Filesystem)
+func (q *Queries) ProjectVolumeUpdateHealth(ctx context.Context, arg ProjectVolumeUpdateHealthParams) (ProjectVolume, error) {
+	row := q.db.QueryRow(ctx, projectVolumeUpdateHealth, arg.ProjectID, arg.Health, arg.LastError)
 	var i ProjectVolume
 	err := row.Scan(
 		&i.ID,
@@ -4732,6 +5294,63 @@ func (q *Queries) ProjectVolumeUpdateSpec(ctx context.Context, arg ProjectVolume
 		&i.SizeGb,
 		&i.Filesystem,
 		&i.Status,
+		&i.Health,
+		&i.BackupSchedule,
+		&i.BackupRetentionCount,
+		&i.PreDeleteBackupEnabled,
+		&i.LastError,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const projectVolumeUpdateSpec = `-- name: ProjectVolumeUpdateSpec :one
+UPDATE project_volumes
+SET size_gb = $2,
+    filesystem = $3,
+    backup_schedule = $4,
+    backup_retention_count = $5,
+    pre_delete_backup_enabled = $6,
+    updated_at = NOW()
+WHERE project_id = $1
+  AND deleted_at IS NULL
+RETURNING id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled, last_error, deleted_at, created_at, updated_at
+`
+
+type ProjectVolumeUpdateSpecParams struct {
+	ProjectID              pgtype.UUID `json:"project_id"`
+	SizeGb                 int32       `json:"size_gb"`
+	Filesystem             string      `json:"filesystem"`
+	BackupSchedule         string      `json:"backup_schedule"`
+	BackupRetentionCount   int32       `json:"backup_retention_count"`
+	PreDeleteBackupEnabled bool        `json:"pre_delete_backup_enabled"`
+}
+
+func (q *Queries) ProjectVolumeUpdateSpec(ctx context.Context, arg ProjectVolumeUpdateSpecParams) (ProjectVolume, error) {
+	row := q.db.QueryRow(ctx, projectVolumeUpdateSpec,
+		arg.ProjectID,
+		arg.SizeGb,
+		arg.Filesystem,
+		arg.BackupSchedule,
+		arg.BackupRetentionCount,
+		arg.PreDeleteBackupEnabled,
+	)
+	var i ProjectVolume
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServerID,
+		&i.AttachedVmID,
+		&i.MountPath,
+		&i.SizeGb,
+		&i.Filesystem,
+		&i.Status,
+		&i.Health,
+		&i.BackupSchedule,
+		&i.BackupRetentionCount,
+		&i.PreDeleteBackupEnabled,
 		&i.LastError,
 		&i.DeletedAt,
 		&i.CreatedAt,
@@ -4747,7 +5366,7 @@ SET status = $2,
     updated_at = NOW()
 WHERE project_id = $1
   AND deleted_at IS NULL
-RETURNING id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, last_error, deleted_at, created_at, updated_at
+RETURNING id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled, last_error, deleted_at, created_at, updated_at
 `
 
 type ProjectVolumeUpdateStatusParams struct {
@@ -4768,6 +5387,57 @@ func (q *Queries) ProjectVolumeUpdateStatus(ctx context.Context, arg ProjectVolu
 		&i.SizeGb,
 		&i.Filesystem,
 		&i.Status,
+		&i.Health,
+		&i.BackupSchedule,
+		&i.BackupRetentionCount,
+		&i.PreDeleteBackupEnabled,
+		&i.LastError,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const projectVolumeUpdateStatusAndHealth = `-- name: ProjectVolumeUpdateStatusAndHealth :one
+UPDATE project_volumes
+SET status = $2,
+    health = $3,
+    last_error = $4,
+    updated_at = NOW()
+WHERE project_id = $1
+  AND deleted_at IS NULL
+RETURNING id, project_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled, last_error, deleted_at, created_at, updated_at
+`
+
+type ProjectVolumeUpdateStatusAndHealthParams struct {
+	ProjectID pgtype.UUID `json:"project_id"`
+	Status    string      `json:"status"`
+	Health    string      `json:"health"`
+	LastError string      `json:"last_error"`
+}
+
+func (q *Queries) ProjectVolumeUpdateStatusAndHealth(ctx context.Context, arg ProjectVolumeUpdateStatusAndHealthParams) (ProjectVolume, error) {
+	row := q.db.QueryRow(ctx, projectVolumeUpdateStatusAndHealth,
+		arg.ProjectID,
+		arg.Status,
+		arg.Health,
+		arg.LastError,
+	)
+	var i ProjectVolume
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServerID,
+		&i.AttachedVmID,
+		&i.MountPath,
+		&i.SizeGb,
+		&i.Filesystem,
+		&i.Status,
+		&i.Health,
+		&i.BackupSchedule,
+		&i.BackupRetentionCount,
+		&i.PreDeleteBackupEnabled,
 		&i.LastError,
 		&i.DeletedAt,
 		&i.CreatedAt,

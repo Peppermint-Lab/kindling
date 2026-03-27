@@ -7,10 +7,9 @@
     "dev": "vite --port 5174",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "start": "serve -s dist -l tcp://0.0.0.0:3000 --no-clipboard"
+    "start": "node serve.mjs"
   },
   "dependencies": {
-    "serve": "^14.2.4",
     "@tailwindcss/vite": "^4.2.2",
     "lucide-react": "^1.6.0",
     "react": "^19.2.4",

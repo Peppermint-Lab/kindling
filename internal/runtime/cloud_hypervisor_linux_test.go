@@ -98,6 +98,27 @@ func TestEnsurePersistentVolumeSizeResizesQcow2(t *testing.T) {
 	}
 }
 
+func TestEnsurePersistentVolumeDiskRejectsMissingManagedDisk(t *testing.T) {
+	t.Parallel()
+
+	rt := &CloudHypervisorRuntime{}
+	vol := &PersistentVolumeMount{
+		HostPath:        filepath.Join(t.TempDir(), "missing.qcow2"),
+		MountPath:       "/data",
+		SizeGB:          10,
+		Filesystem:      "ext4",
+		CreateIfMissing: false,
+	}
+
+	err := rt.ensurePersistentVolumeDisk(context.Background(), vol)
+	if err == nil {
+		t.Fatal("expected missing volume disk to fail")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("missing volume error = %v", err)
+	}
+}
+
 func TestSharedRootfsPathHelpers(t *testing.T) {
 	id := mustUUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 	got := sharedRootfsPathForID("/shared/rootfs", id)

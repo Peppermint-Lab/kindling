@@ -39,6 +39,7 @@ import (
 	crunrt "github.com/kindlingvm/kindling/internal/runtime"
 	"github.com/kindlingvm/kindling/internal/serverreconcile"
 	"github.com/kindlingvm/kindling/internal/usage"
+	"github.com/kindlingvm/kindling/internal/volumeops"
 	"github.com/kindlingvm/kindling/internal/webhook"
 	"github.com/spf13/cobra"
 )
@@ -280,6 +281,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		domainReconciler     *reconciler.Scheduler
 		serverReconciler     *reconciler.Scheduler
 		migrationReconciler  *reconciler.Scheduler
+		volumeOpReconciler   *reconciler.Scheduler
 	)
 	if components.worker {
 		var buildRunner builder.BuildRunner = builder.NewLocalBuildRunner()
@@ -345,6 +347,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 
 		serverDrainHandler := serverreconcile.NewHandler(q, deploymentReconciler, notifyRouteChange)
 		migrationHandler := migrationreconcile.NewHandler(q, db.Pool, rt, serverID, deploymentReconciler, notifyRouteChange)
+		volumeHandler := volumeops.NewHandler(q, cfgMgr, serverID)
 		serverReconciler = reconciler.New(reconciler.Config{
 			Name:      "server",
 			Reconcile: serverDrainHandler.Reconcile,
@@ -352,6 +355,10 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		migrationReconciler = reconciler.New(reconciler.Config{
 			Name:      "instance_migration",
 			Reconcile: migrationHandler.Reconcile,
+		})
+		volumeOpReconciler = reconciler.New(reconciler.Config{
+			Name:      "project_volume_operation",
+			Reconcile: volumeHandler.Reconcile,
 		})
 		deployer.SetServerScheduler(serverReconciler)
 	}
@@ -364,6 +371,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		go domainReconciler.Start(ctx)
 		go serverReconciler.Start(ctx)
 		go migrationReconciler.Start(ctx)
+		go volumeOpReconciler.Start(ctx)
 		slog.Info("reconcilers started")
 
 		recoveredDeployments, err := queueStartupRecovery(ctx, q, serverID, deploymentReconciler, notifyRouteChange)
@@ -372,6 +380,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		} else if recoveredDeployments > 0 {
 			slog.Info("startup deployment recovery queued", "server_id", serverID, "deployments", recoveredDeployments)
 		}
+		go runProjectVolumeOperationRecoveryLoop(ctx, q, volumeOpReconciler)
 	}
 
 	var dashboardEvents *rpc.DashboardEventBroker
@@ -490,6 +499,23 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 			if migrationReconciler != nil {
 				migrationReconciler.ScheduleNow(id)
 			}
+			if dashboardEvents != nil {
+				dashboardEvents.Publish(rpc.TopicServers)
+			}
+		},
+		OnProjectVolumeOperation: func(ctx context.Context, id uuid.UUID) {
+			if volumeOpReconciler != nil {
+				volumeOpReconciler.ScheduleNow(id)
+			}
+			op, err := q.ProjectVolumeOperationFindByID(ctx, pgtype.UUID{Bytes: id, Valid: true})
+			if err != nil {
+				return
+			}
+			vol, err := q.ProjectVolumeFindByID(ctx, op.ProjectVolumeID)
+			if err != nil {
+				return
+			}
+			publishDeploymentScopes(uuid.UUID(vol.ProjectID.Bytes))
 			if dashboardEvents != nil {
 				dashboardEvents.Publish(rpc.TopicServers)
 			}
@@ -622,6 +648,24 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 
 	<-ctx.Done()
 	return nil
+}
+
+func runProjectVolumeOperationRecoveryLoop(ctx context.Context, q *queries.Queries, sched *reconciler.Scheduler) {
+	if q == nil || sched == nil {
+		return
+	}
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+	for {
+		if err := volumeops.QueueRecoverableOperations(ctx, q, sched); err != nil && ctx.Err() == nil {
+			slog.Warn("project volume operation recovery sweep failed", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 // controlPlaneEdgeHostsFromDB returns unique hostnames (API + dashboard) and the

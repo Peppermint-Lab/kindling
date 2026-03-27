@@ -1120,6 +1120,8 @@ func (r *CloudHypervisorRuntime) ensurePersistentVolumeDisk(ctx context.Context,
 		return ensurePersistentVolumeSize(ctx, vol.HostPath, vol.SizeGB)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("stat volume disk: %w", err)
+	} else if !vol.CreateIfMissing {
+		return fmt.Errorf("persistent volume disk does not exist at %s", vol.HostPath)
 	}
 
 	emptyDir, err := os.MkdirTemp("", "kindling-volume-empty-")

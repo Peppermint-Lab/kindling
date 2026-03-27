@@ -483,17 +483,164 @@ CREATE TABLE IF NOT EXISTS project_volumes (
     filesystem      TEXT NOT NULL DEFAULT 'ext4'
         CHECK (filesystem IN ('ext4')),
     status          TEXT NOT NULL DEFAULT 'detached'
-        CHECK (status IN ('detached', 'available', 'attached', 'unavailable')),
+        CHECK (status IN ('detached', 'available', 'attached', 'unavailable', 'backing_up', 'restoring', 'repairing', 'deleting')),
+    health          TEXT NOT NULL DEFAULT 'unknown'
+        CHECK (health IN ('unknown', 'healthy', 'degraded', 'missing', 'corrupt')),
+    backup_schedule TEXT NOT NULL DEFAULT 'manual'
+        CHECK (backup_schedule IN ('off', 'manual', 'daily', 'weekly')),
+    backup_retention_count INT NOT NULL DEFAULT 7 CHECK (backup_retention_count > 0),
+    pre_delete_backup_enabled BOOLEAN NOT NULL DEFAULT false,
     last_error      TEXT NOT NULL DEFAULT '',
     deleted_at      TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'project_volumes' AND column_name = 'health'
+    ) THEN
+        ALTER TABLE project_volumes ADD COLUMN health TEXT NOT NULL DEFAULT 'unknown';
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'project_volumes' AND column_name = 'backup_schedule'
+    ) THEN
+        ALTER TABLE project_volumes ADD COLUMN backup_schedule TEXT NOT NULL DEFAULT 'manual';
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'project_volumes' AND column_name = 'backup_retention_count'
+    ) THEN
+        ALTER TABLE project_volumes ADD COLUMN backup_retention_count INT NOT NULL DEFAULT 7;
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'project_volumes' AND column_name = 'pre_delete_backup_enabled'
+    ) THEN
+        ALTER TABLE project_volumes ADD COLUMN pre_delete_backup_enabled BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE project_volumes DROP CONSTRAINT IF EXISTS project_volumes_status_check;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'project_volumes_status_check'
+    ) THEN
+        ALTER TABLE project_volumes ADD CONSTRAINT project_volumes_status_check
+            CHECK (status IN ('detached', 'available', 'attached', 'unavailable', 'backing_up', 'restoring', 'repairing', 'deleting'));
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE project_volumes DROP CONSTRAINT IF EXISTS project_volumes_health_check;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'project_volumes_health_check'
+    ) THEN
+        ALTER TABLE project_volumes ADD CONSTRAINT project_volumes_health_check
+            CHECK (health IN ('unknown', 'healthy', 'degraded', 'missing', 'corrupt'));
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE project_volumes DROP CONSTRAINT IF EXISTS project_volumes_backup_schedule_check;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'project_volumes_backup_schedule_check'
+    ) THEN
+        ALTER TABLE project_volumes ADD CONSTRAINT project_volumes_backup_schedule_check
+            CHECK (backup_schedule IN ('off', 'manual', 'daily', 'weekly'));
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE project_volumes DROP CONSTRAINT IF EXISTS project_volumes_backup_retention_count_check;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'project_volumes_backup_retention_count_check'
+    ) THEN
+        ALTER TABLE project_volumes ADD CONSTRAINT project_volumes_backup_retention_count_check
+            CHECK (backup_retention_count > 0);
+    END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_project_volumes_server_id
     ON project_volumes(server_id) WHERE deleted_at IS NULL AND server_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_project_volumes_attached_vm_id
     ON project_volumes(attached_vm_id) WHERE deleted_at IS NULL AND attached_vm_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS project_volume_operations (
+    id                UUID PRIMARY KEY,
+    project_volume_id UUID NOT NULL REFERENCES project_volumes(id) ON DELETE CASCADE,
+    server_id         UUID REFERENCES servers(id) ON DELETE SET NULL,
+    kind              TEXT NOT NULL
+        CHECK (kind IN ('backup', 'restore', 'move', 'repair')),
+    status            TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'running', 'succeeded', 'failed')),
+    request_metadata  JSONB NOT NULL DEFAULT '{}'::jsonb,
+    result_metadata   JSONB NOT NULL DEFAULT '{}'::jsonb,
+    error             TEXT NOT NULL DEFAULT '',
+    started_at        TIMESTAMPTZ,
+    completed_at      TIMESTAMPTZ,
+    failed_at         TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_volume_operations_volume_id
+    ON project_volume_operations(project_volume_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_volume_operations_server_id
+    ON project_volume_operations(server_id, created_at DESC) WHERE server_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_project_volume_operations_status
+    ON project_volume_operations(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS project_volume_backups (
+    id                UUID PRIMARY KEY,
+    project_volume_id UUID NOT NULL REFERENCES project_volumes(id) ON DELETE CASCADE,
+    kind              TEXT NOT NULL
+        CHECK (kind IN ('manual', 'scheduled', 'pre_delete')),
+    storage_url       TEXT NOT NULL DEFAULT '',
+    storage_key       TEXT NOT NULL DEFAULT '',
+    size_bytes        BIGINT NOT NULL DEFAULT 0 CHECK (size_bytes >= 0),
+    status            TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'running', 'succeeded', 'failed')),
+    error             TEXT NOT NULL DEFAULT '',
+    metadata          JSONB NOT NULL DEFAULT '{}'::jsonb,
+    started_at        TIMESTAMPTZ,
+    completed_at      TIMESTAMPTZ,
+    failed_at         TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_volume_backups_volume_id
+    ON project_volume_backups(project_volume_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_project_volume_backups_status
+    ON project_volume_backups(status, created_at DESC);
 
 -- Backfill from legacy deployments.vm_id (one VM per deployment) into deployment_instances
 INSERT INTO deployment_instances (id, deployment_id, server_id, vm_id, role, status, created_at, updated_at)

@@ -356,9 +356,9 @@ ORDER BY created_at ASC;
 
 -- name: ProjectVolumeCreate :one
 INSERT INTO project_volumes (
-    id, project_id, mount_path, size_gb, filesystem, status
+    id, project_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled
 ) VALUES (
-    $1, $2, $3, $4, $5, 'detached'
+    $1, $2, $3, $4, $5, 'detached', 'unknown', $6, $7, $8
 )
 RETURNING *;
 
@@ -366,6 +366,9 @@ RETURNING *;
 UPDATE project_volumes
 SET size_gb = $2,
     filesystem = $3,
+    backup_schedule = $4,
+    backup_retention_count = $5,
+    pre_delete_backup_enabled = $6,
     updated_at = NOW()
 WHERE project_id = $1
   AND deleted_at IS NULL
@@ -378,6 +381,10 @@ SET size_gb = $2,
     server_id = NULL,
     attached_vm_id = NULL,
     status = 'detached',
+    health = 'unknown',
+    backup_schedule = $4,
+    backup_retention_count = $5,
+    pre_delete_backup_enabled = $6,
     last_error = '',
     deleted_at = NULL,
     updated_at = NOW()
@@ -392,11 +399,17 @@ WHERE project_id = $1
   AND deleted_at IS NULL
 RETURNING *;
 
+-- name: ProjectVolumeFindByID :one
+SELECT * FROM project_volumes
+WHERE id = $1
+  AND deleted_at IS NULL;
+
 -- name: ProjectVolumeAttachVM :one
 UPDATE project_volumes
 SET server_id = $2,
     attached_vm_id = $3,
     status = 'attached',
+    health = 'healthy',
     last_error = '',
     updated_at = NOW()
 WHERE project_id = $1
@@ -422,16 +435,140 @@ WHERE project_id = $1
   AND deleted_at IS NULL
 RETURNING *;
 
+-- name: ProjectVolumeUpdateStatusAndHealth :one
+UPDATE project_volumes
+SET status = $2,
+    health = $3,
+    last_error = $4,
+    updated_at = NOW()
+WHERE project_id = $1
+  AND deleted_at IS NULL
+RETURNING *;
+
+-- name: ProjectVolumeUpdateHealth :one
+UPDATE project_volumes
+SET health = $2,
+    last_error = $3,
+    updated_at = NOW()
+WHERE project_id = $1
+  AND deleted_at IS NULL
+RETURNING *;
+
 -- name: ProjectVolumeSoftDelete :exec
 UPDATE project_volumes
 SET server_id = NULL,
     attached_vm_id = NULL,
     status = 'detached',
+    health = 'unknown',
     last_error = '',
     deleted_at = NOW(),
     updated_at = NOW()
 WHERE project_id = $1
   AND deleted_at IS NULL;
+
+-- name: ProjectVolumeOperationCreate :one
+INSERT INTO project_volume_operations (
+    id, project_volume_id, server_id, kind, status, request_metadata, result_metadata, error
+) VALUES (
+    $1, $2, $3, $4, 'pending', $5, '{}'::jsonb, ''
+)
+RETURNING *;
+
+-- name: ProjectVolumeOperationFindByID :one
+SELECT * FROM project_volume_operations
+WHERE id = $1;
+
+-- name: ProjectVolumeOperationFindCurrentByVolumeID :one
+SELECT * FROM project_volume_operations
+WHERE project_volume_id = $1
+  AND status IN ('pending', 'running')
+ORDER BY created_at DESC
+LIMIT 1;
+
+-- name: ProjectVolumeOperationFindStalePending :many
+SELECT * FROM project_volume_operations
+WHERE status = 'pending'
+  AND created_at < NOW() - ($1::bigint * INTERVAL '1 second')
+ORDER BY created_at ASC;
+
+-- name: ProjectVolumeOperationFindStaleRunning :many
+SELECT * FROM project_volume_operations
+WHERE status = 'running'
+  AND started_at IS NOT NULL
+  AND started_at < NOW() - ($1::bigint * INTERVAL '1 second')
+ORDER BY started_at ASC;
+
+-- name: ProjectVolumeOperationUpdateRunning :one
+UPDATE project_volume_operations
+SET status = 'running',
+    error = '',
+    started_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: ProjectVolumeOperationUpdateState :one
+UPDATE project_volume_operations
+SET server_id = $2,
+    status = $3,
+    request_metadata = $4,
+    result_metadata = $5,
+    error = $6,
+    started_at = CASE WHEN $3 = 'running' AND started_at IS NULL THEN NOW() ELSE started_at END,
+    completed_at = CASE WHEN $3 = 'succeeded' THEN NOW() ELSE completed_at END,
+    failed_at = CASE WHEN $3 = 'failed' THEN NOW() ELSE failed_at END,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: ProjectVolumeBackupCreate :one
+INSERT INTO project_volume_backups (
+    id, project_volume_id, kind, status, storage_url, storage_key, size_bytes, error, metadata
+) VALUES (
+    $1, $2, $3, 'pending', '', '', 0, '', $4
+)
+RETURNING *;
+
+-- name: ProjectVolumeBackupFindByID :one
+SELECT * FROM project_volume_backups
+WHERE id = $1;
+
+-- name: ProjectVolumeBackupFindByProjectID :many
+SELECT b.*
+FROM project_volume_backups b
+JOIN project_volumes v ON v.id = b.project_volume_id
+WHERE v.project_id = $1
+  AND v.deleted_at IS NULL
+ORDER BY b.created_at DESC;
+
+-- name: ProjectVolumeBackupFindLastSuccessfulByProjectID :one
+SELECT b.*
+FROM project_volume_backups b
+JOIN project_volumes v ON v.id = b.project_volume_id
+WHERE v.project_id = $1
+  AND v.deleted_at IS NULL
+  AND b.status = 'succeeded'
+ORDER BY b.completed_at DESC, b.created_at DESC
+LIMIT 1;
+
+-- name: ProjectVolumeBackupDeleteByID :exec
+DELETE FROM project_volume_backups
+WHERE id = $1;
+
+-- name: ProjectVolumeBackupUpdateState :one
+UPDATE project_volume_backups
+SET status = $2,
+    storage_url = $3,
+    storage_key = $4,
+    size_bytes = $5,
+    error = $6,
+    metadata = $7,
+    started_at = CASE WHEN $2 = 'running' AND started_at IS NULL THEN NOW() ELSE started_at END,
+    completed_at = CASE WHEN $2 = 'succeeded' THEN NOW() ELSE completed_at END,
+    failed_at = CASE WHEN $2 = 'failed' THEN NOW() ELSE failed_at END,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
 
 -- Deployment instances (horizontal scaling) --
 

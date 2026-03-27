@@ -49,11 +49,12 @@ type Instance struct {
 }
 
 type PersistentVolumeMount struct {
-	ID         uuid.UUID
-	HostPath   string
-	MountPath  string
-	SizeGB     int
-	Filesystem string
+	ID              uuid.UUID
+	HostPath        string
+	MountPath       string
+	SizeGB          int
+	Filesystem      string
+	CreateIfMissing bool
 }
 
 // ResourceStats holds counters suitable for usage sampling (CPU cumulative nanoseconds, RSS, disk I/O).
