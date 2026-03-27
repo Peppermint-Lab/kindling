@@ -1,0 +1,85 @@
+{
+  "milestone": "error-handling",
+  "groupId": "err-duration-context",
+  "testedAt": "2026-03-27T22:39:23Z",
+  "isolation": {
+    "repoRoot": "/Users/jack/code/kindling",
+    "missionDir": "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5",
+    "surface": "shell"
+  },
+  "toolsUsed": ["shell"],
+  "assertions": [
+    {
+      "id": "VAL-ERR-008",
+      "status": "pass",
+      "evidence": {
+        "count": 0,
+        "threshold": "<=2",
+        "commandOutput": "error-handling/err-duration-context/VAL-ERR-008.txt"
+      }
+    },
+    {
+      "id": "VAL-ERR-009",
+      "status": "pass",
+      "evidence": {
+        "count": 0,
+        "threshold": "<=2",
+        "commandOutput": "error-handling/err-duration-context/VAL-ERR-009.txt"
+      }
+    },
+    {
+      "id": "VAL-ERR-010",
+      "status": "pass",
+      "evidence": {
+        "count": 0,
+        "threshold": "<=2",
+        "commandOutput": "error-handling/err-duration-context/VAL-ERR-010.txt"
+      }
+    },
+    {
+      "id": "VAL-ERR-011",
+      "status": "pass",
+      "evidence": {
+        "count": 0,
+        "threshold": "<=2",
+        "commandOutput": "error-handling/err-duration-context/VAL-ERR-011.txt"
+      }
+    },
+    {
+      "id": "VAL-ERR-012",
+      "status": "pass",
+      "evidence": {
+        "count": 3,
+        "threshold": "<=3",
+        "commandOutput": "error-handling/err-duration-context/VAL-ERR-012.txt"
+      }
+    },
+    {
+      "id": "VAL-ERR-013",
+      "status": "pass",
+      "evidence": {
+        "count": 9,
+        "threshold": "<=16",
+        "commandOutput": "error-handling/err-duration-context/VAL-ERR-013.txt"
+      }
+    },
+    {
+      "id": "VAL-ERR-014",
+      "status": "pass",
+      "evidence": {
+        "result": "context.Background() documented in releaseLease",
+        "commandOutput": "error-handling/err-duration-context/VAL-ERR-014.txt"
+      }
+    },
+    {
+      "id": "VAL-ERR-015",
+      "status": "pass",
+      "evidence": {
+        "result": "context.Background() documented for recordAppHTTPUsage goroutine",
+        "commandOutput": "error-handling/err-duration-context/VAL-ERR-015.txt"
+      }
+    }
+  ],
+  "frictions": [],
+  "blockers": []
+}

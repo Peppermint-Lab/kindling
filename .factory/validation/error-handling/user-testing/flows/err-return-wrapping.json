@@ -1,0 +1,96 @@
+{
+  "milestone": "error-handling",
+  "groupId": "err-return-wrapping",
+  "testedAt": "2026-03-27T22:38:38Z",
+  "isolation": {
+    "repoRoot": "/Users/jack/code/kindling",
+    "missionDir": "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5"
+  },
+  "toolsUsed": [
+    "shell"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-ERR-001",
+      "status": "pass",
+      "evidence": {
+        "command": "grep -r 'return err$' internal/deploy/ --include='*.go' | wc -l",
+        "result": 0,
+        "threshold": "<=2",
+        "evidenceFile": "error-handling/err-return-wrapping/VAL-ERR-001.txt"
+      }
+    },
+    {
+      "id": "VAL-ERR-002",
+      "status": "pass",
+      "evidence": {
+        "command": "grep -r 'return err$' internal/rpc/ --include='*.go' | wc -l",
+        "result": 0,
+        "threshold": "<=4",
+        "evidenceFile": "error-handling/err-return-wrapping/VAL-ERR-002.txt"
+      }
+    },
+    {
+      "id": "VAL-ERR-003",
+      "status": "pass",
+      "evidence": {
+        "command": "grep -r 'return err$' internal/runtime/ --include='*.go' | wc -l",
+        "result": 0,
+        "threshold": "<=3",
+        "evidenceFile": "error-handling/err-return-wrapping/VAL-ERR-003.txt"
+      }
+    },
+    {
+      "id": "VAL-ERR-004",
+      "status": "pass",
+      "evidence": {
+        "command": "grep -r 'return err$' internal/builder/ --include='*.go' | wc -l",
+        "result": 0,
+        "threshold": "<=2",
+        "evidenceFile": "error-handling/err-return-wrapping/VAL-ERR-004.txt"
+      }
+    },
+    {
+      "id": "VAL-ERR-005",
+      "status": "pass",
+      "evidence": {
+        "command": "grep -r 'return err$' internal/migrationreconcile/ --include='*.go' | wc -l",
+        "result": 0,
+        "threshold": "<=3",
+        "evidenceFile": "error-handling/err-return-wrapping/VAL-ERR-005.txt"
+      }
+    },
+    {
+      "id": "VAL-ERR-006",
+      "status": "pass",
+      "evidence": {
+        "command": "grep -r 'return err$' cmd/kindling/ --include='*.go' | wc -l",
+        "result": 0,
+        "threshold": "<=19",
+        "evidenceFile": "error-handling/err-return-wrapping/VAL-ERR-006.txt"
+      }
+    },
+    {
+      "id": "VAL-ERR-007",
+      "status": "pass",
+      "evidence": {
+        "command": "grep -r 'return err$' internal/ cmd/kindling/ --include='*.go' | wc -l",
+        "result": 57,
+        "threshold": "<=57",
+        "evidenceFile": "error-handling/err-return-wrapping/VAL-ERR-007.txt"
+      }
+    },
+    {
+      "id": "VAL-CROSS-004",
+      "status": "pass",
+      "evidence": {
+        "command": "grep -rn 'fmt.Errorf.*%v.*err)' internal/ cmd/kindling/ --include='*.go' | grep -v '_test\\.go' | wc -l",
+        "result": 0,
+        "threshold": "==0",
+        "evidenceFile": "error-handling/err-return-wrapping/VAL-CROSS-004.txt"
+      }
+    }
+  ],
+  "frictions": [],
+  "blockers": []
+}

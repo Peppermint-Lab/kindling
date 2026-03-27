@@ -1,0 +1,36 @@
+{
+  "milestone": "error-handling",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 19,
+    "passed": 19,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-ERR-016",
+    "VAL-ERR-017",
+    "VAL-ERR-018",
+    "VAL-ERR-008",
+    "VAL-ERR-009",
+    "VAL-ERR-010",
+    "VAL-ERR-011",
+    "VAL-ERR-012",
+    "VAL-ERR-013",
+    "VAL-ERR-014",
+    "VAL-ERR-015",
+    "VAL-ERR-001",
+    "VAL-ERR-002",
+    "VAL-ERR-003",
+    "VAL-ERR-004",
+    "VAL-ERR-005",
+    "VAL-ERR-006",
+    "VAL-ERR-007",
+    "VAL-CROSS-004"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": null
+}
