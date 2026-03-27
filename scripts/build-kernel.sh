@@ -30,12 +30,24 @@ if ! command -v make &>/dev/null || ! command -v git &>/dev/null; then
   exit 1
 fi
 
-WORKDIR=$(mktemp -d)
-trap 'rm -rf "$WORKDIR"' EXIT
+# When set (e.g. CI cache directory), reuse linux-src under this path instead of a temp dir.
+if [ -n "${KINDLING_KERNEL_WORKDIR:-}" ]; then
+  WORKDIR="${KINDLING_KERNEL_WORKDIR}"
+  mkdir -p "$WORKDIR"
+else
+  WORKDIR=$(mktemp -d)
+  trap 'rm -rf "$WORKDIR"' EXIT
+fi
 
 cd "$WORKDIR"
-echo "Cloning kernel (branch: $LINUX_BRANCH)..."
-git clone --depth 1 https://github.com/cloud-hypervisor/linux.git -b "$LINUX_BRANCH" linux-src
+if [ -d linux-src/.git ]; then
+  echo "Reusing kernel tree (branch: $LINUX_BRANCH)..."
+  git -C linux-src fetch --depth 1 origin "${LINUX_BRANCH}"
+  git -C linux-src checkout -f FETCH_HEAD
+else
+  echo "Cloning kernel (branch: $LINUX_BRANCH)..."
+  git clone --depth 1 https://github.com/cloud-hypervisor/linux.git -b "$LINUX_BRANCH" linux-src
+fi
 cd linux-src
 
 echo "Configuring kernel..."

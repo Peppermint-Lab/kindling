@@ -1,0 +1,251 @@
+# Production control plane: build Linux binary + dashboard, optionally kernel/initramfs, deploy over SSH.
+# Required GitHub secrets / variables: see contrib/github-actions.md
+name: Deploy production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_kernel:
+        description: "Run kernel build even if scripts/build-kernel.sh was unchanged"
+        type: boolean
+        default: false
+      force_initramfs:
+        description: "Run initramfs build even if guest-agent/scripts unchanged"
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  paths-filter:
+    runs-on: ubuntu-latest
+    outputs:
+      kernel: ${{ steps.merge.outputs.kernel }}
+      initramfs: ${{ steps.merge.outputs.initramfs }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            kernel:
+              - 'scripts/build-kernel.sh'
+            initramfs:
+              - 'cmd/guest-agent/**'
+              - 'scripts/build-initramfs-local.sh'
+              - 'scripts/build-initramfs.sh'
+
+      - id: merge
+        run: |
+          K='${{ steps.filter.outputs.kernel }}'
+          I='${{ steps.filter.outputs.initramfs }}'
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            [ "${{ github.event.inputs.force_kernel }}" = "true" ] && K="true"
+            [ "${{ github.event.inputs.force_initramfs }}" = "true" ] && I="true"
+          fi
+          echo "kernel=$K" >> "$GITHUB_OUTPUT"
+          echo "initramfs=$I" >> "$GITHUB_OUTPUT"
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build kindling (linux/amd64)
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+        run: go build -o bin/kindling ./cmd/kindling
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/dashboard/package-lock.json
+
+      - name: Build dashboard
+        working-directory: web/dashboard
+        env:
+          VITE_API_URL: ${{ vars.DEPLOY_VITE_API_URL }}
+        run: |
+          export VITE_API_URL="${VITE_API_URL:-https://api.kindling.systems}"
+          npm ci
+          npm run build
+
+      - name: Stage artifact tree
+        run: |
+          mkdir -p _deploy/bin _deploy/web/dashboard
+          cp bin/kindling _deploy/bin/
+          cp -r web/dashboard/dist/. _deploy/web/dashboard/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kindling-package
+          path: _deploy/
+
+  kernel:
+    runs-on: ubuntu-latest
+    needs: [paths-filter]
+    if: needs.paths-filter.outputs.kernel == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kernel build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git build-essential flex bison bc libssl-dev libelf-dev
+
+      - name: Cache kernel tree
+        uses: actions/cache@v4
+        with:
+          path: .kernel-work
+          key: kernel-${{ hashFiles('scripts/build-kernel.sh') }}
+
+      - name: Build kernel
+        env:
+          KINDLING_KERNEL_WORKDIR: ${{ github.workspace }}/.kernel-work
+          KINDLING_DATA: ${{ github.workspace }}/kindling-kernel-out
+        run: |
+          mkdir -p "$KINDLING_DATA"
+          bash scripts/build-kernel.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vmlinuz
+          path: ${{ github.workspace }}/kindling-kernel-out/vmlinuz.bin
+
+  initramfs:
+    runs-on: ubuntu-latest
+    needs: [paths-filter]
+    if: needs.paths-filter.outputs.initramfs == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install initramfs tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gzip busybox-static
+          sudo cp /usr/bin/busybox /usr/local/bin/busybox.static
+          # GNU cpio ( Debian / Ubuntu package is cpio )
+          cpio --version
+
+      - name: Build initramfs
+        env:
+          KINDLING_DATA: ${{ github.workspace }}/kindling-initramfs-out
+        run: |
+          mkdir -p "$KINDLING_DATA"
+          bash scripts/build-initramfs-local.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: initramfs
+          path: ${{ github.workspace }}/kindling-initramfs-out/initramfs.cpio.gz
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [paths-filter, package, kernel, initramfs]
+    if: |
+      always() &&
+      needs.paths-filter.result == 'success' &&
+      needs.package.result == 'success' &&
+      (needs.kernel.result == 'success' || needs.kernel.result == 'skipped') &&
+      (needs.initramfs.result == 'success' || needs.initramfs.result == 'skipped')
+    environment: production
+
+    env:
+      KINDLING_HOME: ${{ vars.KINDLING_HOME }}
+      KINDLING_DATA: ${{ vars.KINDLING_DATA }}
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: kindling-package
+          path: pkg
+
+      - uses: actions/download-artifact@v4
+        if: needs.paths-filter.outputs.kernel == 'true'
+        with:
+          name: vmlinuz
+          path: extra
+
+      - uses: actions/download-artifact@v4
+        if: needs.paths-filter.outputs.initramfs == 'true'
+        with:
+          name: initramfs
+          path: extra
+
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Configure SSH known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          if [ -n "${{ secrets.SSH_KNOWN_HOSTS }}" ]; then
+            printf '%s\n' "${{ secrets.SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+          else
+            ssh-keyscan -T 10 -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts || true
+          fi
+
+      - name: Deploy over SSH
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          set -euo pipefail
+          : "${SSH_HOST:?SSH_HOST secret must be set}"
+          : "${SSH_USER:?SSH_USER secret must be set}"
+          PORT="${SSH_PORT:-22}"
+          H="${SSH_USER}@${SSH_HOST}"
+          KH="${KINDLING_HOME:-/home/${SSH_USER}/kindling}"
+          DATA="${KINDLING_DATA:-/home/${SSH_USER}/.kindling}"
+
+          echo "Deploying package to KINDLING_HOME=$KH"
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" "mkdir -p '$KH/bin' '$KH/web/dashboard'"
+          rsync -az -e "ssh -p $PORT -o StrictHostKeyChecking=yes" \
+            pkg/bin/kindling "$H:$KH/bin/kindling.new"
+          rsync -az --delete -e "ssh -p $PORT -o StrictHostKeyChecking=yes" \
+            pkg/web/dashboard/ "$H:$KH/web/dashboard/"
+
+          if [ -f extra/vmlinuz.bin ]; then
+            echo "Installing vmlinuz.bin to $DATA"
+            ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" "mkdir -p '$DATA'"
+            rsync -az -e "ssh -p $PORT -o StrictHostKeyChecking=yes" \
+              extra/vmlinuz.bin "$H:$DATA/vmlinuz.bin.new"
+            ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
+              "mv -f '$DATA/vmlinuz.bin.new' '$DATA/vmlinuz.bin'"
+          fi
+
+          if [ -f extra/initramfs.cpio.gz ]; then
+            echo "Installing initramfs.cpio.gz to $DATA"
+            ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" "mkdir -p '$DATA'"
+            rsync -az -e "ssh -p $PORT -o StrictHostKeyChecking=yes" \
+              extra/initramfs.cpio.gz "$H:$DATA/initramfs.cpio.gz.new"
+            ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
+              "mv -f '$DATA/initramfs.cpio.gz.new' '$DATA/initramfs.cpio.gz'"
+          fi
+
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
+            "sudo setcap cap_net_admin,cap_net_bind_service+ep '$KH/bin/kindling.new'"
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
+            "mv -f '$KH/bin/kindling.new' '$KH/bin/kindling'"
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
+            "sudo systemctl restart kindling"
