@@ -244,14 +244,21 @@ export function DeploymentsPage() {
                     </div>
 
                     {/* Status + Age */}
-                    <div className="flex items-center gap-4 w-32 shrink-0">
-                      <div className="flex items-center gap-1.5">
-                        <StatusDot phase={d.phase} />
-                        <span className="text-sm">{phaseLabel(d.phase)}</span>
+                    <div className="w-44 shrink-0">
+                      <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-1.5">
+                          <StatusDot phase={d.phase} />
+                          <span className="text-sm">{phaseLabel(d.phase)}</span>
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          {timeAgo(d.created_at)}
+                        </span>
                       </div>
-                      <span className="text-xs text-muted-foreground">
-                        {timeAgo(d.created_at)}
-                      </span>
+                      {d.blocked_reason ? (
+                        <p className="mt-1 line-clamp-2 text-xs text-red-600 dark:text-red-400">
+                          {d.blocked_reason}
+                        </p>
+                      ) : null}
                     </div>
 
                     {/* Branch + Commit */}

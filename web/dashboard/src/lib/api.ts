@@ -149,7 +149,21 @@ export type Deployment = {
   phase: string
   desired_instance_count?: number
   running_instance_count?: number
+  blocked_reason?: string
+  persistent_volume?: DeploymentPersistentVolume | null
   reachable?: DeploymentReachability | null
+}
+
+export type DeploymentPersistentVolume = {
+  id: string
+  project_id: string
+  server_id?: string | null
+  attached_vm_id?: string | null
+  mount_path: string
+  size_gb: number
+  filesystem: string
+  status: string
+  last_error?: string
 }
 
 export type DeploymentPublicEndpoint = {
@@ -241,6 +255,20 @@ export type ServerInstanceDetail = {
 export type ServerDetail = {
   summary: Server
   instances: ServerInstanceDetail[]
+  volumes: ServerVolumeDetail[]
+}
+
+export type ServerVolumeDetail = {
+  id: string
+  project_id: string
+  project_name: string
+  server_id?: string | null
+  attached_vm_id?: string | null
+  mount_path: string
+  size_gb: number
+  filesystem: string
+  status: string
+  last_error?: string
 }
 
 export type DeploymentInstanceMigration = {

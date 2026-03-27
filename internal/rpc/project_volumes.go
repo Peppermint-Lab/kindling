@@ -228,7 +228,11 @@ func (a *API) putProjectVolume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if a.dashboardEvents != nil {
-		a.dashboardEvents.Publish(TopicProject(uuid.UUID(projectID.Bytes)))
+		a.dashboardEvents.PublishMany(
+			TopicProject(uuid.UUID(projectID.Bytes)),
+			TopicProjectDeployments(uuid.UUID(projectID.Bytes)),
+			TopicDeployments,
+		)
 	}
 	writeJSON(w, http.StatusOK, projectVolumeToOut(vol))
 }
@@ -267,7 +271,11 @@ func (a *API) deleteProjectVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.dashboardEvents != nil {
-		a.dashboardEvents.Publish(TopicProject(uuid.UUID(projectID.Bytes)))
+		a.dashboardEvents.PublishMany(
+			TopicProject(uuid.UUID(projectID.Bytes)),
+			TopicProjectDeployments(uuid.UUID(projectID.Bytes)),
+			TopicDeployments,
+		)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

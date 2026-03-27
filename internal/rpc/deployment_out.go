@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/netip"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
@@ -36,6 +38,8 @@ type deploymentOut struct {
 	DeploymentKind       string                     `json:"deployment_kind,omitempty"`
 	GithubBranch         string                     `json:"github_branch,omitempty"`
 	PreviewEnvironmentID *string                    `json:"preview_environment_id,omitempty"`
+	BlockedReason        string                     `json:"blocked_reason,omitempty"`
+	PersistentVolume     *deploymentVolumeOut       `json:"persistent_volume,omitempty"`
 	Reachable            *deploymentReachabilityOut `json:"reachable,omitempty"`
 }
 
@@ -52,6 +56,18 @@ type deploymentReachabilityOut struct {
 	Port                *int                          `json:"port,omitempty"`
 	ProxiesToDeployment *bool                         `json:"proxies_to_deployment,omitempty"`
 	PublicEndpoints     []deploymentPublicEndpointOut `json:"public_endpoints,omitempty"`
+}
+
+type deploymentVolumeOut struct {
+	ID           string  `json:"id"`
+	ProjectID    string  `json:"project_id"`
+	ServerID     *string `json:"server_id,omitempty"`
+	AttachedVMID *string `json:"attached_vm_id,omitempty"`
+	MountPath    string  `json:"mount_path"`
+	SizeGB       int32   `json:"size_gb"`
+	Filesystem   string  `json:"filesystem"`
+	Status       string  `json:"status"`
+	LastError    string  `json:"last_error,omitempty"`
 }
 
 type deploymentPublicEndpointOut struct {
@@ -76,6 +92,31 @@ func optionalUUIDString(u pgtype.UUID) *string {
 	}
 	s := pgUUIDToString(u)
 	return &s
+}
+
+func deploymentVolumeToOut(v queries.ProjectVolume) deploymentVolumeOut {
+	return deploymentVolumeOut{
+		ID:           pgUUIDToString(v.ID),
+		ProjectID:    pgUUIDToString(v.ProjectID),
+		ServerID:     optionalUUIDString(v.ServerID),
+		AttachedVMID: optionalUUIDString(v.AttachedVmID),
+		MountPath:    v.MountPath,
+		SizeGB:       v.SizeGb,
+		Filesystem:   v.Filesystem,
+		Status:       v.Status,
+		LastError:    strings.TrimSpace(v.LastError),
+	}
+}
+
+func decorateDeploymentOutWithVolume(out *deploymentOut, dep queries.Deployment, vol *queries.ProjectVolume) {
+	if out == nil || vol == nil {
+		return
+	}
+	volOut := deploymentVolumeToOut(*vol)
+	out.PersistentVolume = &volOut
+	if vol.Status == "unavailable" && !dep.RunningAt.Valid {
+		out.BlockedReason = strings.TrimSpace(vol.LastError)
+	}
 }
 
 func deploymentToOut(dep queries.Deployment, build *queries.Build, reachable *deploymentReachabilityOut) deploymentOut {
@@ -125,6 +166,11 @@ func (a *API) deploymentToOutCtx(ctx context.Context, dep queries.Deployment) de
 		out.DesiredInstanceCount = int(proj.DesiredInstanceCount)
 		out.ScaledToZero = proj.ScaledToZero
 		out.ScaleToZeroEnabled = proj.ScaleToZeroEnabled
+	}
+	if vol, err := a.q.ProjectVolumeFindByProjectID(ctx, dep.ProjectID); err == nil {
+		decorateDeploymentOutWithVolume(&out, dep, &vol)
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		// Ignore volume lookup failures and preserve deployment response.
 	}
 	insts, err := a.q.DeploymentInstanceFindByDeploymentID(ctx, dep.ID)
 	if err == nil {
@@ -207,6 +253,11 @@ func (a *API) listRowToOutCtx(ctx context.Context, row queries.DeploymentFindRec
 		out.DesiredInstanceCount = int(proj.DesiredInstanceCount)
 		out.ScaledToZero = proj.ScaledToZero
 		out.ScaleToZeroEnabled = proj.ScaleToZeroEnabled
+	}
+	if vol, err := a.q.ProjectVolumeFindByProjectID(ctx, dep.ProjectID); err == nil {
+		decorateDeploymentOutWithVolume(&out, dep, &vol)
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		// Ignore volume lookup failures and preserve deployment response.
 	}
 	if insts, err := a.q.DeploymentInstanceFindByDeploymentID(ctx, dep.ID); err == nil {
 		rc := 0

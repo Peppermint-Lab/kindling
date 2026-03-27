@@ -299,6 +299,49 @@ export function ServerDetailPage() {
 
         <Surface>
           <SurfaceHeader>
+            <SurfaceTitle>Persistent Volumes</SurfaceTitle>
+            <SurfaceDescription>Durable block volumes pinned to this server.</SurfaceDescription>
+          </SurfaceHeader>
+          <SurfaceBody className="space-y-4 text-sm">
+            {detail.volumes.length === 0 ? (
+              <p className="text-muted-foreground">No project volumes are pinned to this server.</p>
+            ) : (
+              <div className="space-y-3">
+                {detail.volumes.map((volume) => (
+                  <div key={volume.id} className="rounded-xl border p-4 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="font-medium">{volume.project_name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          <span className="font-mono">{volume.mount_path}</span> · {volume.size_gb} GB · {volume.filesystem}
+                        </p>
+                      </div>
+                      <Badge variant={volume.status === "unavailable" ? "destructive" : "outline"}>
+                        {volume.status}
+                      </Badge>
+                    </div>
+                    <MetadataGrid className="gap-3 sm:grid-cols-2">
+                      <MetadataItem label="Project ID">
+                        <span className="font-mono text-xs break-all">{volume.project_id}</span>
+                      </MetadataItem>
+                      <MetadataItem label="Attached VM">
+                        <span className="font-mono text-xs break-all">{volume.attached_vm_id || "Detached"}</span>
+                      </MetadataItem>
+                      {volume.last_error ? (
+                        <MetadataItem label="Last error" span="2">
+                          {volume.last_error}
+                        </MetadataItem>
+                      ) : null}
+                    </MetadataGrid>
+                  </div>
+                ))}
+              </div>
+            )}
+          </SurfaceBody>
+        </Surface>
+
+        <Surface>
+          <SurfaceHeader>
             <SurfaceTitle>Instances</SurfaceTitle>
             <SurfaceDescription>Latest per-instance resource snapshot on this server.</SurfaceDescription>
           </SurfaceHeader>

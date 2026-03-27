@@ -8,6 +8,56 @@ import (
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
 
+func TestDecorateDeploymentOutWithUnavailableVolumeSetsBlockedReason(t *testing.T) {
+	t.Parallel()
+
+	out := deploymentOut{}
+	dep := queries.Deployment{}
+	vol := queries.ProjectVolume{
+		ID:        pgtype.UUID{Valid: true},
+		ProjectID: pgtype.UUID{Valid: true},
+		MountPath: "/data",
+		SizeGb:    10,
+		Status:    "unavailable",
+		LastError: "pinned server server-a is dead",
+	}
+
+	decorateDeploymentOutWithVolume(&out, dep, &vol)
+
+	if out.PersistentVolume == nil {
+		t.Fatal("expected persistent volume")
+	}
+	if out.BlockedReason != "pinned server server-a is dead" {
+		t.Fatalf("blocked_reason = %q", out.BlockedReason)
+	}
+}
+
+func TestDecorateDeploymentOutWithRunningDeploymentKeepsBlockedReasonEmpty(t *testing.T) {
+	t.Parallel()
+
+	out := deploymentOut{}
+	dep := queries.Deployment{
+		RunningAt: pgtype.Timestamptz{Valid: true},
+	}
+	vol := queries.ProjectVolume{
+		ID:        pgtype.UUID{Valid: true},
+		ProjectID: pgtype.UUID{Valid: true},
+		MountPath: "/data",
+		SizeGb:    10,
+		Status:    "unavailable",
+		LastError: "pinned server server-a is dead",
+	}
+
+	decorateDeploymentOutWithVolume(&out, dep, &vol)
+
+	if out.PersistentVolume == nil {
+		t.Fatal("expected persistent volume")
+	}
+	if out.BlockedReason != "" {
+		t.Fatalf("blocked_reason = %q, want empty", out.BlockedReason)
+	}
+}
+
 func TestBuildDeploymentReachabilityRuntimeOnly(t *testing.T) {
 	t.Parallel()
 

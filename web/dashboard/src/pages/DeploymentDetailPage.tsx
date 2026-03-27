@@ -1,6 +1,14 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { api, type Deployment, type BuildLog, subscribeDeploymentStream, APIError } from "@/lib/api"
+import {
+  api,
+  type Deployment,
+  type BuildLog,
+  subscribeDeploymentStream,
+  APIError,
+  dashboardEventTopics,
+  subscribeDashboardEvents,
+} from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -141,6 +149,27 @@ export function DeploymentDetailPage() {
     }
   }, [id, loading, stopPoll])
 
+  useEffect(() => {
+    if (!deployment?.project_id) return
+    const unsub = subscribeDashboardEvents({
+      topics: [
+        dashboardEventTopics.project(deployment.project_id),
+        dashboardEventTopics.projectDeployments(deployment.project_id),
+        dashboardEventTopics.deployments,
+      ],
+      onInvalidate: () => {
+        if (!id) return
+        void api
+          .getDeployment(id)
+          .then(setDeployment)
+          .catch(() => {
+            /* keep last successful deployment visible */
+          })
+      },
+    })
+    return () => unsub()
+  }, [deployment?.project_id, id])
+
   if (loading) {
     return (
       <PageContainer>
@@ -208,6 +237,9 @@ export function DeploymentDetailPage() {
                 <SurfaceTitle>Status</SurfaceTitle>
               </SurfaceHeader>
               <SurfaceBody className="space-y-5 text-sm">
+                {deployment.blocked_reason ? (
+                  <PageErrorBanner message={deployment.blocked_reason} />
+                ) : null}
                 <MetadataGrid>
                   <MetadataItem label="Commit">
                     <span className="font-mono text-sm break-all">
@@ -229,6 +261,40 @@ export function DeploymentDetailPage() {
                   )}
                 </MetadataGrid>
                 <Separator />
+                {deployment.persistent_volume ? (
+                  <>
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                        Persistent volume
+                      </p>
+                      <MetadataGrid>
+                        <MetadataItem label="Status">{deployment.persistent_volume.status}</MetadataItem>
+                        <MetadataItem label="Mount path">
+                          <span className="font-mono text-sm">{deployment.persistent_volume.mount_path}</span>
+                        </MetadataItem>
+                        <MetadataItem label="Size">
+                          <span className="font-mono text-sm">{deployment.persistent_volume.size_gb} GB</span>
+                        </MetadataItem>
+                        <MetadataItem label="Pinned server">
+                          <span className="font-mono text-xs break-all">
+                            {deployment.persistent_volume.server_id || "Unassigned"}
+                          </span>
+                        </MetadataItem>
+                        <MetadataItem label="Attached VM">
+                          <span className="font-mono text-xs break-all">
+                            {deployment.persistent_volume.attached_vm_id || "Detached"}
+                          </span>
+                        </MetadataItem>
+                        {deployment.persistent_volume.last_error ? (
+                          <MetadataItem label="Volume error" span="full">
+                            {deployment.persistent_volume.last_error}
+                          </MetadataItem>
+                        ) : null}
+                      </MetadataGrid>
+                    </div>
+                    <Separator />
+                  </>
+                ) : null}
                 <div className="space-y-2">
                   <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Reachability</p>
                   <DeploymentReachability reachable={deployment.reachable} />

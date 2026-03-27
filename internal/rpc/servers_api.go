@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
 
@@ -66,9 +68,42 @@ type serverInstanceOut struct {
 	MigrationFailure     string   `json:"migration_failure,omitempty"`
 }
 
+type serverVolumeOut struct {
+	ID           string  `json:"id"`
+	ProjectID    string  `json:"project_id"`
+	ProjectName  string  `json:"project_name"`
+	ServerID     *string `json:"server_id,omitempty"`
+	AttachedVMID *string `json:"attached_vm_id,omitempty"`
+	MountPath    string  `json:"mount_path"`
+	SizeGB       int32   `json:"size_gb"`
+	Filesystem   string  `json:"filesystem"`
+	Status       string  `json:"status"`
+	LastError    string  `json:"last_error,omitempty"`
+}
+
 type serverDetailOut struct {
 	Summary   serverSummaryOut    `json:"summary"`
 	Instances []serverInstanceOut `json:"instances"`
+	Volumes   []serverVolumeOut   `json:"volumes"`
+}
+
+func buildServerVolumeOut(volume queries.ProjectVolume, projectName string) serverVolumeOut {
+	projectName = strings.TrimSpace(projectName)
+	if projectName == "" {
+		projectName = pgUUIDToString(volume.ProjectID)
+	}
+	return serverVolumeOut{
+		ID:           pgUUIDToString(volume.ID),
+		ProjectID:    pgUUIDToString(volume.ProjectID),
+		ProjectName:  projectName,
+		ServerID:     optionalUUIDString(volume.ServerID),
+		AttachedVMID: optionalUUIDString(volume.AttachedVmID),
+		MountPath:    volume.MountPath,
+		SizeGB:       volume.SizeGb,
+		Filesystem:   volume.Filesystem,
+		Status:       volume.Status,
+		LastError:    strings.TrimSpace(volume.LastError),
+	}
 }
 
 func (a *API) serverOverviewRows(ctx context.Context) ([]serverSummaryOut, error) {
@@ -138,6 +173,11 @@ func (a *API) getServerDetails(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := a.q.ServerInstanceUsageLatest(ctx, id)
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
+		return
+	}
+	volumesByServer, err := a.q.ProjectVolumeFindByServerID(ctx, id)
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
 		return
@@ -224,9 +264,45 @@ func (a *API) getServerDetails(w http.ResponseWriter, r *http.Request) {
 		return 0
 	})
 
+	volumes := make([]serverVolumeOut, 0, len(volumesByServer))
+	for _, vol := range volumesByServer {
+		projectName := ""
+		project, err := a.q.ProjectFirstByID(ctx, vol.ProjectID)
+		switch {
+		case err == nil:
+			projectName = project.Name
+		case err != nil && err != pgx.ErrNoRows:
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
+			return
+		}
+		volumes = append(volumes, buildServerVolumeOut(vol, projectName))
+	}
+	slices.SortFunc(volumes, func(a, b serverVolumeOut) int {
+		if a.ProjectName != b.ProjectName {
+			if a.ProjectName < b.ProjectName {
+				return -1
+			}
+			return 1
+		}
+		if a.MountPath != b.MountPath {
+			if a.MountPath < b.MountPath {
+				return -1
+			}
+			return 1
+		}
+		if a.ID < b.ID {
+			return -1
+		}
+		if a.ID > b.ID {
+			return 1
+		}
+		return 0
+	})
+
 	writeJSON(w, http.StatusOK, serverDetailOut{
 		Summary:   buildServerSummary(server, instanceCount, activeCount, runningCount, statuses, now),
 		Instances: instances,
+		Volumes:   volumes,
 	})
 }
 

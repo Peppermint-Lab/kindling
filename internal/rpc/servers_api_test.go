@@ -9,6 +9,43 @@ import (
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
 
+func TestBuildServerVolumeOut(t *testing.T) {
+	t.Parallel()
+
+	volumeID := uuid.MustParse("11111111-2222-3333-4444-555555555555")
+	projectID := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+	serverID := uuid.MustParse("99999999-8888-7777-6666-555555555555")
+	vmID := uuid.MustParse("12345678-1234-1234-1234-1234567890ab")
+
+	out := buildServerVolumeOut(queries.ProjectVolume{
+		ID:           pgtype.UUID{Bytes: volumeID, Valid: true},
+		ProjectID:    pgtype.UUID{Bytes: projectID, Valid: true},
+		ServerID:     pgtype.UUID{Bytes: serverID, Valid: true},
+		AttachedVmID: pgtype.UUID{Bytes: vmID, Valid: true},
+		MountPath:    "/data",
+		SizeGb:       10,
+		Filesystem:   "ext4",
+		Status:       "attached",
+		LastError:    " ",
+	}, "demo")
+
+	if out.ID != volumeID.String() {
+		t.Fatalf("id = %q", out.ID)
+	}
+	if out.ProjectName != "demo" {
+		t.Fatalf("project_name = %q", out.ProjectName)
+	}
+	if out.ServerID == nil || *out.ServerID != serverID.String() {
+		t.Fatalf("server_id = %#v", out.ServerID)
+	}
+	if out.AttachedVMID == nil || *out.AttachedVMID != vmID.String() {
+		t.Fatalf("attached_vm_id = %#v", out.AttachedVMID)
+	}
+	if out.LastError != "" {
+		t.Fatalf("last_error = %q", out.LastError)
+	}
+}
+
 func TestBuildServerSummaryHealthy(t *testing.T) {
 	now := time.Now().UTC()
 	server := queries.Server{
