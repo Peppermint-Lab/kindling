@@ -294,11 +294,11 @@ func (h *Handler) streamDeployment(w http.ResponseWriter, r *http.Request) {
 		logs, _ = h.Q.BuildLogsByBuildID(r.Context(), dep.BuildID)
 	}
 	out := h.ToOutCtx(r.Context(), dep)
-	if err := writeEvent("state", out); err != nil {
+	if err := writeEvent("deployment", out); err != nil {
 		return
 	}
 	for _, l := range logs {
-		if err := writeEvent("log", l); err != nil {
+		if err := writeEvent("logs", l); err != nil {
 			return
 		}
 	}
@@ -325,17 +325,23 @@ func (h *Handler) streamDeployment(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			newOut := h.ToOutCtx(r.Context(), dep)
-			if err := writeEvent("state", newOut); err != nil {
+			if err := writeEvent("deployment", newOut); err != nil {
 				return
 			}
-			if dep.BuildID.Valid && lastLogTS.Valid {
-				newLogs, err := h.Q.BuildLogsAfterCreatedAt(r.Context(), queries.BuildLogsAfterCreatedAtParams{
-					BuildID:   dep.BuildID,
-					CreatedAt: lastLogTS,
-				})
-				if err == nil {
+			if dep.BuildID.Valid {
+				var newLogs []queries.BuildLog
+				var fetchErr error
+				if lastLogTS.Valid {
+					newLogs, fetchErr = h.Q.BuildLogsAfterCreatedAt(r.Context(), queries.BuildLogsAfterCreatedAtParams{
+						BuildID:   dep.BuildID,
+						CreatedAt: lastLogTS,
+					})
+				} else {
+					newLogs, fetchErr = h.Q.BuildLogsByBuildID(r.Context(), dep.BuildID)
+				}
+				if fetchErr == nil {
 					for _, l := range newLogs {
-						if err := writeEvent("log", l); err != nil {
+						if err := writeEvent("logs", l); err != nil {
 							return
 						}
 						lastLogTS = l.CreatedAt

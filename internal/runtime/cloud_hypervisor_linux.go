@@ -220,7 +220,7 @@ func (r *CloudHypervisorRuntime) buildCHInstance(inst Instance, workDir, workDis
 		inst:            inst,
 		stopped:         make(chan struct{}),
 	}
-	return ai, guestCIDR, hostIP, slot, func() { cancel(); removeCHTap(tapName) }, runCtx.Err
+	return ai, guestCIDR, hostIP, slot, func() { cancel(); removeCHTap(tapName) }, runCtx.Err()
 }
 
 // launchCHProcess starts the cloud-hypervisor process and captures its output.
