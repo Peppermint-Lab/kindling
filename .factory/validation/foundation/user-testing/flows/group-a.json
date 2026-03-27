@@ -1,0 +1,58 @@
+{
+  "groupId": "group-a",
+  "milestone": "foundation",
+  "surface": "shell",
+  "toolsUsed": ["shell"],
+  "assertions": [
+    {
+      "id": "VAL-FND-001",
+      "status": "pass",
+      "reason": "`ls _sp_main.go _sp_test.go 2>&1` reported both files as missing.",
+      "evidence": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/foundation/group-a/VAL-FND-001.txt"
+      ]
+    },
+    {
+      "id": "VAL-FND-002",
+      "status": "pass",
+      "reason": "`ls -d proto 2>&1` reported directory missing.",
+      "evidence": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/foundation/group-a/VAL-FND-002.txt"
+      ]
+    },
+    {
+      "id": "VAL-FND-003",
+      "status": "pass",
+      "reason": "`ls -d gen 2>&1` reported directory missing.",
+      "evidence": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/foundation/group-a/VAL-FND-003.txt"
+      ]
+    },
+    {
+      "id": "VAL-FND-004",
+      "status": "pass",
+      "reason": "`grep -c 'Connect RPC' CLAUDE.md` returned 0.",
+      "evidence": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/foundation/group-a/VAL-FND-004.txt"
+      ]
+    },
+    {
+      "id": "VAL-FND-005",
+      "status": "pass",
+      "reason": "`grep -ci 'OpenTelemetry' CLAUDE.md` returned 0.",
+      "evidence": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/foundation/group-a/VAL-FND-005.txt"
+      ]
+    },
+    {
+      "id": "VAL-FND-006",
+      "status": "pass",
+      "reason": "`grep -cE '^\\s*(proto/|gen/)' CLAUDE.md` returned 0.",
+      "evidence": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/foundation/group-a/VAL-FND-006.txt"
+      ]
+    }
+  ],
+  "frictions": [],
+  "blockers": []
+}

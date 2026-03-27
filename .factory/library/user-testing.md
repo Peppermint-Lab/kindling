@@ -20,3 +20,11 @@ This is a **refactoring mission** with no UI/API surface to test manually. All v
 - Shell commands are lightweight (go build uses ~2GB RAM peak, tests use ~1GB)
 - Machine: 16GB RAM, 10 CPU cores
 - Max concurrent validators: **5** (each validator runs a few shell commands, minimal resource overlap)
+
+## Flow Validator Guidance: shell
+
+- **Isolation boundary:** repository root `/Users/jack/code/kindling` only.
+- Do not modify source code or mission planning files while validating assertions.
+- Write flow reports only to `.factory/validation/<milestone>/user-testing/flows/*.json`.
+- Save evidence artifacts only under `{missionDir}/evidence/<milestone>/<group-id>/`.
+- Avoid running `go build`, `go vet`, and `go test` concurrently with each other; run them serially in one validator group to reduce cache/contention noise.

@@ -1,0 +1,74 @@
+{
+  "groupId": "group-c",
+  "milestone": "foundation",
+  "surface": "shell",
+  "toolsUsed": ["shell"],
+  "assertions": [
+    {
+      "id": "VAL-FND-011",
+      "status": "pass",
+      "reason": "`grep -c 'inst, _ = d.q.DeploymentInstanceFirstByID' internal/deploy/deploy.go` returned 0.",
+      "evidence": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/foundation/group-c/VAL-FND-011.txt"
+      ]
+    },
+    {
+      "id": "VAL-FND-012",
+      "status": "pass",
+      "reason": "`grep -n ', _ = pickFreeTCPPort()' internal/runtime/cloud_hypervisor_linux.go` returned no output.",
+      "evidence": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/foundation/group-c/VAL-FND-012.txt"
+      ]
+    },
+    {
+      "id": "VAL-FND-013",
+      "status": "pass",
+      "reason": "`grep -n ', _ = applyAdvertisedHost' internal/runtime/cloud_hypervisor_linux.go` returned no output.",
+      "evidence": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/foundation/group-c/VAL-FND-013.txt"
+      ]
+    },
+    {
+      "id": "VAL-FND-014",
+      "status": "pass",
+      "reason": "`grep -n '_ = json.NewDecoder(r.Body).Decode' internal/rpc/api.go` returned no output.",
+      "evidence": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/foundation/group-c/VAL-FND-014.txt"
+      ]
+    },
+    {
+      "id": "VAL-FND-016",
+      "status": "pass",
+      "reason": "`grep -c 'mustParseCIDR' cmd/kindling/serve.go` returned 0.",
+      "evidence": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/foundation/group-c/VAL-FND-016.txt"
+      ]
+    },
+    {
+      "id": "VAL-FND-017",
+      "status": "pass",
+      "reason": "`grep -n 'DomainUpdateDeploymentForProject' internal/deploy/deploy.go | grep -v 'err\\s*=' | grep -v 'if err'` returned no output.",
+      "evidence": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/foundation/group-c/VAL-FND-017.txt"
+      ]
+    },
+    {
+      "id": "VAL-FND-018",
+      "status": "pass",
+      "reason": "`grep -n '_ = json.Unmarshal' internal/rpc/instance_migrations.go` returned no output.",
+      "evidence": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/foundation/group-c/VAL-FND-018.txt"
+      ]
+    },
+    {
+      "id": "VAL-FND-019",
+      "status": "pass",
+      "reason": "`grep -n '_ = json.Unmarshal' internal/migrationreconcile/reconcile.go` returned no output.",
+      "evidence": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/foundation/group-c/VAL-FND-019.txt"
+      ]
+    }
+  ],
+  "frictions": [],
+  "blockers": []
+}

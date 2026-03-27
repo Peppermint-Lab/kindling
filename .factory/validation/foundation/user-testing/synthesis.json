@@ -1,0 +1,50 @@
+{
+  "milestone": "foundation",
+  "round": 1,
+  "status": "fail",
+  "assertionsSummary": {
+    "total": 23,
+    "passed": 22,
+    "failed": 1,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-FND-001",
+    "VAL-FND-002",
+    "VAL-FND-003",
+    "VAL-FND-004",
+    "VAL-FND-005",
+    "VAL-FND-006",
+    "VAL-FND-007",
+    "VAL-FND-008",
+    "VAL-FND-009",
+    "VAL-FND-010",
+    "VAL-FND-011",
+    "VAL-FND-012",
+    "VAL-FND-013",
+    "VAL-FND-014",
+    "VAL-FND-016",
+    "VAL-FND-017",
+    "VAL-FND-018",
+    "VAL-FND-019",
+    "VAL-FND-020",
+    "VAL-FND-021",
+    "VAL-FND-022",
+    "VAL-CROSS-003"
+  ],
+  "failedAssertions": [
+    {
+      "id": "VAL-FND-015",
+      "reason": "Exact evidence command count is 0 for metadataString/stringValue definitions; contract expects exactly 1 canonical definition."
+    }
+  ],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added \"Flow Validator Guidance: shell\" section with repository/evidence boundaries and validator serialization note.",
+      "source": "setup"
+    }
+  ],
+  "previousRound": null
+}
