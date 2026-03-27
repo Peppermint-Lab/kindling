@@ -99,9 +99,11 @@ func deploymentToOut(dep queries.Deployment, build *queries.Build, reachable *de
 		Phase:        deploymentPhase(dep, build),
 		Reachable:    reachable,
 	}
-	if strings.TrimSpace(dep.DeploymentKind) != "" && dep.DeploymentKind != "production" {
-		out.DeploymentKind = dep.DeploymentKind
+	kind := strings.TrimSpace(dep.DeploymentKind)
+	if kind == "" {
+		kind = "production"
 	}
+	out.DeploymentKind = kind
 	if strings.TrimSpace(dep.GithubBranch) != "" {
 		out.GithubBranch = dep.GithubBranch
 	}
