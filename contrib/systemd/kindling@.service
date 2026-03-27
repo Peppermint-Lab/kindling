@@ -15,7 +15,7 @@ WorkingDirectory=/home/ubuntu/kindling
 ExecStart=/usr/local/lib/kindling/serve.sh %i
 Restart=always
 RestartSec=5
-KillMode=process
+KillMode=control-group
 LimitNOFILE=1048576
 
 [Install]
