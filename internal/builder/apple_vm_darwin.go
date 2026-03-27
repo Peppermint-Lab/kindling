@@ -100,12 +100,12 @@ func (v *appleBuilderVM) start(parentCtx context.Context) error {
 
 	devNullR, err := os.Open(os.DevNull)
 	if err != nil {
-		return err
+		return fmt.Errorf("open /dev/null for reading: %w", err)
 	}
 	devNullW, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {
 		devNullR.Close()
-		return err
+		return fmt.Errorf("open /dev/null for writing: %w", err)
 	}
 
 	bootLoader, err := vz.NewLinuxBootLoader(

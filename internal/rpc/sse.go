@@ -44,11 +44,11 @@ func (a *API) streamDeployment(w http.ResponseWriter, r *http.Request) {
 	writeEvent := func(event string, payload any) error {
 		b, mErr := json.Marshal(payload)
 		if mErr != nil {
-			return mErr
+			return fmt.Errorf("marshal SSE event %s: %w", event, mErr)
 		}
 		_, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
 		if err != nil {
-			return err
+			return fmt.Errorf("write SSE event %s: %w", event, err)
 		}
 		flusher.Flush()
 		return nil

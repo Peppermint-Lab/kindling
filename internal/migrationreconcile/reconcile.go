@@ -45,7 +45,7 @@ func (h *Handler) Reconcile(ctx context.Context, migrationID uuid.UUID) error {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("fetch migration: %w", err)
 	}
 	instanceID := uuid.UUID(mig.DeploymentInstanceID.Bytes)
 	switch mig.State {
@@ -86,7 +86,7 @@ func (h *Handler) prepareDestination(ctx context.Context, mig queries.InstanceMi
 	}
 	server, err := h.q.ServerFindByID(ctx, mig.DestinationServerID)
 	if err != nil {
-		return err
+		return fmt.Errorf("fetch destination server: %w", err)
 	}
 	if server.Status != "active" {
 		_, _ = h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
@@ -129,7 +129,10 @@ func (h *Handler) prepareDestination(ctx context.Context, mig queries.InstanceMi
 		ReceiveAddr:       receiveAddr,
 		CutoverDeadlineAt: pgtype.Timestamptz{Time: time.Now().Add(10 * time.Minute), Valid: true},
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("update migration prepared state: %w", err)
+	}
+	return nil
 }
 
 func (h *Handler) sendFromSource(ctx context.Context, mig queries.InstanceMigration, instanceID uuid.UUID) error {
@@ -138,11 +141,11 @@ func (h *Handler) sendFromSource(ctx context.Context, mig queries.InstanceMigrat
 	}
 	inst, err := h.q.DeploymentInstanceFirstByID(ctx, mig.DeploymentInstanceID)
 	if err != nil {
-		return err
+		return fmt.Errorf("fetch deployment instance: %w", err)
 	}
 	dep, err := h.q.DeploymentFirstByID(ctx, inst.DeploymentID)
 	if err != nil {
-		return err
+		return fmt.Errorf("fetch deployment: %w", err)
 	}
 	if _, err := h.q.ProjectVolumeFindByProjectID(ctx, dep.ProjectID); err == nil {
 		_, _ = h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
@@ -152,11 +155,11 @@ func (h *Handler) sendFromSource(ctx context.Context, mig queries.InstanceMigrat
 		})
 		return nil
 	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return err
+		return fmt.Errorf("check project volume: %w", err)
 	}
 	vm, err := h.q.VMFirstByID(ctx, mig.SourceVmID)
 	if err != nil {
-		return err
+		return fmt.Errorf("fetch source VM: %w", err)
 	}
 	if strings.TrimSpace(vm.SharedRootfsRef) == "" {
 		_, _ = h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
@@ -177,7 +180,7 @@ func (h *Handler) sendFromSource(ctx context.Context, mig queries.InstanceMigrat
 	}
 	destinationStatus, err := h.q.ServerComponentStatusFindByServerID(ctx, mig.DestinationServerID)
 	if err != nil {
-		return err
+		return fmt.Errorf("fetch destination server status: %w", err)
 	}
 	destinationMeta, err := liveMigrationWorkerMetadataFromStatuses(destinationStatus)
 	if err != nil {
@@ -221,7 +224,7 @@ func (h *Handler) sendFromSource(ctx context.Context, mig queries.InstanceMigrat
 		return nil
 	}
 	if _, err := h.q.InstanceMigrationUpdateSending(ctx, mig.ID); err != nil {
-		return err
+		return fmt.Errorf("update migration to sending: %w", err)
 	}
 	err = h.rt.SendMigration(ctx, instanceID, runtime.SendMigrationRequest{
 		DestinationURL: "tcp:" + strings.TrimSpace(mig.ReceiveAddr),
@@ -236,8 +239,10 @@ func (h *Handler) sendFromSource(ctx context.Context, mig queries.InstanceMigrat
 		})
 		return nil
 	}
-	_, err = h.q.InstanceMigrationUpdateReceived(ctx, mig.ID)
-	return err
+	if _, err := h.q.InstanceMigrationUpdateReceived(ctx, mig.ID); err != nil {
+		return fmt.Errorf("update migration to received: %w", err)
+	}
+	return nil
 }
 
 func (h *Handler) commitOnDestination(ctx context.Context, mig queries.InstanceMigration, instanceID uuid.UUID) error {
@@ -261,15 +266,15 @@ func (h *Handler) commitOnDestination(ctx context.Context, mig queries.InstanceM
 	}
 	inst, err := h.q.DeploymentInstanceFirstByID(ctx, mig.DeploymentInstanceID)
 	if err != nil {
-		return err
+		return fmt.Errorf("fetch deployment instance: %w", err)
 	}
 	sourceVM, err := h.q.VMFirstByID(ctx, mig.SourceVmID)
 	if err != nil {
-		return err
+		return fmt.Errorf("fetch source VM: %w", err)
 	}
 	tx, err := h.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
 	qtx := h.q.WithTx(tx)
@@ -290,32 +295,32 @@ func (h *Handler) commitOnDestination(ctx context.Context, mig queries.InstanceM
 		EnvVariables:    sourceVM.EnvVariables,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("create destination VM: %w", err)
 	}
 	if _, err := qtx.DeploymentInstanceUpdateServer(ctx, queries.DeploymentInstanceUpdateServerParams{
 		ID:       mig.DeploymentInstanceID,
 		ServerID: mig.DestinationServerID,
 	}); err != nil {
-		return err
+		return fmt.Errorf("update instance server: %w", err)
 	}
 	if _, err := qtx.DeploymentInstanceAttachVM(ctx, queries.DeploymentInstanceAttachVMParams{
 		ID:     mig.DeploymentInstanceID,
 		VmID:   newVM.ID,
 		Status: inst.Status,
 	}); err != nil {
-		return err
+		return fmt.Errorf("attach VM to instance: %w", err)
 	}
 	if err := qtx.VMSoftDelete(ctx, mig.SourceVmID); err != nil {
-		return err
+		return fmt.Errorf("soft-delete source VM: %w", err)
 	}
 	if _, err := qtx.InstanceMigrationUpdateCompleted(ctx, queries.InstanceMigrationUpdateCompletedParams{
 		ID:                    mig.ID,
 		DestinationRuntimeUrl: runtimeURL,
 	}); err != nil {
-		return err
+		return fmt.Errorf("update migration completed: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return err
+		return fmt.Errorf("commit migration transaction: %w", err)
 	}
 	if h.notifyRoute != nil {
 		h.notifyRoute()
@@ -339,13 +344,13 @@ func parseRuntimeAddress(raw string) (netip.Addr, int, error) {
 	if strings.Contains(s, "://") {
 		u, err := url.Parse(s)
 		if err != nil {
-			return netip.Addr{}, 0, err
+			return netip.Addr{}, 0, fmt.Errorf("parse runtime URL: %w", err)
 		}
 		hostPort = u.Host
 	}
 	host, portStr, err := net.SplitHostPort(hostPort)
 	if err != nil {
-		return netip.Addr{}, 0, err
+		return netip.Addr{}, 0, fmt.Errorf("split host port %q: %w", hostPort, err)
 	}
 	ip, err := netip.ParseAddr(host)
 	if err != nil {
@@ -353,7 +358,7 @@ func parseRuntimeAddress(raw string) (netip.Addr, int, error) {
 	}
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
-		return netip.Addr{}, 0, err
+		return netip.Addr{}, 0, fmt.Errorf("parse port %q: %w", portStr, err)
 	}
 	return ip, port, nil
 }

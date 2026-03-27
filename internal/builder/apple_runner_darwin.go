@@ -69,7 +69,7 @@ func (r *AppleVZBuildRunner) BuildAndPush(ctx context.Context, run BuildRun) err
 	}
 	ws, err := r.workspaceDir()
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve workspace dir: %w", err)
 	}
 	if err := replaceWorkspaceFromSource(run.BuildDir, ws); err != nil {
 		return fmt.Errorf("sync workspace into builder VM mount: %w", err)
@@ -80,12 +80,12 @@ func (r *AppleVZBuildRunner) BuildAndPush(ctx context.Context, run BuildRun) err
 		vm, err := newAppleBuilderVM(r.cfg.KernelPath, r.cfg.InitramfsPath, r.cfg.BuilderRootfsDir, ws)
 		if err != nil {
 			r.mu.Unlock()
-			return err
+			return fmt.Errorf("create builder VM: %w", err)
 		}
 		if err := vm.start(ctx); err != nil {
 			vm.Close()
 			r.mu.Unlock()
-			return err
+			return fmt.Errorf("start builder VM: %w", err)
 		}
 		r.vm = vm
 	}
@@ -101,7 +101,7 @@ func (r *AppleVZBuildRunner) BuildAndPush(ctx context.Context, run BuildRun) err
 	bud := append([]string{"buildah"}, oci.BuildahBudArgs(run.ImageRef, run.DockerfilePath, true)...)
 	code, err := vm.Exec(ctx, bud, env, run.LogLine)
 	if err != nil {
-		return err
+		return fmt.Errorf("exec buildah bud: %w", err)
 	}
 	if code != 0 {
 		return fmt.Errorf("buildah bud exited with code %d", code)
@@ -114,7 +114,7 @@ func (r *AppleVZBuildRunner) BuildAndPush(ctx context.Context, run BuildRun) err
 	push := append([]string{"buildah"}, oci.BuildahPushArgs(run.ImageRef, creds)...)
 	code, err = vm.Exec(ctx, push, env, run.LogLine)
 	if err != nil {
-		return err
+		return fmt.Errorf("exec buildah push: %w", err)
 	}
 	if code != 0 {
 		return fmt.Errorf("buildah push exited with code %d", code)

@@ -19,14 +19,14 @@ func NewLocalBuildRunner() *LocalBuildRunner {
 func (*LocalBuildRunner) BuildAndPush(ctx context.Context, run BuildRun) error {
 	engine, err := oci.DetectBuildEngine()
 	if err != nil {
-		return err
+		return fmt.Errorf("detect build engine: %w", err)
 	}
 	if run.LogLine != nil {
 		run.LogLine(fmt.Sprintf("Building image with %s: %s", engine, run.ImageRef))
 		run.LogLine("Using local OCI layer cache on this host")
 	}
 	if err := oci.BuildDockerfile(ctx, engine, run.BuildDir, run.ImageRef, run.DockerfilePath, run.LogLine); err != nil {
-		return err
+		return fmt.Errorf("build dockerfile: %w", err)
 	}
 	if run.LogLine != nil {
 		run.LogLine("OCI build completed")

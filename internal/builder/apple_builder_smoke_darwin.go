@@ -16,7 +16,7 @@ import (
 func SmokeTestAppleBuilderVM(ctx context.Context) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve home directory: %w", err)
 	}
 	kernel := filepath.Join(home, ".kindling", "vmlinuz.bin")
 	initrd := filepath.Join(home, ".kindling", "initramfs.cpio.gz")
@@ -32,13 +32,13 @@ func SmokeTestAppleBuilderVM(ctx context.Context) error {
 
 	ws, err := os.MkdirTemp("", "kindling-builder-smoke-*")
 	if err != nil {
-		return err
+		return fmt.Errorf("create temp workspace: %w", err)
 	}
 	defer os.RemoveAll(ws)
 
 	vm, err := newAppleBuilderVM(kernel, initrd, rootfs, ws)
 	if err != nil {
-		return err
+		return fmt.Errorf("create builder VM: %w", err)
 	}
 	defer vm.Close()
 
@@ -52,7 +52,7 @@ func SmokeTestAppleBuilderVM(ctx context.Context) error {
 	env := []string{"PATH=/usr/local/bin:/usr/bin:/bin:/sbin:/usr/sbin"}
 	code, err := vm.Exec(runCtx, []string{"buildah", "version"}, env, func(line string) { fmt.Println(line) })
 	if err != nil {
-		return err
+		return fmt.Errorf("exec buildah version: %w", err)
 	}
 	if code != 0 {
 		return fmt.Errorf("buildah version exited %d", code)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -259,7 +260,7 @@ func (a *API) ensurePersistentVolumeReplicaCount(ctx context.Context, projectID 
 	case errors.Is(err, pgx.ErrNoRows):
 		return nil
 	default:
-		return err
+		return fmt.Errorf("find project volume: %w", err)
 	}
 }
 

@@ -204,10 +204,10 @@ func (a *API) streamDashboardEvents(w http.ResponseWriter, r *http.Request) {
 	writeEvent := func(name string, payload any) error {
 		b, err := json.Marshal(payload)
 		if err != nil {
-			return err
+			return fmt.Errorf("marshal dashboard event %s: %w", name, err)
 		}
 		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, b); err != nil {
-			return err
+			return fmt.Errorf("write dashboard event %s: %w", name, err)
 		}
 		flusher.Flush()
 		return nil

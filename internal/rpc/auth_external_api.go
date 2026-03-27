@@ -303,30 +303,30 @@ func (a *API) beginExternalAuth(w http.ResponseWriter, r *http.Request, provider
 	}
 	providerRow, err := a.q.AuthProviderByProvider(r.Context(), provider)
 	if err != nil {
-		return err
+		return fmt.Errorf("load auth provider: %w", err)
 	}
 	if !authProviderReady(providerRow) {
 		return fmt.Errorf("authentication provider is not configured")
 	}
 	stateToken, err := extoauth.RandomToken(32)
 	if err != nil {
-		return err
+		return fmt.Errorf("generate state token: %w", err)
 	}
 	codeVerifier, err := extoauth.RandomToken(48)
 	if err != nil {
-		return err
+		return fmt.Errorf("generate code verifier: %w", err)
 	}
 	codeChallenge := extoauth.PKCEChallenge(codeVerifier)
 	callbackURL, err := a.authProviderCallbackURL(r.Context(), r, provider)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve callback URL: %w", err)
 	}
 	authURL := ""
 	nonce := ""
 	scopes := extoauth.SplitScopes(providerRow.Scopes, authProviderDefaultScopes(provider))
 	clientSecret, err := a.authProviderClientSecret(providerRow)
 	if err != nil {
-		return err
+		return fmt.Errorf("decrypt client secret: %w", err)
 	}
 	switch provider {
 	case "github":
@@ -339,7 +339,7 @@ func (a *API) beginExternalAuth(w http.ResponseWriter, r *http.Request, provider
 	case "oidc":
 		nonce, err = extoauth.RandomToken(32)
 		if err != nil {
-			return err
+			return fmt.Errorf("generate nonce: %w", err)
 		}
 		authURL, err = extoauth.OIDCAuthorizeURL(r.Context(), externalAuthHTTPClient, extoauth.OIDCConfig{
 			ClientID:     strings.TrimSpace(providerRow.ClientID),
@@ -349,7 +349,7 @@ func (a *API) beginExternalAuth(w http.ResponseWriter, r *http.Request, provider
 			Scopes:       scopes,
 		}, stateToken, nonce, codeChallenge)
 		if err != nil {
-			return err
+			return fmt.Errorf("build OIDC authorize URL: %w", err)
 		}
 	}
 	if err := a.setExternalAuthState(w, r, externalAuthState{
@@ -362,7 +362,7 @@ func (a *API) beginExternalAuth(w http.ResponseWriter, r *http.Request, provider
 		ReturnTo:     sanitizeReturnTo(returnTo, "/"),
 		ExpiresAt:    time.Now().Add(10 * time.Minute).Unix(),
 	}); err != nil {
-		return err
+		return fmt.Errorf("set auth state cookie: %w", err)
 	}
 	http.Redirect(w, r, authURL, http.StatusFound)
 	return nil
@@ -371,11 +371,11 @@ func (a *API) beginExternalAuth(w http.ResponseWriter, r *http.Request, provider
 func (a *API) exchangeExternalIdentity(ctx context.Context, r *http.Request, providerRow queries.AuthProvider, code string, state externalAuthState) (extoauth.Identity, []string, error) {
 	clientSecret, err := a.authProviderClientSecret(providerRow)
 	if err != nil {
-		return extoauth.Identity{}, nil, err
+		return extoauth.Identity{}, nil, fmt.Errorf("decrypt client secret: %w", err)
 	}
 	callbackURL, err := a.authProviderCallbackURL(ctx, r, providerRow.Provider)
 	if err != nil {
-		return extoauth.Identity{}, nil, err
+		return extoauth.Identity{}, nil, fmt.Errorf("resolve callback URL: %w", err)
 	}
 	switch providerRow.Provider {
 	case "github":
@@ -386,7 +386,7 @@ func (a *API) exchangeExternalIdentity(ctx context.Context, r *http.Request, pro
 			Scopes:       extoauth.SplitScopes(providerRow.Scopes, authProviderDefaultScopes(providerRow.Provider)),
 		}, code, state.CodeVerifier)
 		if err != nil {
-			return extoauth.Identity{}, nil, err
+			return extoauth.Identity{}, nil, fmt.Errorf("exchange GitHub code: %w", err)
 		}
 		return extoauth.GitHubIdentity(ctx, externalAuthHTTPClient, token)
 	case "oidc":
@@ -397,7 +397,10 @@ func (a *API) exchangeExternalIdentity(ctx context.Context, r *http.Request, pro
 			RedirectURL:  callbackURL,
 			Scopes:       extoauth.SplitScopes(providerRow.Scopes, authProviderDefaultScopes(providerRow.Provider)),
 		}, code, state.CodeVerifier, state.Nonce)
-		return identity, nil, err
+		if err != nil {
+			return extoauth.Identity{}, nil, fmt.Errorf("exchange OIDC code: %w", err)
+		}
+		return identity, nil, nil
 	default:
 		return extoauth.Identity{}, nil, fmt.Errorf("unsupported auth provider")
 	}
@@ -410,12 +413,12 @@ func (a *API) resolveExternalLogin(ctx context.Context, provider string, identit
 	})
 	if err == nil {
 		if err := a.linkExternalIdentity(ctx, identityRow.UserID, provider, identity); err != nil {
-			return queries.User{}, err
+			return queries.User{}, fmt.Errorf("link existing identity: %w", err)
 		}
 		return a.q.UserByID(ctx, identityRow.UserID)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return queries.User{}, err
+		return queries.User{}, fmt.Errorf("lookup identity by subject: %w", err)
 	}
 	if strings.TrimSpace(identity.Email) == "" {
 		return queries.User{}, fmt.Errorf("this identity does not expose a verified email address")
@@ -423,11 +426,11 @@ func (a *API) resolveExternalLogin(ctx context.Context, provider string, identit
 	if _, err := a.q.UserByEmail(ctx, identity.Email); err == nil {
 		return queries.User{}, fmt.Errorf("an account with that email already exists; sign in locally and link %s from settings", provider)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return queries.User{}, err
+		return queries.User{}, fmt.Errorf("lookup user by email: %w", err)
 	}
 	userCount, err := a.q.UserCount(ctx)
 	if err != nil {
-		return queries.User{}, err
+		return queries.User{}, fmt.Errorf("count users: %w", err)
 	}
 	userID := uuid.New()
 	user, err := a.q.UserCreate(ctx, queries.UserCreateParams{
@@ -438,19 +441,19 @@ func (a *API) resolveExternalLogin(ctx context.Context, provider string, identit
 		IsPlatformAdmin: userCount == 0,
 	})
 	if err != nil {
-		return queries.User{}, err
+		return queries.User{}, fmt.Errorf("create user: %w", err)
 	}
 	personalName := externalIdentityDisplayName(identity)
 	if personalName == "" {
 		personalName = user.Email
 	}
 	if _, err := a.createOwnedOrganizationForUser(ctx, user, personalName+"'s Workspace", identity.Login); err != nil {
-		return queries.User{}, err
+		return queries.User{}, fmt.Errorf("create personal organization: %w", err)
 	}
 	if provider == "github" {
 		orgIDs, err := a.resolveGitHubOrganizationIDs(ctx, orgLogins)
 		if err != nil {
-			return queries.User{}, err
+			return queries.User{}, fmt.Errorf("resolve GitHub org IDs: %w", err)
 		}
 		for _, orgID := range orgIDs {
 			if err := a.q.OrganizationMembershipUpsert(ctx, queries.OrganizationMembershipUpsertParams{
@@ -459,12 +462,12 @@ func (a *API) resolveExternalLogin(ctx context.Context, provider string, identit
 				UserID:         user.ID,
 				Role:           "member",
 			}); err != nil {
-				return queries.User{}, err
+				return queries.User{}, fmt.Errorf("upsert org membership: %w", err)
 			}
 		}
 	}
 	if err := a.linkExternalIdentity(ctx, user.ID, provider, identity); err != nil {
-		return queries.User{}, err
+		return queries.User{}, fmt.Errorf("link identity for new user: %w", err)
 	}
 	return user, nil
 }
@@ -475,7 +478,7 @@ func (a *API) linkExternalIdentity(ctx context.Context, userID pgtype.UUID, prov
 	}
 	claims, err := json.Marshal(identity.Claims)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal identity claims: %w", err)
 	}
 	if len(claims) == 0 {
 		claims = []byte(`{}`)
@@ -498,10 +501,13 @@ func (a *API) linkExternalIdentity(ctx context.Context, userID pgtype.UUID, prov
 			Claims:              claims,
 			LastLoginAt:         now,
 		})
-		return err
+		if err != nil {
+			return fmt.Errorf("update identity by subject: %w", err)
+		}
+		return nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return err
+		return fmt.Errorf("lookup identity by subject: %w", err)
 	}
 	byUser, err := a.q.UserIdentityByUserAndProvider(ctx, queries.UserIdentityByUserAndProviderParams{
 		UserID:   userID,
@@ -517,10 +523,13 @@ func (a *API) linkExternalIdentity(ctx context.Context, userID pgtype.UUID, prov
 			Claims:              claims,
 			LastLoginAt:         now,
 		})
-		return err
+		if err != nil {
+			return fmt.Errorf("update identity by user: %w", err)
+		}
+		return nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return err
+		return fmt.Errorf("lookup identity by user and provider: %w", err)
 	}
 	_, err = a.q.UserIdentityCreate(ctx, queries.UserIdentityCreateParams{
 		ID:                  pgtype.UUID{Bytes: uuid.New(), Valid: true},
@@ -533,13 +542,16 @@ func (a *API) linkExternalIdentity(ctx context.Context, userID pgtype.UUID, prov
 		Claims:              claims,
 		LastLoginAt:         now,
 	})
-	return err
+	if err != nil {
+		return fmt.Errorf("create identity: %w", err)
+	}
+	return nil
 }
 
 func (a *API) resolveGitHubOrganizationIDs(ctx context.Context, orgLogins []string) ([]pgtype.UUID, error) {
 	rows, err := a.q.OrgProviderConnectionListByProvider(ctx, "github")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list GitHub org provider connections: %w", err)
 	}
 	allowed := make(map[string][]pgtype.UUID, len(rows))
 	for _, row := range rows {
