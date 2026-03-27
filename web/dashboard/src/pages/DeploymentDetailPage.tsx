@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react"
-import { useParams, Link, useNavigate } from "react-router-dom"
+import { useParams, useNavigate } from "react-router-dom"
 import { api, type Deployment, type BuildLog, subscribeDeploymentStream, APIError } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
