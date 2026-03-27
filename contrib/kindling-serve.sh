@@ -21,6 +21,7 @@ set +a
 KINDLING_LISTEN="${KINDLING_LISTEN:-:8080}"
 KINDLING_EDGE_HTTP="${KINDLING_EDGE_HTTP:-:80}"
 KINDLING_EDGE_HTTPS="${KINDLING_EDGE_HTTPS:-:443}"
+KINDLING_COMPONENTS="${1:-${KINDLING_COMPONENTS:-api,edge,worker}}"
 
 STAGING_FLAG=()
 if [[ "${KINDLING_ACME_STAGING:-}" == "1" || "${KINDLING_ACME_STAGING:-}" == "true" ]]; then
@@ -34,6 +35,7 @@ fi
 
 cd "$KINDLING_HOME"
 exec "$KINDLING_HOME/bin/kindling" serve \
+  --components "$KINDLING_COMPONENTS" \
   --listen "$KINDLING_LISTEN" \
   --advertise-host "$KINDLING_ADVERTISE_HOST" \
   --public-url "$KINDLING_PUBLIC_URL" \

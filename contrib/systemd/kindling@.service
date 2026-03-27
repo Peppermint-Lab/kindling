@@ -1,0 +1,22 @@
+[Unit]
+Description=Kindling %i component
+Documentation=https://github.com/Peppermint-Lab/kindling
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+Environment=HOME=/home/ubuntu
+Environment=XDG_RUNTIME_DIR=/tmp/kindling-xdg
+ExecStartPre=+/bin/sh -c 'install -d -m 0700 -o ubuntu -g ubuntu /tmp/kindling-xdg'
+WorkingDirectory=/home/ubuntu/kindling
+ExecStart=/usr/local/lib/kindling/serve.sh %i
+Restart=always
+RestartSec=5
+KillMode=process
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

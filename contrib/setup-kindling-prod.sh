@@ -20,7 +20,7 @@ ENV_DST=/etc/kindling/kindling.env
 if [[ ! -f "$ENV_DST" ]]; then
   install -m 0640 -o root -g "${SERVICE_USER}" "${REPO}/contrib/kindling-prod.env.example" "$ENV_DST"
   echo "Created $ENV_DST — edit it (especially KINDLING_ADVERTISE_HOST, KINDLING_PUBLIC_URL, optional KINDLING_DASHBOARD_HOST, KINDLING_ACME_EMAIL), then:"
-  echo "  systemctl daemon-reload && systemctl enable --now kindling"
+  echo "  systemctl daemon-reload && systemctl enable --now kindling@edge kindling@api kindling@worker"
 else
   echo "Leaving existing $ENV_DST unchanged."
 fi
@@ -36,7 +36,17 @@ sed \
   -e "s|^WorkingDirectory=.*|WorkingDirectory=${KINDLING_HOME}|" \
   "${REPO}/contrib/systemd/kindling.service" > /etc/systemd/system/kindling.service
 
+sed \
+  -e "s/^User=.*/User=${SERVICE_USER}/" \
+  -e "s/^Group=.*/Group=${SERVICE_USER}/" \
+  -e "s|^Environment=HOME=/home/ubuntu|Environment=HOME=/home/${SERVICE_USER}|" \
+  -e "s|^ExecStartPre=.*|ExecStartPre=+/bin/sh -c 'install -d -m 0700 -o ${SERVICE_USER} -g ${SERVICE_USER} /tmp/kindling-xdg'|" \
+  -e "s|^WorkingDirectory=.*|WorkingDirectory=${KINDLING_HOME}|" \
+  "${REPO}/contrib/systemd/kindling@.service" > /etc/systemd/system/kindling@.service
+
 systemctl daemon-reload
-echo "Installed kindling.service. Run: systemctl enable --now kindling"
+echo "Installed kindling.service and kindling@.service."
+echo "Split-mode run: systemctl enable --now kindling@edge kindling@api kindling@worker"
+echo "Legacy run: systemctl enable --now kindling"
 echo "After each manual rebuild of bin/kindling (non-Makefile), restore capabilities:"
 echo "  sudo setcap cap_net_admin,cap_net_bind_service+ep \"${KINDLING_HOME}/bin/kindling\""

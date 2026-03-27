@@ -91,6 +91,7 @@ jobs:
           install -m 755 contrib/kindling-serve.sh _deploy/contrib/kindling-serve.sh
           install -m 755 contrib/setup-kindling-prod.sh _deploy/contrib/setup-kindling-prod.sh
           cp contrib/systemd/kindling.service _deploy/contrib/systemd/kindling.service
+          cp contrib/systemd/kindling@.service _deploy/contrib/systemd/kindling@.service
 
       - uses: actions/upload-artifact@v4
         with:
@@ -239,6 +240,8 @@ jobs:
             pkg/contrib/setup-kindling-prod.sh "$H:$KH/contrib/setup-kindling-prod.sh"
           rsync -az -e "ssh -p $PORT -o StrictHostKeyChecking=yes" \
             pkg/contrib/systemd/kindling.service "$H:$KH/contrib/systemd/kindling.service"
+          rsync -az -e "ssh -p $PORT -o StrictHostKeyChecking=yes" \
+            pkg/contrib/systemd/kindling@.service "$H:$KH/contrib/systemd/kindling@.service"
 
           if [ -f extra/vmlinuz.bin ]; then
             echo "Installing vmlinuz.bin to $DATA"
@@ -271,4 +274,6 @@ jobs:
           ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
             "set -euo pipefail; cd '$KH/web'; rm -rf dashboard.prev; if [ -d dashboard ]; then mv dashboard dashboard.prev; fi; mv dashboard.new dashboard"
           ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
-            "sudo systemctl daemon-reload && sudo systemctl restart kindling"
+            "sudo systemctl daemon-reload && sudo systemctl enable kindling@edge kindling@api kindling@worker"
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
+            "if sudo systemctl is-active --quiet kindling && ! sudo systemctl is-active --quiet kindling@edge; then sudo systemctl disable --now kindling || true; sudo systemctl start kindling@edge kindling@api kindling@worker; else if ! sudo systemctl is-active --quiet kindling@edge; then sudo systemctl start kindling@edge; fi; if sudo systemctl is-active --quiet kindling@api; then sudo systemctl restart kindling@api; else sudo systemctl start kindling@api; fi; if sudo systemctl is-active --quiet kindling@worker; then sudo systemctl restart kindling@worker; else sudo systemctl start kindling@worker; fi; fi"
