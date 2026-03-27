@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -33,8 +34,8 @@ import (
 	"github.com/kindlingvm/kindling/internal/preview"
 	"github.com/kindlingvm/kindling/internal/reconciler"
 	"github.com/kindlingvm/kindling/internal/rpc"
-	"github.com/kindlingvm/kindling/internal/serverreconcile"
 	crunrt "github.com/kindlingvm/kindling/internal/runtime"
+	"github.com/kindlingvm/kindling/internal/serverreconcile"
 	"github.com/kindlingvm/kindling/internal/usage"
 	"github.com/kindlingvm/kindling/internal/webhook"
 	"github.com/spf13/cobra"
@@ -208,6 +209,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	snap := cfgMgr.Snapshot()
 	pullAuth := registryAuthFromSnapshot(snap)
 	var rt crunrt.Runtime
+	serverTracked := components.worker || components.edge
 	if components.worker {
 		rt = crunrt.NewDetectedRuntime(crunrt.HostRuntimeConfig{
 			ForceRuntime:  snap.ServerRuntimeOverride,
@@ -227,7 +229,28 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 			slog.Info("preserving workloads on shutdown", "env", "KINDLING_PRESERVE_WORKLOADS_ON_SHUTDOWN")
 		}
 		slog.Info("runtime detected", "runtime", rt.Name())
-		go usage.RunResourcePoller(ctx, q, serverID, rt, 15*time.Second)
+		go runServerComponentHeartbeat(ctx, q, serverID, "worker", 10*time.Second, func() map[string]any {
+			return map[string]any{"runtime": rt.Name()}
+		})
+		go usage.RunResourcePoller(ctx, q, serverID, rt, 15*time.Second, func(report usage.PollerStatusReport) {
+			if err := persistServerComponentStatus(ctx, q, serverID, serverComponentStatusUpdate{
+				Component:        "usage_poller",
+				Status:           report.Status,
+				ObservedAt:       report.ObservedAt,
+				LastSuccessAt:    report.LastSuccessAt,
+				LastErrorAt:      report.LastErrorAt,
+				LastErrorMessage: report.LastErrorMessage,
+				Metadata:         report.Metadata,
+			}); err != nil && ctx.Err() == nil {
+				slog.Warn("usage poller component status", "error", err)
+			}
+		})
+	}
+	if serverTracked && components.api {
+		go runServerComponentHeartbeat(ctx, q, serverID, "api", 10*time.Second, nil)
+	}
+	if serverTracked && components.edge {
+		go runServerComponentHeartbeat(ctx, q, serverID, "edge", 10*time.Second, nil)
 	}
 
 	var (
@@ -843,6 +866,80 @@ func seedPublicBaseURLIfUnset(ctx context.Context, q *queries.Queries, fromFlag 
 		Key:   rpc.ClusterSettingKeyPublicBaseURL,
 		Value: fromFlag,
 	})
+}
+
+type serverComponentStatusUpdate struct {
+	Component        string
+	Status           string
+	ObservedAt       time.Time
+	LastSuccessAt    *time.Time
+	LastErrorAt      *time.Time
+	LastErrorMessage string
+	Metadata         map[string]any
+}
+
+func persistServerComponentStatus(ctx context.Context, q *queries.Queries, serverID uuid.UUID, update serverComponentStatusUpdate) error {
+	observedAt := pgtype.Timestamptz{Time: update.ObservedAt.UTC(), Valid: !update.ObservedAt.IsZero()}
+	lastSuccessAt := pgtype.Timestamptz{}
+	if update.LastSuccessAt != nil {
+		lastSuccessAt = pgtype.Timestamptz{Time: update.LastSuccessAt.UTC(), Valid: true}
+	}
+	lastErrorAt := pgtype.Timestamptz{}
+	if update.LastErrorAt != nil {
+		lastErrorAt = pgtype.Timestamptz{Time: update.LastErrorAt.UTC(), Valid: true}
+	}
+	metadata := []byte("{}")
+	if len(update.Metadata) > 0 {
+		b, err := json.Marshal(update.Metadata)
+		if err != nil {
+			return err
+		}
+		metadata = b
+	}
+	return q.ServerComponentStatusUpsert(ctx, queries.ServerComponentStatusUpsertParams{
+		ServerID:         pgtype.UUID{Bytes: serverID, Valid: true},
+		Component:        update.Component,
+		Status:           update.Status,
+		ObservedAt:       observedAt,
+		LastSuccessAt:    lastSuccessAt,
+		LastErrorAt:      lastErrorAt,
+		LastErrorMessage: strings.TrimSpace(update.LastErrorMessage),
+		Metadata:         metadata,
+	})
+}
+
+func runServerComponentHeartbeat(ctx context.Context, q *queries.Queries, serverID uuid.UUID, component string, every time.Duration, metadataFn func() map[string]any) {
+	if every <= 0 {
+		every = 10 * time.Second
+	}
+	write := func() {
+		now := time.Now().UTC()
+		var metadata map[string]any
+		if metadataFn != nil {
+			metadata = metadataFn()
+		}
+		if err := persistServerComponentStatus(ctx, q, serverID, serverComponentStatusUpdate{
+			Component:     component,
+			Status:        "healthy",
+			ObservedAt:    now,
+			LastSuccessAt: &now,
+			Metadata:      metadata,
+		}); err != nil && ctx.Err() == nil {
+			slog.Warn("component status heartbeat", "component", component, "error", err)
+		}
+	}
+
+	write()
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			write()
+		}
+	}
 }
 
 func hostname() string {

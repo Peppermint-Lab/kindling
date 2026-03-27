@@ -63,6 +63,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/projects/{id}/deploy", a.triggerDeploy)
 	mux.HandleFunc("POST /api/deployments/{id}/cancel", a.cancelDeployment)
 	mux.HandleFunc("GET /api/servers", a.listServers)
+	mux.HandleFunc("GET /api/servers/{id}/details", a.getServerDetails)
 	mux.HandleFunc("POST /api/servers/{id}/drain", a.postServerDrain)
 	mux.HandleFunc("POST /api/servers/{id}/activate", a.postServerActivate)
 	a.registerUsageRoutes(mux)
@@ -723,23 +724,10 @@ func (a *API) listServers(w http.ResponseWriter, r *http.Request) {
 	if _, ok := mustPrincipal(w, r); !ok {
 		return
 	}
-	servers, err := a.q.ServerFindAll(r.Context())
+	out, err := a.serverOverviewRows(r.Context())
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "list_servers", err)
 		return
-	}
-	type serverRow struct {
-		queries.Server
-		InstanceCount int64 `json:"instance_count"`
-	}
-	out := make([]serverRow, len(servers))
-	for i := range servers {
-		n, err := a.q.DeploymentInstanceCountByServerID(r.Context(), servers[i].ID)
-		if err != nil {
-			writeAPIErrorFromErr(w, http.StatusInternalServerError, "list_servers", err)
-			return
-		}
-		out[i] = serverRow{Server: servers[i], InstanceCount: n}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

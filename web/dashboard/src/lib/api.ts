@@ -142,6 +142,51 @@ export type Server = {
   updated_at?: string
   /** Non-deleted deployment_instances with this server_id */
   instance_count?: number
+  active_instance_count?: number
+  running_instance_count?: number
+  health?: "healthy" | "degraded" | "stale" | "unknown"
+  heartbeat_health?: "healthy" | "stale" | "unknown"
+  heartbeat_age_seconds?: number
+  runtime?: string
+  enabled_components?: string[]
+  components?: ServerComponent[]
+}
+
+export type ServerComponent = {
+  component: "api" | "edge" | "worker" | "usage_poller"
+  enabled: boolean
+  health: "healthy" | "degraded" | "stale" | "unknown"
+  raw_status?: "healthy" | "degraded"
+  observed_at?: string
+  last_success_at?: string
+  last_error_at?: string
+  last_error_message?: string
+  metadata?: Record<string, unknown>
+}
+
+export type ServerInstanceDetail = {
+  deployment_instance_id: string
+  deployment_id: string
+  project_id: string
+  project_name: string
+  vm_id?: string
+  role: string
+  status: string
+  created_at?: string
+  updated_at?: string
+  sampled_at?: string
+  sample_age_seconds?: number
+  resource_health: "fresh" | "stale" | "missing"
+  cpu_percent?: number
+  memory_rss_bytes: number
+  disk_read_bytes: number
+  disk_write_bytes: number
+  source?: string
+}
+
+export type ServerDetail = {
+  summary: Server
+  instances: ServerInstanceDetail[]
 }
 
 export type UsageInstance = {
@@ -441,6 +486,8 @@ export const api = {
     request<void>(`/api/deployments/${id}/cancel`, { method: "POST" }),
 
   listServers: () => request<Server[]>("/api/servers"),
+
+  getServerDetails: (id: string) => request<ServerDetail>(`/api/servers/${id}/details`),
 
   drainServer: (id: string) =>
     request<{ status: string }>(`/api/servers/${id}/drain`, { method: "POST", body: JSON.stringify({}) }),

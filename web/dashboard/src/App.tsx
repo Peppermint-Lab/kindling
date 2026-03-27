@@ -18,12 +18,14 @@ import { ProjectDetailPage } from "@/pages/ProjectDetailPage"
 import { DeploymentDetailPage } from "@/pages/DeploymentDetailPage"
 import { DeploymentsPage } from "@/pages/DeploymentsPage"
 import { SettingsPage } from "@/pages/SettingsPage"
+import { ServerDetailPage } from "@/pages/ServerDetailPage"
 import { LoginPage } from "@/pages/LoginPage"
 import { BootstrapPage } from "@/pages/BootstrapPage"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { AuthProvider, useAuth } from "@/contexts/AuthContext"
 
 function pageName(pathname: string): string {
+  if (pathname.startsWith("/settings/servers/")) return "Server"
   if (pathname.startsWith("/deployments/")) return "Deployment"
   if (pathname === "/deployments") return "Deployments"
   if (pathname.startsWith("/projects/")) return "Project"
@@ -68,6 +70,7 @@ function Layout() {
             <Route path="/deployments" element={<DeploymentsPage />} />
             <Route path="/deployments/:id" element={<DeploymentDetailPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/settings/servers/:id" element={<ServerDetailPage />} />
           </Routes>
         </div>
       </SidebarInset>

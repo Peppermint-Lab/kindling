@@ -56,6 +56,30 @@ FROM servers;
 -- name: ServerFindAll :many
 SELECT * FROM servers ORDER BY created_at;
 
+-- name: ServerComponentStatusUpsert :exec
+INSERT INTO server_component_statuses (
+    server_id, component, status, observed_at, last_success_at, last_error_at, last_error_message, metadata, created_at, updated_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW()
+)
+ON CONFLICT (server_id, component) DO UPDATE SET
+    status = EXCLUDED.status,
+    observed_at = EXCLUDED.observed_at,
+    last_success_at = EXCLUDED.last_success_at,
+    last_error_at = EXCLUDED.last_error_at,
+    last_error_message = EXCLUDED.last_error_message,
+    metadata = EXCLUDED.metadata,
+    updated_at = NOW();
+
+-- name: ServerComponentStatusFindAll :many
+SELECT * FROM server_component_statuses
+ORDER BY server_id, component;
+
+-- name: ServerComponentStatusFindByServerID :many
+SELECT * FROM server_component_statuses
+WHERE server_id = $1
+ORDER BY component;
+
 -- name: TrySessionAdvisoryLock :one
 SELECT pg_try_advisory_lock(hashtext($1));
 
@@ -248,6 +272,12 @@ RETURNING *;
 -- name: DeploymentInstanceCountByServerID :one
 SELECT COUNT(*)::bigint AS count FROM deployment_instances
 WHERE server_id = $1 AND deleted_at IS NULL;
+
+-- name: DeploymentInstanceActiveCountByServerID :one
+SELECT COUNT(*)::bigint AS count FROM deployment_instances
+WHERE server_id = $1
+  AND deleted_at IS NULL
+  AND role = 'active';
 
 -- name: DeploymentIDsForInstancesOnServer :many
 SELECT DISTINCT deployment_id FROM deployment_instances
@@ -860,6 +890,38 @@ INNER JOIN deployments d ON d.id = di.deployment_id
 WHERE s.project_id = $1
   AND s.sampled_at >= $2
 ORDER BY s.deployment_instance_id, s.sampled_at DESC;
+
+-- name: ServerInstanceUsageLatest :many
+SELECT
+    di.id AS deployment_instance_id,
+    di.deployment_id,
+    d.project_id,
+    p.name AS project_name,
+    di.vm_id,
+    di.role,
+    di.status,
+    di.created_at,
+    di.updated_at,
+    s.sampled_at,
+    s.cpu_percent,
+    s.memory_rss_bytes,
+    s.disk_read_bytes,
+    s.disk_write_bytes,
+    s.source
+FROM deployment_instances di
+INNER JOIN deployments d ON d.id = di.deployment_id
+  AND d.deleted_at IS NULL
+INNER JOIN projects p ON p.id = d.project_id
+LEFT JOIN LATERAL (
+    SELECT sampled_at, cpu_percent, memory_rss_bytes, disk_read_bytes, disk_write_bytes, source
+    FROM instance_usage_samples
+    WHERE deployment_instance_id = di.id
+    ORDER BY sampled_at DESC
+    LIMIT 1
+) s ON TRUE
+WHERE di.server_id = $1
+  AND di.deleted_at IS NULL
+ORDER BY di.created_at ASC;
 
 -- name: InstanceUsageLastBefore :one
 SELECT sampled_at, cpu_nanos_cumulative

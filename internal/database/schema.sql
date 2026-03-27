@@ -557,6 +557,21 @@ CREATE TABLE IF NOT EXISTS server_settings (
     updated_at                       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Latest control-plane component snapshots per server.
+CREATE TABLE IF NOT EXISTS server_component_statuses (
+    server_id            UUID NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    component            TEXT NOT NULL CHECK (component IN ('api', 'edge', 'worker', 'usage_poller')),
+    status               TEXT NOT NULL DEFAULT 'healthy' CHECK (status IN ('healthy', 'degraded')),
+    observed_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_success_at      TIMESTAMPTZ,
+    last_error_at        TIMESTAMPTZ,
+    last_error_message   TEXT NOT NULL DEFAULT '',
+    metadata             JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (server_id, component)
+);
+
 -- Cluster-wide secrets (AES-GCM ciphertext, see internal/config/crypto.go)
 CREATE TABLE IF NOT EXISTS cluster_secrets (
     key         TEXT PRIMARY KEY,
@@ -613,6 +628,8 @@ CREATE TABLE IF NOT EXISTS project_http_usage_rollups (
 
 CREATE INDEX IF NOT EXISTS idx_http_rollups_project_bucket
     ON project_http_usage_rollups (project_id, bucket_start DESC);
+CREATE INDEX IF NOT EXISTS idx_server_component_statuses_server
+    ON server_component_statuses (server_id, component);
 
 -- Existing deployments: add projects.org_id, backfill to bootstrap org, enforce NOT NULL
 DO $$

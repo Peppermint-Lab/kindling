@@ -219,6 +219,19 @@ type Server struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ServerComponentStatus struct {
+	ServerID         pgtype.UUID        `json:"server_id"`
+	Component        string             `json:"component"`
+	Status           string             `json:"status"`
+	ObservedAt       pgtype.Timestamptz `json:"observed_at"`
+	LastSuccessAt    pgtype.Timestamptz `json:"last_success_at"`
+	LastErrorAt      pgtype.Timestamptz `json:"last_error_at"`
+	LastErrorMessage string             `json:"last_error_message"`
+	Metadata         []byte             `json:"metadata"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ServerSetting struct {
 	ServerID                     pgtype.UUID        `json:"server_id"`
 	RuntimeOverride              string             `json:"runtime_override"`

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
+import { Link } from "react-router-dom"
 import { api, type Server, type APIMeta, APIError, dashboardEventTopics, subscribeDashboardEvents } from "@/lib/api"
 import { useAuth } from "@/contexts/AuthContext"
 import { Badge } from "@/components/ui/badge"
@@ -21,6 +22,7 @@ import {
   SurfaceDescription,
   SurfaceBody,
 } from "@/components/page-surface"
+import { componentLabel, formatAgeSeconds, healthChipClass } from "@/lib/server-observability"
 
 type ProviderRow = {
   id: string
@@ -31,6 +33,10 @@ type ProviderRow = {
   metadata: unknown
   created_at: string
   updated_at: string
+}
+
+function displayServerName(server: Server): string {
+  return server.hostname || server.id
 }
 
 export function SettingsPage() {
@@ -96,6 +102,13 @@ export function SettingsPage() {
       if (debounceTimer != null) clearTimeout(debounceTimer)
       unsub()
     }
+  }, [load])
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      void load().catch((e) => setError(e instanceof APIError ? e.message : String(e)))
+    }, 15000)
+    return () => clearInterval(timer)
   }, [load])
 
   const canManageProviders =
@@ -382,77 +395,109 @@ export function SettingsPage() {
             <Surface>
               <SurfaceHeader>
                 <SurfaceTitle>Servers</SurfaceTitle>
+                <SurfaceDescription>Quick glance overview for cluster health, instance load, and component freshness.</SurfaceDescription>
               </SurfaceHeader>
               <SurfaceBody>
                 {servers.length === 0 ? (
                   <p className="text-sm text-muted-foreground py-4 text-center">No servers registered yet.</p>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {servers.map((server) => (
                       <div
                         key={server.id}
-                        className="flex flex-col gap-2 rounded-lg border p-3.5 sm:flex-row sm:items-center sm:justify-between"
+                        className="rounded-xl border p-4 space-y-4"
                       >
-                        <div className="min-w-0">
-                          <p className="font-mono text-sm font-medium truncate">{server.hostname || server.id}</p>
-                          <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                            {server.internal_ip || "No IP"}
-                            {server.instance_count != null && server.instance_count > 0
-                              ? ` · ${server.instance_count} instance${server.instance_count === 1 ? "" : "s"}`
-                              : ""}
-                          </p>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                          <span className="text-xs text-muted-foreground">
-                            Last heartbeat: {new Date(server.last_heartbeat_at).toLocaleTimeString()}
-                          </span>
-                          <Badge variant={server.status === "active" ? "default" : "secondary"}>{server.status}</Badge>
-                          {canManageServers && server.status === "active" && (
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="min-w-0 space-y-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="font-mono text-sm font-medium truncate">{displayServerName(server)}</p>
+                              <Badge variant="outline" className={healthChipClass(server.health)}>
+                                {server.health || "unknown"}
+                              </Badge>
+                              <Badge variant={server.status === "active" ? "default" : "secondary"}>{server.status}</Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {server.internal_ip || "No IP"}
+                              {server.runtime ? ` · ${server.runtime}` : ""}
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              <Badge variant="outline" className="border-border bg-muted/30 text-foreground">
+                                Heartbeat {formatAgeSeconds(server.heartbeat_age_seconds)}
+                              </Badge>
+                              <Badge variant="outline" className="border-border bg-muted/30 text-foreground">
+                                {server.active_instance_count ?? 0} active
+                              </Badge>
+                              <Badge variant="outline" className="border-border bg-muted/30 text-foreground">
+                                {server.instance_count ?? 0} total
+                              </Badge>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
                             <Button
                               size="sm"
                               variant="outline"
-                              disabled={serverActionId === server.id}
-                              onClick={() => {
-                                void (async () => {
-                                  setServerActionId(server.id)
-                                  setError(null)
-                                  try {
-                                    await api.drainServer(server.id)
-                                    await load()
-                                  } catch (e) {
-                                    setError(e instanceof APIError ? e.message : String(e))
-                                  } finally {
-                                    setServerActionId(null)
-                                  }
-                                })()
-                              }}
+                              render={<Link to={`/settings/servers/${server.id}`} />}
                             >
-                              Drain
+                              View details
                             </Button>
-                          )}
-                          {canManageServers && (server.status === "draining" || server.status === "drained") && (
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              disabled={serverActionId === server.id}
-                              onClick={() => {
-                                void (async () => {
-                                  setServerActionId(server.id)
-                                  setError(null)
-                                  try {
-                                    await api.activateServer(server.id)
-                                    await load()
-                                  } catch (e) {
-                                    setError(e instanceof APIError ? e.message : String(e))
-                                  } finally {
-                                    setServerActionId(null)
-                                  }
-                                })()
-                              }}
+                            {canManageServers && server.status === "active" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={serverActionId === server.id}
+                                onClick={() => {
+                                  void (async () => {
+                                    setServerActionId(server.id)
+                                    setError(null)
+                                    try {
+                                      await api.drainServer(server.id)
+                                      await load()
+                                    } catch (e) {
+                                      setError(e instanceof APIError ? e.message : String(e))
+                                    } finally {
+                                      setServerActionId(null)
+                                    }
+                                  })()
+                                }}
+                              >
+                                Drain
+                              </Button>
+                            )}
+                            {canManageServers && (server.status === "draining" || server.status === "drained") && (
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                disabled={serverActionId === server.id}
+                                onClick={() => {
+                                  void (async () => {
+                                    setServerActionId(server.id)
+                                    setError(null)
+                                    try {
+                                      await api.activateServer(server.id)
+                                      await load()
+                                    } catch (e) {
+                                      setError(e instanceof APIError ? e.message : String(e))
+                                    } finally {
+                                      setServerActionId(null)
+                                    }
+                                  })()
+                                }}
+                              >
+                                Activate
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {(server.components ?? []).map((component) => (
+                            <Badge
+                              key={component.component}
+                              variant="outline"
+                              className={healthChipClass(component.health, component.enabled ? "" : "opacity-70")}
                             >
-                              Activate
-                            </Button>
-                          )}
+                              {componentLabel(component.component)} · {component.enabled ? component.health : "off"}
+                            </Badge>
+                          ))}
                         </div>
                       </div>
                     ))}

@@ -977,6 +977,20 @@ func (q *Queries) DeploymentIDsForInstancesOnServer(ctx context.Context, serverI
 	return items, nil
 }
 
+const deploymentInstanceActiveCountByServerID = `-- name: DeploymentInstanceActiveCountByServerID :one
+SELECT COUNT(*)::bigint AS count FROM deployment_instances
+WHERE server_id = $1
+  AND deleted_at IS NULL
+  AND role = 'active'
+`
+
+func (q *Queries) DeploymentInstanceActiveCountByServerID(ctx context.Context, serverID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, deploymentInstanceActiveCountByServerID, serverID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deploymentInstanceAttachVM = `-- name: DeploymentInstanceAttachVM :one
 UPDATE deployment_instances SET vm_id = $2, status = $3, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
@@ -3389,6 +3403,42 @@ func (q *Queries) ProjectMarkScaledToZero(ctx context.Context, id pgtype.UUID) e
 	return err
 }
 
+const projectUpdateBuildOnlyOnRootChanges = `-- name: ProjectUpdateBuildOnlyOnRootChanges :one
+UPDATE projects
+SET build_only_on_root_changes = $2, updated_at = NOW()
+WHERE id = $1 AND org_id = $3
+RETURNING id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at
+`
+
+type ProjectUpdateBuildOnlyOnRootChangesParams struct {
+	ID                     pgtype.UUID `json:"id"`
+	BuildOnlyOnRootChanges bool        `json:"build_only_on_root_changes"`
+	OrgID                  pgtype.UUID `json:"org_id"`
+}
+
+func (q *Queries) ProjectUpdateBuildOnlyOnRootChanges(ctx context.Context, arg ProjectUpdateBuildOnlyOnRootChangesParams) (Project, error) {
+	row := q.db.QueryRow(ctx, projectUpdateBuildOnlyOnRootChanges, arg.ID, arg.BuildOnlyOnRootChanges, arg.OrgID)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.GithubRepository,
+		&i.GithubInstallationID,
+		&i.GithubWebhookSecret,
+		&i.RootDirectory,
+		&i.DockerfilePath,
+		&i.DesiredInstanceCount,
+		&i.LastRequestAt,
+		&i.ScaledToZero,
+		&i.ScaleToZeroEnabled,
+		&i.BuildOnlyOnRootChanges,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const projectUpdateDesiredInstanceCount = `-- name: ProjectUpdateDesiredInstanceCount :one
 UPDATE projects
 SET desired_instance_count = $2, updated_at = NOW()
@@ -3449,42 +3499,6 @@ type ProjectUpdateScaleToZeroEnabledParams struct {
 
 func (q *Queries) ProjectUpdateScaleToZeroEnabled(ctx context.Context, arg ProjectUpdateScaleToZeroEnabledParams) (Project, error) {
 	row := q.db.QueryRow(ctx, projectUpdateScaleToZeroEnabled, arg.ID, arg.ScaleToZeroEnabled, arg.OrgID)
-	var i Project
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.Name,
-		&i.GithubRepository,
-		&i.GithubInstallationID,
-		&i.GithubWebhookSecret,
-		&i.RootDirectory,
-		&i.DockerfilePath,
-		&i.DesiredInstanceCount,
-		&i.LastRequestAt,
-		&i.ScaledToZero,
-		&i.ScaleToZeroEnabled,
-		&i.BuildOnlyOnRootChanges,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const projectUpdateBuildOnlyOnRootChanges = `-- name: ProjectUpdateBuildOnlyOnRootChanges :one
-UPDATE projects
-SET build_only_on_root_changes = $2, updated_at = NOW()
-WHERE id = $1 AND org_id = $3
-RETURNING id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at
-`
-
-type ProjectUpdateBuildOnlyOnRootChangesParams struct {
-	ID                     pgtype.UUID `json:"id"`
-	BuildOnlyOnRootChanges bool        `json:"build_only_on_root_changes"`
-	OrgID                  pgtype.UUID `json:"org_id"`
-}
-
-func (q *Queries) ProjectUpdateBuildOnlyOnRootChanges(ctx context.Context, arg ProjectUpdateBuildOnlyOnRootChangesParams) (Project, error) {
-	row := q.db.QueryRow(ctx, projectUpdateBuildOnlyOnRootChanges, arg.ID, arg.BuildOnlyOnRootChanges, arg.OrgID)
 	var i Project
 	err := row.Scan(
 		&i.ID,
@@ -3669,6 +3683,120 @@ func (q *Queries) ServerAllocateIPRange(ctx context.Context) (netip.Prefix, erro
 	return ip_range, err
 }
 
+const serverComponentStatusFindAll = `-- name: ServerComponentStatusFindAll :many
+SELECT server_id, component, status, observed_at, last_success_at, last_error_at, last_error_message, metadata, created_at, updated_at FROM server_component_statuses
+ORDER BY server_id, component
+`
+
+func (q *Queries) ServerComponentStatusFindAll(ctx context.Context) ([]ServerComponentStatus, error) {
+	rows, err := q.db.Query(ctx, serverComponentStatusFindAll)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ServerComponentStatus{}
+	for rows.Next() {
+		var i ServerComponentStatus
+		if err := rows.Scan(
+			&i.ServerID,
+			&i.Component,
+			&i.Status,
+			&i.ObservedAt,
+			&i.LastSuccessAt,
+			&i.LastErrorAt,
+			&i.LastErrorMessage,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const serverComponentStatusFindByServerID = `-- name: ServerComponentStatusFindByServerID :many
+SELECT server_id, component, status, observed_at, last_success_at, last_error_at, last_error_message, metadata, created_at, updated_at FROM server_component_statuses
+WHERE server_id = $1
+ORDER BY component
+`
+
+func (q *Queries) ServerComponentStatusFindByServerID(ctx context.Context, serverID pgtype.UUID) ([]ServerComponentStatus, error) {
+	rows, err := q.db.Query(ctx, serverComponentStatusFindByServerID, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ServerComponentStatus{}
+	for rows.Next() {
+		var i ServerComponentStatus
+		if err := rows.Scan(
+			&i.ServerID,
+			&i.Component,
+			&i.Status,
+			&i.ObservedAt,
+			&i.LastSuccessAt,
+			&i.LastErrorAt,
+			&i.LastErrorMessage,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const serverComponentStatusUpsert = `-- name: ServerComponentStatusUpsert :exec
+INSERT INTO server_component_statuses (
+    server_id, component, status, observed_at, last_success_at, last_error_at, last_error_message, metadata, created_at, updated_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW()
+)
+ON CONFLICT (server_id, component) DO UPDATE SET
+    status = EXCLUDED.status,
+    observed_at = EXCLUDED.observed_at,
+    last_success_at = EXCLUDED.last_success_at,
+    last_error_at = EXCLUDED.last_error_at,
+    last_error_message = EXCLUDED.last_error_message,
+    metadata = EXCLUDED.metadata,
+    updated_at = NOW()
+`
+
+type ServerComponentStatusUpsertParams struct {
+	ServerID         pgtype.UUID        `json:"server_id"`
+	Component        string             `json:"component"`
+	Status           string             `json:"status"`
+	ObservedAt       pgtype.Timestamptz `json:"observed_at"`
+	LastSuccessAt    pgtype.Timestamptz `json:"last_success_at"`
+	LastErrorAt      pgtype.Timestamptz `json:"last_error_at"`
+	LastErrorMessage string             `json:"last_error_message"`
+	Metadata         []byte             `json:"metadata"`
+}
+
+func (q *Queries) ServerComponentStatusUpsert(ctx context.Context, arg ServerComponentStatusUpsertParams) error {
+	_, err := q.db.Exec(ctx, serverComponentStatusUpsert,
+		arg.ServerID,
+		arg.Component,
+		arg.Status,
+		arg.ObservedAt,
+		arg.LastSuccessAt,
+		arg.LastErrorAt,
+		arg.LastErrorMessage,
+		arg.Metadata,
+	)
+	return err
+}
+
 const serverFindAll = `-- name: ServerFindAll :many
 SELECT id, hostname, internal_ip, ip_range, status, last_heartbeat_at, created_at, updated_at FROM servers ORDER BY created_at
 `
@@ -3790,6 +3918,93 @@ UPDATE servers SET last_heartbeat_at = NOW(), updated_at = NOW() WHERE id = $1
 func (q *Queries) ServerHeartbeat(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, serverHeartbeat, id)
 	return err
+}
+
+const serverInstanceUsageLatest = `-- name: ServerInstanceUsageLatest :many
+SELECT
+    di.id AS deployment_instance_id,
+    di.deployment_id,
+    d.project_id,
+    p.name AS project_name,
+    di.vm_id,
+    di.role,
+    di.status,
+    di.created_at,
+    di.updated_at,
+    s.sampled_at,
+    s.cpu_percent,
+    s.memory_rss_bytes,
+    s.disk_read_bytes,
+    s.disk_write_bytes,
+    s.source
+FROM deployment_instances di
+INNER JOIN deployments d ON d.id = di.deployment_id
+  AND d.deleted_at IS NULL
+INNER JOIN projects p ON p.id = d.project_id
+LEFT JOIN LATERAL (
+    SELECT sampled_at, cpu_percent, memory_rss_bytes, disk_read_bytes, disk_write_bytes, source
+    FROM instance_usage_samples
+    WHERE deployment_instance_id = di.id
+    ORDER BY sampled_at DESC
+    LIMIT 1
+) s ON TRUE
+WHERE di.server_id = $1
+  AND di.deleted_at IS NULL
+ORDER BY di.created_at ASC
+`
+
+type ServerInstanceUsageLatestRow struct {
+	DeploymentInstanceID pgtype.UUID        `json:"deployment_instance_id"`
+	DeploymentID         pgtype.UUID        `json:"deployment_id"`
+	ProjectID            pgtype.UUID        `json:"project_id"`
+	ProjectName          string             `json:"project_name"`
+	VmID                 pgtype.UUID        `json:"vm_id"`
+	Role                 string             `json:"role"`
+	Status               string             `json:"status"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	SampledAt            pgtype.Timestamptz `json:"sampled_at"`
+	CpuPercent           pgtype.Float8      `json:"cpu_percent"`
+	MemoryRssBytes       int64              `json:"memory_rss_bytes"`
+	DiskReadBytes        int64              `json:"disk_read_bytes"`
+	DiskWriteBytes       int64              `json:"disk_write_bytes"`
+	Source               string             `json:"source"`
+}
+
+func (q *Queries) ServerInstanceUsageLatest(ctx context.Context, serverID pgtype.UUID) ([]ServerInstanceUsageLatestRow, error) {
+	rows, err := q.db.Query(ctx, serverInstanceUsageLatest, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ServerInstanceUsageLatestRow{}
+	for rows.Next() {
+		var i ServerInstanceUsageLatestRow
+		if err := rows.Scan(
+			&i.DeploymentInstanceID,
+			&i.DeploymentID,
+			&i.ProjectID,
+			&i.ProjectName,
+			&i.VmID,
+			&i.Role,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SampledAt,
+			&i.CpuPercent,
+			&i.MemoryRssBytes,
+			&i.DiskReadBytes,
+			&i.DiskWriteBytes,
+			&i.Source,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const serverRegister = `-- name: ServerRegister :one
