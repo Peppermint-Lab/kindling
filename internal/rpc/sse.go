@@ -10,6 +10,8 @@ import (
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
 
+const ssePollInterval = 500 * time.Millisecond // deployment SSE polling interval
+
 func terminalPhase(phase string) bool {
 	switch phase {
 	case "running", "failed", "stopped":
@@ -94,7 +96,7 @@ func (a *API) streamDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(ssePollInterval)
 	defer ticker.Stop()
 
 	for {

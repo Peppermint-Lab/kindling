@@ -18,6 +18,8 @@ import (
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
 
+const dnsLookupTimeout = 15 * time.Second // timeout for DNS TXT challenge verification
+
 const kindlingChallengePrefix = "_kindling-challenge."
 
 type dnsChallengeOut struct {
@@ -75,7 +77,7 @@ func newVerificationToken() (string, error) {
 
 func challengeTXTFound(ctx context.Context, recordName, want string) (bool, error) {
 	resolver := net.DefaultResolver
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, dnsLookupTimeout)
 	defer cancel()
 	txts, err := resolver.LookupTXT(ctx, recordName)
 	if err != nil {

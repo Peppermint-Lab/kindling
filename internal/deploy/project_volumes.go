@@ -31,11 +31,14 @@ func isProjectVolumeUnavailableError(err error) bool {
 	return errors.As(err, &target)
 }
 
+const volumeUnavailableRetryDelay = 30 * time.Second // retry delay when project volume is unavailable
+const volumeServerHeartbeatCutoff = 3 * time.Minute  // max age of server heartbeat for volume placement
+
 func projectVolumeRetryDelay(err error) time.Duration {
 	if isProjectVolumeUnavailableError(err) {
-		return 30 * time.Second
+		return volumeUnavailableRetryDelay
 	}
-	return 5 * time.Second
+	return reconcileRetryInterval
 }
 
 func projectVolumeServerStatusMessage(serverID pgtype.UUID, status string) string {
@@ -212,7 +215,7 @@ func (d *Deployer) findLeastLoadedCloudHypervisorServer(ctx context.Context) (qu
 		load   int64
 	}
 	candidates := make([]candidate, 0, len(servers))
-	cutoff := time.Now().UTC().Add(-3 * time.Minute)
+	cutoff := time.Now().UTC().Add(-volumeServerHeartbeatCutoff)
 	for _, server := range servers {
 		if server.Status != "active" || !server.ID.Valid {
 			continue

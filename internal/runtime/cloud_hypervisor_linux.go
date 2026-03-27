@@ -39,6 +39,14 @@ const (
 	cloudHypervisorGuestBridgeVsockPort = 1025
 )
 
+// Cloud Hypervisor duration constants.
+const chGuestReadyTimeout = 180 * time.Second       // max wait for guest agent ready signal
+const chTCPBridgeTimeout = 5 * time.Second           // max wait for host TCP bridge port to open
+const chAPIReadyTimeout = 10 * time.Second            // max wait for cloud-hypervisor API socket
+const chAPIReadyPollInterval = 100 * time.Millisecond // poll interval when waiting for API/TCP
+const chAPIClientTimeout = 30 * time.Second           // HTTP client timeout for API socket calls
+const chTCPDialTimeout = 200 * time.Millisecond       // per-attempt TCP dial timeout when waiting for port
+
 type CloudHypervisorRuntime struct {
 	mu        sync.Mutex
 	instances map[uuid.UUID]*cloudHypervisorInstance
@@ -281,7 +289,7 @@ func (r *CloudHypervisorRuntime) startPreparedVM(ctx context.Context, inst Insta
 	r.instances[inst.ID] = ai
 	r.mu.Unlock()
 
-	if err := waitForGuestReady(runCtx, ai.ready, 180*time.Second); err != nil {
+	if err := waitForGuestReady(runCtx, ai.ready, chGuestReadyTimeout); err != nil {
 		slog.Error("cloud-hypervisor guest never became ready",
 			"id", inst.ID,
 			"guest_ip", guestIP,
@@ -320,7 +328,7 @@ func (r *CloudHypervisorRuntime) startPreparedVM(ctx context.Context, inst Insta
 		_ = os.RemoveAll(workDir)
 		return "", fmt.Errorf("write bridge pid: %w", err)
 	}
-	if err := waitForTCPPort(runCtx, net.JoinHostPort("127.0.0.1", strconv.Itoa(ai.hostPort)), 5*time.Second); err != nil {
+	if err := waitForTCPPort(runCtx, net.JoinHostPort("127.0.0.1", strconv.Itoa(ai.hostPort)), chTCPBridgeTimeout); err != nil {
 		cancel()
 		_ = terminatePID(bridgeCmd.Process.Pid)
 		_ = os.RemoveAll(workDir)
@@ -561,7 +569,7 @@ func (r *CloudHypervisorRuntime) FinalizeMigrationTarget(ctx context.Context, id
 		_ = os.RemoveAll(prepared.workDir)
 		return "", StartMetadata{}, fmt.Errorf("start migration bridge: %w", err)
 	}
-	if err := waitForTCPPort(ctx, net.JoinHostPort("127.0.0.1", strconv.Itoa(prepared.hostPort)), 5*time.Second); err != nil {
+	if err := waitForTCPPort(ctx, net.JoinHostPort("127.0.0.1", strconv.Itoa(prepared.hostPort)), chTCPBridgeTimeout); err != nil {
 		_ = terminatePID(bridgeCmd.Process.Pid)
 		_ = terminatePID(prepared.cmd.Process.Pid)
 		_ = os.RemoveAll(prepared.workDir)
@@ -884,7 +892,7 @@ func sharedRootfsRefFromWorkDisk(sharedDir, workDisk string) string {
 }
 
 func waitForCloudHypervisorAPI(ctx context.Context, apiSocket string) error {
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(chAPIReadyTimeout)
 	for time.Now().Before(deadline) {
 		client := cloudHypervisorAPIClient(apiSocket)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost/api/v1/vmm.ping", nil)
@@ -900,7 +908,7 @@ func waitForCloudHypervisorAPI(ctx context.Context, apiSocket string) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(chAPIReadyPollInterval):
 		}
 	}
 	return fmt.Errorf("cloud-hypervisor api socket %s did not become ready", apiSocket)
@@ -908,7 +916,7 @@ func waitForCloudHypervisorAPI(ctx context.Context, apiSocket string) error {
 
 func cloudHypervisorAPIClient(apiSocket string) *http.Client {
 	return &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: chAPIClientTimeout,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				var d net.Dialer
@@ -995,7 +1003,7 @@ func terminatePID(pid int) error {
 func waitForTCPPort(ctx context.Context, addr string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		conn, err := net.DialTimeout("tcp", addr, chTCPDialTimeout)
 		if err == nil {
 			_ = conn.Close()
 			return nil
@@ -1003,7 +1011,7 @@ func waitForTCPPort(ctx context.Context, addr string, timeout time.Duration) err
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(chAPIReadyPollInterval):
 		}
 	}
 	return fmt.Errorf("timed out waiting for %s", addr)

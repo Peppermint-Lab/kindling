@@ -14,6 +14,8 @@ import (
 	"github.com/kindlingvm/kindling/internal/shared/httputil"
 )
 
+const sessionDuration = 30 * 24 * time.Hour // database session expiry (30 days)
+
 func writeUnauthorized(w http.ResponseWriter) {
 	httputil.WriteAPIError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
 }
@@ -255,7 +257,7 @@ func ClearSessionCookie(w http.ResponseWriter, r *http.Request, secure bool) {
 
 // SessionDBExpiry returns the session expiry timestamp stored in the database.
 func SessionDBExpiry() time.Time {
-	return time.Now().UTC().Add(30 * 24 * time.Hour)
+	return time.Now().UTC().Add(sessionDuration)
 }
 
 // RequestUsesHTTPS is a conservative signal for the Secure cookie flag when TLS terminates locally.

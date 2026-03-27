@@ -19,6 +19,8 @@ import (
 	extoauth "github.com/kindlingvm/kindling/internal/oauth"
 )
 
+const authStateTTL = 10 * time.Minute // auth state cookie + expiry lifetime
+
 const externalAuthStateCookieName = "kindling_auth_flow"
 
 var externalAuthHTTPClient = &http.Client{Timeout: 15 * time.Second}
@@ -360,7 +362,7 @@ func (a *API) beginExternalAuth(w http.ResponseWriter, r *http.Request, provider
 		Nonce:        nonce,
 		LinkUserID:   strings.TrimSpace(linkUserID),
 		ReturnTo:     sanitizeReturnTo(returnTo, "/"),
-		ExpiresAt:    time.Now().Add(10 * time.Minute).Unix(),
+		ExpiresAt:    time.Now().Add(authStateTTL).Unix(),
 	}); err != nil {
 		return fmt.Errorf("set auth state cookie: %w", err)
 	}
@@ -708,7 +710,7 @@ func (a *API) setExternalAuthState(w http.ResponseWriter, r *http.Request, state
 		Name:     externalAuthStateCookieName,
 		Value:    base64.RawURLEncoding.EncodeToString(cipher),
 		Path:     "/api/auth/providers",
-		MaxAge:   int((10 * time.Minute).Seconds()),
+		MaxAge:   int(authStateTTL.Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   auth.RequestUsesHTTPS(r),

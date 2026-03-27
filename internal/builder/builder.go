@@ -23,6 +23,9 @@ import (
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
+const buildStuckTimeout = 15 * time.Minute   // max allowed build time before marking as stuck/failed
+const releaseLeaseTimeout = 5 * time.Second   // timeout for releasing a build lease after completion
+
 // Config holds builder configuration.
 type Config struct {
 	// GitHubToken is used to download source tarballs.
@@ -85,7 +88,7 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 
 	// Stuck build detection (15 min timeout).
 	if build.Status == "building" && build.BuildingAt.Valid {
-		if time.Since(build.BuildingAt.Time) > 15*time.Minute {
+		if time.Since(build.BuildingAt.Time) > buildStuckTimeout {
 			slog.Warn("build stuck, marking failed", "build_id", buildID)
 			return b.q.BuildMarkFailed(ctx, build.ID)
 		}
@@ -551,7 +554,9 @@ func (b *Builder) log(ctx context.Context, buildID pgtype.UUID, level, message s
 }
 
 func (b *Builder) releaseLease(buildID uuid.UUID) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// context.Background() is intentional: the build goroutine's context may already be
+	// cancelled when we release the lease, so we use an independent short-lived context.
+	ctx, cancel := context.WithTimeout(context.Background(), releaseLeaseTimeout)
 	defer cancel()
 	b.q.BuildReleaseLease(ctx, queries.BuildReleaseLeaseParams{
 		ID:           pguuid.ToPgtype(buildID),

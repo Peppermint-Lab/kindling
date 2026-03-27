@@ -16,6 +16,8 @@ import (
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
+const volumeOpsHeartbeatCutoff = 3 * time.Minute // max age of server heartbeat for volume ops placement
+
 type projectVolumeOperationRequest struct {
 	BackupID       string `json:"backup_id,omitempty"`
 	BackupKind     string `json:"backup_kind,omitempty"`
@@ -375,7 +377,7 @@ func (a *API) activeCloudHypervisorWorkers(ctx context.Context) ([]queries.Serve
 		}
 	}
 	active := make([]queries.Server, 0, len(servers))
-	cutoff := time.Now().UTC().Add(-3 * time.Minute)
+	cutoff := time.Now().UTC().Add(-volumeOpsHeartbeatCutoff)
 	for _, server := range servers {
 		if !server.ID.Valid || server.Status != "active" {
 			continue

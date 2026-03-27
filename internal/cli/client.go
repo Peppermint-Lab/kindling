@@ -14,6 +14,8 @@ import (
 	"github.com/kindlingvm/kindling/internal/auth"
 )
 
+const cliHTTPTimeout = 120 * time.Second // HTTP client timeout for CLI API calls
+
 // Client calls the Kindling control-plane REST API.
 type Client struct {
 	BaseURL      string
@@ -31,7 +33,7 @@ func NewClient(p Profile) (*Client, error) {
 	if _, err := url.Parse(base); err != nil {
 		return nil, fmt.Errorf("invalid base URL: %w", err)
 	}
-	c := &http.Client{Timeout: 120 * time.Second}
+	c := &http.Client{Timeout: cliHTTPTimeout}
 	return &Client{
 		BaseURL:      base,
 		APIKey:       strings.TrimSpace(p.APIKey),

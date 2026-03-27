@@ -14,12 +14,14 @@ import (
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
 
+const defaultColdStartTimeout = 2 * time.Minute // default cold start timeout for edge proxy
+
 // DefaultSnapshot returns defaults used before the first successful Reload.
 func DefaultSnapshot() *Snapshot {
 	return &Snapshot{
 		RegistryURL:                       "kindling",
 		EdgeHTTPAddr:                      ":80",
-		ColdStartTimeout:                  2 * time.Minute,
+		ColdStartTimeout:                  defaultColdStartTimeout,
 		ScaleToZeroIdleSeconds:            300,
 		PreviewRetentionAfterCloseSeconds: 3600,
 		PreviewIdleSeconds:                300,
@@ -62,7 +64,7 @@ func LoadSnapshot(ctx context.Context, q *queries.Queries, serverID uuid.UUID, m
 	s := &Snapshot{
 		RegistryURL:                       "kindling",
 		EdgeHTTPAddr:                      ":80",
-		ColdStartTimeout:                  2 * time.Minute,
+		ColdStartTimeout:                  defaultColdStartTimeout,
 		ScaleToZeroIdleSeconds:            300,
 		PreviewRetentionAfterCloseSeconds: 3600,
 		PreviewIdleSeconds:                300,

@@ -29,6 +29,8 @@ const (
 	tcpBridgeVsockPort uint32 = 1025
 )
 
+const appleGuestReadyTimeout = 30 * time.Second // max wait for Apple VZ guest agent ready
+
 // AppleRuntime runs Linux microVMs via Apple Virtualization Framework.
 // macOS only (Apple Silicon or Intel with Hypervisor.framework).
 type AppleRuntime struct {
@@ -266,7 +268,7 @@ func (r *AppleRuntime) startPreparedVM(ctx context.Context, inst Instance, appDi
 	r.instances[inst.ID] = ai
 	r.mu.Unlock()
 
-	if err := waitForGuestReady(runCtx, ai.ready, 30*time.Second); err != nil {
+	if err := waitForGuestReady(runCtx, ai.ready, appleGuestReadyTimeout); err != nil {
 		cancel()
 		return "", fmt.Errorf("wait for guest ready: %w", err)
 	}

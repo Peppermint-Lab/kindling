@@ -16,6 +16,10 @@ import (
 	"github.com/google/uuid"
 )
 
+const defaultRetryAfter = 5 * time.Second   // default retry interval after reconciliation failure
+const defaultReconcileAfter = 1 * time.Hour // default re-check interval after successful reconciliation
+const schedulerTickInterval = 1 * time.Second // tick interval for scanning the schedule queue
+
 // ReconcileFunc is called to reconcile an entity by its ID.
 // Returning an error schedules a retry.
 type ReconcileFunc func(ctx context.Context, id uuid.UUID) error
@@ -59,10 +63,10 @@ func New(cfg Config) *Scheduler {
 		cfg.Workers = 5
 	}
 	if cfg.RetryAfter <= 0 {
-		cfg.RetryAfter = 5 * time.Second
+		cfg.RetryAfter = defaultRetryAfter
 	}
 	if cfg.DefaultAfter <= 0 {
-		cfg.DefaultAfter = 1 * time.Hour
+		cfg.DefaultAfter = defaultReconcileAfter
 	}
 	return &Scheduler{
 		name:         cfg.Name,
@@ -107,7 +111,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 	}
 
 	// Tick loop: scan schedule and dispatch due items
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(schedulerTickInterval)
 	defer ticker.Stop()
 
 	for {

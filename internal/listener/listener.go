@@ -53,6 +53,8 @@ type Config struct {
 	OnProjectVolumeOperation Handler
 }
 
+const walStandbyTimeout = 10 * time.Second // WAL standby status update interval
+
 // Listener streams PostgreSQL WAL changes and dispatches to handlers.
 type Listener struct {
 	cfg       Config
@@ -78,7 +80,7 @@ func New(cfg Config) *Listener {
 		cfg:            cfg,
 		relations:      make(map[uint32]*pglogrepl.RelationMessageV2),
 		typeMap:        pgtype.NewMap(),
-		standbyTimeout: 10 * time.Second,
+		standbyTimeout: walStandbyTimeout,
 	}
 }
 

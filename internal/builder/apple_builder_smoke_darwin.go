@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+const builderSmokeTestTimeout = 4 * time.Minute // timeout for builder VM smoke test
+
 // SmokeTestAppleBuilderVM boots the builder microVM (same paths as serve on macOS) and runs
 // `buildah version` in the guest. Used by `kindling debug builder-vm-smoke`; must run from a
 // binary signed with the Virtualization entitlement (see Makefile / contrib/kindling.entitlements).
@@ -42,7 +44,7 @@ func SmokeTestAppleBuilderVM(ctx context.Context) error {
 	}
 	defer vm.Close()
 
-	runCtx, cancel := context.WithTimeout(ctx, 4*time.Minute)
+	runCtx, cancel := context.WithTimeout(ctx, builderSmokeTestTimeout)
 	defer cancel()
 
 	if err := vm.start(runCtx); err != nil {

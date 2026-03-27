@@ -13,6 +13,8 @@ import (
 	"github.com/google/uuid"
 )
 
+const dashboardSSEKeepaliveInterval = 25 * time.Second // SSE keepalive ping interval
+
 const (
 	// Dashboard invalidate topics (coarse; clients refetch REST).
 	TopicProjects = "projects"
@@ -198,7 +200,7 @@ func (a *API) streamDashboardEvents(w http.ResponseWriter, r *http.Request) {
 	ch, unsub := a.dashboardEvents.Subscribe(r.Context(), topics)
 	defer unsub()
 
-	ticker := time.NewTicker(25 * time.Second)
+	ticker := time.NewTicker(dashboardSSEKeepaliveInterval)
 	defer ticker.Stop()
 
 	writeEvent := func(name string, payload any) error {

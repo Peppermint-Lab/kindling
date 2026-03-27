@@ -10,6 +10,13 @@ import (
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
 
+// Usage dashboard duration constants.
+const usageWindow6h = 6 * time.Hour          // 6-hour usage window
+const usageWindow7d = 7 * 24 * time.Hour     // 7-day usage window
+const usageWindow24h = 24 * time.Hour         // 24-hour usage window (default)
+const usageCurrentLookback = 2 * time.Hour    // how far back to query for "current" resource usage
+const usageHTTPRecentWindow = 15 * time.Minute // recent HTTP usage aggregation window
+
 func (a *API) registerUsageRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/projects/{id}/usage/current", a.getProjectUsageCurrent)
 	mux.HandleFunc("GET /api/projects/{id}/usage/history", a.getProjectUsageHistory)
@@ -20,13 +27,13 @@ func parseUsageWindow(s string) time.Duration {
 	case "1h":
 		return time.Hour
 	case "6h":
-		return 6 * time.Hour
+		return usageWindow6h
 	case "7d", "168h":
-		return 7 * 24 * time.Hour
+		return usageWindow7d
 	case "24h", "1d", "":
-		return 24 * time.Hour
+		return usageWindow24h
 	default:
-		return 24 * time.Hour
+		return usageWindow24h
 	}
 }
 
@@ -49,7 +56,7 @@ func (a *API) getProjectUsageCurrent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	since := time.Now().UTC().Add(-2 * time.Hour)
+	since := time.Now().UTC().Add(-usageCurrentLookback)
 	latest, err := a.q.InstanceUsageLatestPerInstance(ctx, queries.InstanceUsageLatestPerInstanceParams{
 		ProjectID: id,
 		SampledAt: pgtype.Timestamptz{Time: since, Valid: true},
@@ -106,7 +113,7 @@ func (a *API) getProjectUsageCurrent(w http.ResponseWriter, r *http.Request) {
 		cpuAvg = &v
 	}
 
-	httpFrom := time.Now().UTC().Add(-15 * time.Minute)
+	httpFrom := time.Now().UTC().Add(-usageHTTPRecentWindow)
 	httpTo := time.Now().UTC()
 	httpRows, err := a.q.ProjectHTTPUsageRollupsAggregated(ctx, queries.ProjectHTTPUsageRollupsAggregatedParams{
 		ProjectID:     id,

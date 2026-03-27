@@ -13,10 +13,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/shared/conv"
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
+
+const migrationCutoverDeadline = 10 * time.Minute // deadline for live migration cutover
 
 type liveMigrationWorkerMetadata struct {
 	Runtime                string
@@ -154,7 +157,7 @@ func (a *API) postDeploymentInstanceLiveMigrate(w http.ResponseWriter, r *http.R
 		State:                "pending",
 		Mode:                 "stop_and_copy",
 		ReceiveTokenHash:     token[:],
-		CutoverDeadlineAt:    pgtype.Timestamptz{Time: time.Now().Add(10 * time.Minute), Valid: true},
+		CutoverDeadlineAt:    pgtype.Timestamptz{Time: time.Now().Add(migrationCutoverDeadline), Valid: true},
 	})
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "instance_migration_create", err)

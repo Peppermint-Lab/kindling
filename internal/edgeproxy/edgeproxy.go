@@ -26,6 +26,14 @@ import (
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
 
+// Edge proxy duration constants.
+const defaultColdStartTimeout = 2 * time.Minute    // default cold start wait for first-request wake
+const defaultHTTPSWriteTimeout = 30 * time.Second   // HTTPS server write timeout baseline
+const coldStartMargin = 15 * time.Second             // extra margin added to HTTPS write timeout for cold starts
+const httpServerReadTimeout = 30 * time.Second       // HTTP server read timeout
+const httpServerWriteTimeout = 30 * time.Second      // HTTP server write timeout
+const coldStartRoutePollInterval = 50 * time.Millisecond // poll interval waiting for route during cold start
+
 // edgeProxyRetryKey marks a request so we only reload-and-retry once per client request.
 type edgeProxyRetryKey struct{}
 
@@ -129,11 +137,11 @@ func New(cfg Config) (*Service, error) {
 	}
 	cold := cfg.ColdStartTimeout
 	if cold <= 0 {
-		cold = 2 * time.Minute
+		cold = defaultColdStartTimeout
 	}
-	httpsWT := 30 * time.Second
-	if cold+15*time.Second > httpsWT {
-		httpsWT = cold + 15*time.Second
+	httpsWT := defaultHTTPSWriteTimeout
+	if cold+coldStartMargin > httpsWT {
+		httpsWT = cold + coldStartMargin
 	}
 
 	q := queries.New(cfg.Pool)
@@ -189,8 +197,8 @@ func New(cfg Config) (*Service, error) {
 	s.httpServer = &http.Server{
 		Addr:         cfg.HTTPAddr,
 		Handler:      http.HandlerFunc(s.serveHTTP),
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		ReadTimeout:  httpServerReadTimeout,
+		WriteTimeout: httpServerWriteTimeout,
 	}
 
 	return s, nil
@@ -213,7 +221,7 @@ func (s *Service) Start(ctx context.Context) error {
 	s.httpsServer = &http.Server{
 		Addr:         s.cfg.HTTPSAddr,
 		Handler:      http.HandlerFunc(s.serveHTTPS),
-		ReadTimeout:  30 * time.Second,
+		ReadTimeout:  httpServerReadTimeout,
 		WriteTimeout: s.httpsWriteTimeout,
 		TLSConfig:    s.certConfig.TLSConfig(),
 	}
@@ -469,7 +477,7 @@ func (s *Service) serveHTTPS(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			http.Error(w, "Request Timeout", http.StatusRequestTimeout)
 			return
-		case <-time.After(50 * time.Millisecond):
+		case <-time.After(coldStartRoutePollInterval):
 		}
 	}
 	http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
@@ -603,6 +611,8 @@ func (s *Service) reverseProxy(w http.ResponseWriter, r *http.Request, host stri
 	if !s.serverID.Valid || !projID.Valid || !depID.Valid {
 		return
 	}
+	// context.Background() is intentional: this is a fire-and-forget goroutine that
+	// records HTTP usage after the request completes; the request context may already be done.
 	go s.recordAppHTTPUsage(context.Background(), projID, depID, statusCaptured, inBytes, mw.n)
 }
 

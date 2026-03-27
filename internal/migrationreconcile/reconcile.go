@@ -23,6 +23,8 @@ import (
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
+const migrationCutoverDeadline = 10 * time.Minute // deadline for migration cutover completion
+
 type Handler struct {
 	q           *queries.Queries
 	pool        *pgxpool.Pool
@@ -127,7 +129,7 @@ func (h *Handler) prepareDestination(ctx context.Context, mig queries.InstanceMi
 	_, err = h.q.InstanceMigrationUpdatePrepared(ctx, queries.InstanceMigrationUpdatePreparedParams{
 		ID:                mig.ID,
 		ReceiveAddr:       receiveAddr,
-		CutoverDeadlineAt: pgtype.Timestamptz{Time: time.Now().Add(10 * time.Minute), Valid: true},
+		CutoverDeadlineAt: pgtype.Timestamptz{Time: time.Now().Add(migrationCutoverDeadline), Valid: true},
 	})
 	if err != nil {
 		return fmt.Errorf("update migration prepared state: %w", err)

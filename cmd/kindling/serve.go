@@ -44,6 +44,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Serve command duration constants.
+const serverHeartbeatInterval = 10 * time.Second    // how often to write server heartbeat rows
+const componentHeartbeatInterval = 10 * time.Second // heartbeat interval for API/edge/worker components
+const usagePollerInterval = 15 * time.Second         // resource usage polling interval
+const walBackoffMax = 30 * time.Second               // max backoff for WAL listener reconnects
+const shutdownGracePeriod = 15 * time.Second         // graceful shutdown timeout for edge proxy
+const volumeRecoveryInterval = 1 * time.Minute       // volume operation recovery sweep interval
+const periodicReconcileInterval = 30 * time.Second   // interval for idle scale-down, preview cleanup, etc.
+
 func serveCmd() *cobra.Command {
 	var (
 		listenAddr    string
@@ -152,7 +161,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		slog.Info("server registered", "server_id", serverID)
 
 		go func() {
-			ticker := time.NewTicker(10 * time.Second)
+			ticker := time.NewTicker(serverHeartbeatInterval)
 			defer ticker.Stop()
 			for {
 				select {
@@ -244,7 +253,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 			slog.Info("preserving workloads on shutdown", "env", "KINDLING_PRESERVE_WORKLOADS_ON_SHUTDOWN")
 		}
 		slog.Info("runtime detected", "runtime", rt.Name())
-		go runServerComponentHeartbeat(ctx, q, serverID, "worker", 10*time.Second, func() map[string]any {
+		go runServerComponentHeartbeat(ctx, q, serverID, "worker", componentHeartbeatInterval, func() map[string]any {
 			meta := map[string]any{"runtime": rt.Name()}
 			if rt.Name() == "cloud-hypervisor" {
 				meta["live_migration_enabled"] = rt.Supports(crunrt.CapabilityLiveMigration)
@@ -257,7 +266,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 			}
 			return meta
 		})
-		go usage.RunResourcePoller(ctx, q, serverID, rt, 15*time.Second, func(report usage.PollerStatusReport) {
+		go usage.RunResourcePoller(ctx, q, serverID, rt, usagePollerInterval, func(report usage.PollerStatusReport) {
 			if err := persistServerComponentStatus(ctx, q, serverID, serverComponentStatusUpdate{
 				Component:        "usage_poller",
 				Status:           report.Status,
@@ -272,10 +281,10 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		})
 	}
 	if serverTracked && components.api {
-		go runServerComponentHeartbeat(ctx, q, serverID, "api", 10*time.Second, nil)
+		go runServerComponentHeartbeat(ctx, q, serverID, "api", componentHeartbeatInterval, nil)
 	}
 	if serverTracked && components.edge {
-		go runServerComponentHeartbeat(ctx, q, serverID, "edge", 10*time.Second, nil)
+		go runServerComponentHeartbeat(ctx, q, serverID, "edge", componentHeartbeatInterval, nil)
 	}
 
 	var (
@@ -537,10 +546,10 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 						return
 					case <-time.After(backoff):
 					}
-					if backoff < 30*time.Second {
+					if backoff < walBackoffMax {
 						backoff *= 2
-						if backoff > 30*time.Second {
-							backoff = 30 * time.Second
+						if backoff > walBackoffMax {
+							backoff = walBackoffMax
 						}
 					}
 					continue
@@ -585,7 +594,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		slog.Info("edge proxy started", "https", snap.EdgeHTTPSAddr, "http", edgeHTTP)
 		go func() {
 			<-ctx.Done()
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGracePeriod)
 			defer cancel()
 			_ = edgeSvc.Stop(shutdownCtx)
 		}()
@@ -658,7 +667,7 @@ func runProjectVolumeOperationRecoveryLoop(ctx context.Context, q *queries.Queri
 	if q == nil || sched == nil {
 		return
 	}
-	ticker := time.NewTicker(1 * time.Minute)
+	ticker := time.NewTicker(volumeRecoveryInterval)
 	defer ticker.Stop()
 	for {
 		if err := volumeops.QueueRecoverableOperations(ctx, q, sched); err != nil && ctx.Err() == nil {
@@ -817,7 +826,7 @@ func loopbackAPIOrigin(listenAddr string) string {
 // so the deployment reconciler can drain instances. Only one process holds the
 // advisory lock per cluster at a time.
 func runIdleScaleDownLoop(ctx context.Context, databaseURL string, q *queries.Queries, deploymentReconciler *reconciler.Scheduler, cfgMgr *config.Manager) {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(periodicReconcileInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -834,7 +843,7 @@ func runIdleScaleDownLoop(ctx context.Context, databaseURL string, q *queries.Qu
 }
 
 func runPreviewCleanupLoop(ctx context.Context, databaseURL string, q *queries.Queries, deploymentReconciler *reconciler.Scheduler) {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(periodicReconcileInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -847,7 +856,7 @@ func runPreviewCleanupLoop(ctx context.Context, databaseURL string, q *queries.Q
 }
 
 func runPreviewIdleScaleDownLoop(ctx context.Context, databaseURL string, q *queries.Queries, deploymentReconciler *reconciler.Scheduler, cfgMgr *config.Manager) {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(periodicReconcileInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -1019,7 +1028,7 @@ func persistServerComponentStatus(ctx context.Context, q *queries.Queries, serve
 
 func runServerComponentHeartbeat(ctx context.Context, q *queries.Queries, serverID uuid.UUID, component string, every time.Duration, metadataFn func() map[string]any) {
 	if every <= 0 {
-		every = 10 * time.Second
+		every = componentHeartbeatInterval
 	}
 	write := func() {
 		now := time.Now().UTC()

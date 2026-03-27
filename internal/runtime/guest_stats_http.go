@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+const guestStatsDefaultTimeout = 5 * time.Second // default deadline for guest stats HTTP request
+
 type guestStatsJSON struct {
 	CPUNanosCumulative int64     `json:"cpu_nanos_cumulative"`
 	MemoryRSSBytes     int64     `json:"memory_rss_bytes"`
@@ -23,7 +25,7 @@ func resourceStatsFromGuestHTTP(ctx context.Context, c net.Conn) (ResourceStats,
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = c.SetDeadline(deadline)
 	} else {
-		_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+		_ = c.SetDeadline(time.Now().Add(guestStatsDefaultTimeout))
 	}
 	if _, err := fmt.Fprintf(c, "GET /stats HTTP/1.0\r\nHost: localhost\r\n\r\n"); err != nil {
 		return ResourceStats{}, err

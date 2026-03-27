@@ -13,6 +13,8 @@ import (
 	"github.com/kindlingvm/kindling/internal/runtime"
 )
 
+const defaultPollerInterval = 15 * time.Second // default resource stats polling interval
+
 type PollerStatusReport struct {
 	ObservedAt       time.Time
 	LastSuccessAt    *time.Time
@@ -35,7 +37,7 @@ type pollResult struct {
 // deployment instance on this server and writes instance_usage_samples rows.
 func RunResourcePoller(ctx context.Context, q *queries.Queries, serverID uuid.UUID, rt runtime.Runtime, every time.Duration, report PollerStatusReporter) {
 	if every <= 0 {
-		every = 15 * time.Second
+		every = defaultPollerInterval
 	}
 	tick := time.NewTicker(every)
 	defer tick.Stop()

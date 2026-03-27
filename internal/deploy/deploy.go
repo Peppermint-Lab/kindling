@@ -25,6 +25,13 @@ import (
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
+// Duration constants for the deployment reconciler.
+const buildPollRetryInterval = 10 * time.Second   // retry delay while a build is still in progress
+const reconcileRetryInterval = 5 * time.Second     // default retry for instance/volume/ready waits
+const healthCheckTimeout = 90 * time.Second        // max wait for workload health check after start/resume
+const healthCheckClientTimeout = 10 * time.Second  // per-probe HTTP client timeout
+const healthCheckPollInterval = 2 * time.Second    // sleep between successive health check probes
+
 // Deployer orchestrates deployments via reconciliation.
 type Deployer struct {
 	q                    *queries.Queries
@@ -209,7 +216,7 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 	}
 	if !build.ImageID.Valid {
 		logger.Info("build in progress, will retry")
-		d.scheduleRetry(deploymentID, 10*time.Second)
+		d.scheduleRetry(deploymentID, buildPollRetryInterval)
 		return nil
 	}
 
@@ -228,7 +235,7 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 				return fmt.Errorf("stop old deployments for volume: %w", err)
 			}
 			if drained {
-				d.scheduleRetry(deploymentID, 5*time.Second)
+				d.scheduleRetry(deploymentID, reconcileRetryInterval)
 				return nil
 			}
 		}
@@ -332,7 +339,7 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 	for _, inst := range instList {
 		if err := d.reconcileOneInstance(ctx, dep, inst, imageRef, env, templateRef, templateSourceVMID, persistentVolume, logger); err != nil {
 			logger.Info("instance reconcile deferred", "instance_id", pguuid.FromPgtype(inst.ID), "error", err)
-			d.scheduleRetry(deploymentID, 5*time.Second)
+			d.scheduleRetry(deploymentID, reconcileRetryInterval)
 			return nil
 		}
 	}
@@ -371,7 +378,7 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 	ready := d.countInstancesReady(ctx, instList)
 	if ready < int(desired) {
 		logger.Info("waiting for instances to become ready", "ready", ready, "desired", desired)
-		d.scheduleRetry(deploymentID, 5*time.Second)
+		d.scheduleRetry(deploymentID, reconcileRetryInterval)
 		return nil
 	}
 
@@ -756,7 +763,7 @@ func (d *Deployer) reconcileOneInstance(
 				}
 				return fmt.Errorf("resume instance: %w", err)
 			}
-			if requiresExternalHealthCheck(d.rt.Name()) && !d.waitHealthCheckLocalForwarded(ip, 90*time.Second) {
+			if requiresExternalHealthCheck(d.rt.Name()) && !d.waitHealthCheckLocalForwarded(ip, healthCheckTimeout) {
 				return fmt.Errorf("health check failed after resume")
 			}
 			if _, err := d.q.VMUpdateLifecycleMetadata(ctx, queries.VMUpdateLifecycleMetadataParams{
@@ -920,7 +927,7 @@ func (d *Deployer) reconcileOneInstance(
 		d.fillLiveMigrationMetadata(ctx, instID, &meta)
 	}
 
-	if requiresExternalHealthCheck(d.rt.Name()) && !d.waitHealthCheckLocalForwarded(ip, 90*time.Second) {
+	if requiresExternalHealthCheck(d.rt.Name()) && !d.waitHealthCheckLocalForwarded(ip, healthCheckTimeout) {
 		_ = d.rt.Stop(ctx, instID)
 		_, _ = d.q.DeploymentInstanceUpdateStatus(ctx, queries.DeploymentInstanceUpdateStatusParams{
 			ID:     inst.ID,
@@ -1054,7 +1061,7 @@ func (d *Deployer) templateSourceForDeployment(ctx context.Context, instList []q
 }
 
 func (d *Deployer) healthCheck(addr string, port int) bool {
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: healthCheckClientTimeout}
 	url := addr
 	if !strings.Contains(addr, ":") {
 		url = fmt.Sprintf("%s:%d", addr, port)
@@ -1100,7 +1107,7 @@ func (d *Deployer) waitHealthCheckLocalForwarded(runtimeURL string, maxWait time
 		if d.healthCheckLocalForwarded(runtimeURL) {
 			return true
 		}
-		time.Sleep(2 * time.Second)
+		time.Sleep(healthCheckPollInterval)
 	}
 	return false
 }
