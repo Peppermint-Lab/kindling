@@ -13,7 +13,6 @@ import {
   dashboardEventTopics,
   subscribeDashboardEvents,
 } from "@/lib/api"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
@@ -29,7 +28,6 @@ import {
 } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
-  ArrowLeftIcon,
   RocketIcon,
   TrashIcon,
   CopyIcon,
@@ -39,10 +37,32 @@ import {
   CloudDownloadIcon,
   GlobeIcon,
   BarChart3Icon,
+  ChevronRightIcon,
 } from "lucide-react"
 import { DeploymentReachability } from "@/components/deployment-reachability"
 import { phaseLabel, phaseVariant } from "@/lib/deploy-badge"
 import { selectLatestRunningDeployment } from "@/lib/deployment-reachability"
+import {
+  PageContainer,
+  PageHeader,
+  PageTitle,
+  PageDescription,
+  PageActions,
+  PageBackLink,
+  PageSection,
+  MetadataGrid,
+  MetadataItem,
+  EmptyState,
+  PageErrorBanner,
+} from "@/components/page-layout"
+import {
+  Surface,
+  SurfaceHeader,
+  SurfaceTitle,
+  SurfaceDescription,
+  SurfaceBody,
+  SurfaceSeparator,
+} from "@/components/page-surface"
 
 async function copyText(label: string, text: string) {
   try {
@@ -68,8 +88,8 @@ function MiniBars({ values, label }: { values: number[]; label?: string }) {
   const max = Math.max(1, ...values)
   return (
     <div>
-      {label != null && label !== "" ? <p className="text-xs text-muted-foreground mb-2">{label}</p> : null}
-      <div className="flex items-end gap-px h-20 w-full border rounded-md p-2 bg-muted/20">
+      {label != null && label !== "" ? <p className="stat-label mb-2">{label}</p> : null}
+      <div className="flex items-end gap-px h-20 w-full border rounded-lg p-2 bg-muted/20">
         {values.length === 0 ? (
           <p className="text-xs text-muted-foreground w-full text-center self-center">No data yet</p>
         ) : (
@@ -385,19 +405,22 @@ export function ProjectDetailPage() {
 
   if (loading) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-6 w-32" />
-        <Skeleton className="h-32 rounded-xl" />
-        <Skeleton className="h-48 rounded-xl" />
-      </div>
+      <PageContainer>
+        <div className="space-y-4">
+          <Skeleton className="h-5 w-24" />
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-32 rounded-xl" />
+          <Skeleton className="h-48 rounded-xl" />
+        </div>
+      </PageContainer>
     )
   }
 
   if (error && !project) {
     return (
-      <div className="rounded-xl border border-destructive/50 bg-destructive/5 p-6 text-destructive text-sm max-w-xl">
-        {error}
-      </div>
+      <PageContainer>
+        <PageErrorBanner message={error} className="max-w-xl" />
+      </PageContainer>
     )
   }
 
@@ -406,95 +429,88 @@ export function ProjectDetailPage() {
   const latestRunningDeployment = selectLatestRunningDeployment(deployments)
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto w-full">
-      {error && (
-        <div className="rounded-xl border border-destructive/50 bg-destructive/5 p-4 text-destructive text-sm">
-          {error}
+    <PageContainer>
+      <PageSection>
+        {error && <PageErrorBanner message={error} />}
+
+        <div>
+          <PageBackLink to="/projects">Projects</PageBackLink>
+          <PageHeader>
+            <div className="min-w-0">
+              <PageTitle className="break-words">{project.name}</PageTitle>
+              <PageDescription className="mt-1">
+                Project configuration, GitHub integration, and deployment history.
+              </PageDescription>
+            </div>
+            <PageActions>
+              <Button size="sm" onClick={() => setDeployDialogOpen(true)}>
+                <RocketIcon className="mr-2 size-4" />
+                Deploy
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setDeleteDialogOpen(true)} aria-label="Delete project">
+                <TrashIcon className="size-4" />
+              </Button>
+            </PageActions>
+          </PageHeader>
         </div>
-      )}
 
-      <div>
-        <Link
-          to="/projects"
-          className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
-        >
-          <ArrowLeftIcon className="size-3" /> Projects
-        </Link>
-        <div className="flex flex-col gap-3 mt-2 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <h1 className="text-2xl font-semibold tracking-tight break-words">{project.name}</h1>
-            <p className="text-sm text-muted-foreground mt-1">Use the tabs below for details, GitHub, and deployments.</p>
-          </div>
-          <div className="flex flex-wrap gap-2 shrink-0">
-            <Button size="sm" onClick={() => setDeployDialogOpen(true)}>
-              <RocketIcon className="mr-2 size-4" />
-              Deploy
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setDeleteDialogOpen(true)} aria-label="Delete project">
-              <TrashIcon className="size-4" />
-            </Button>
-          </div>
-        </div>
-      </div>
+        <Tabs value={mainTab} onValueChange={setMainTab} className="min-w-0">
+          <TabsList variant="line" className="w-full min-w-0 max-w-full justify-start overflow-x-auto">
+            <TabsTrigger value="overview" className="shrink-0">Overview</TabsTrigger>
+            <TabsTrigger value="github" className="shrink-0">
+              <FolderGitIcon className="size-4" />
+              GitHub
+            </TabsTrigger>
+            <TabsTrigger value="deployments" className="shrink-0">
+              <LayoutListIcon className="size-4" />
+              Deployments
+            </TabsTrigger>
+            <TabsTrigger value="usage" className="shrink-0">
+              <BarChart3Icon className="size-4" />
+              Usage
+            </TabsTrigger>
+            <TabsTrigger value="domains" className="shrink-0">
+              <GlobeIcon className="size-4" />
+              Domains
+            </TabsTrigger>
+          </TabsList>
 
-      <Tabs value={mainTab} onValueChange={setMainTab} className="min-w-0">
-        <TabsList variant="line" className="w-full min-w-0 max-w-full justify-start overflow-x-auto">
-          <TabsTrigger value="overview" className="shrink-0">
-            Overview
-          </TabsTrigger>
-          <TabsTrigger value="github" className="shrink-0">
-            <FolderGitIcon className="size-4" />
-            GitHub
-          </TabsTrigger>
-          <TabsTrigger value="deployments" className="shrink-0">
-            <LayoutListIcon className="size-4" />
-            Deployments
-          </TabsTrigger>
-          <TabsTrigger value="usage" className="shrink-0">
-            <BarChart3Icon className="size-4" />
-            Usage
-          </TabsTrigger>
-          <TabsTrigger value="domains" className="shrink-0">
-            <GlobeIcon className="size-4" />
-            Domains
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="overview" className="mt-4 space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Project</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Repository</p>
-                <p className="font-mono text-sm mt-1 break-all">
-                  {project.github_repository || "— Not linked —"}
-                </p>
-                {!project.github_repository && (
-                  <p className="text-muted-foreground mt-2 text-xs">
-                    Link a repo under <strong>GitHub</strong> by creating a project with a GitHub path, or recreate this
-                    project with repository details to enable webhooks and push-to-deploy.
+          {/* ── Overview ────────────────────────────────────── */}
+          <TabsContent value="overview" className="mt-5 space-y-4">
+            <Surface>
+              <SurfaceHeader>
+                <SurfaceTitle>Project</SurfaceTitle>
+              </SurfaceHeader>
+              <SurfaceBody className="space-y-5 text-sm">
+                <MetadataGrid>
+                  <MetadataItem label="Repository" span="full">
+                    <p className="font-mono text-sm break-all">
+                      {project.github_repository || "— Not linked —"}
+                    </p>
+                    {!project.github_repository && (
+                      <p className="text-muted-foreground mt-2 text-xs">
+                        Link a repo under <strong>GitHub</strong> by creating a project with a GitHub path, or recreate
+                        this project with repository details to enable webhooks and push-to-deploy.
+                      </p>
+                    )}
+                  </MetadataItem>
+                  <MetadataItem label="Dockerfile">
+                    <p className="font-mono text-sm">{project.dockerfile_path}</p>
+                  </MetadataItem>
+                  <MetadataItem label="Root directory">
+                    <p className="font-mono text-sm">{project.root_directory}</p>
+                  </MetadataItem>
+                </MetadataGrid>
+              </SurfaceBody>
+              <SurfaceSeparator />
+              <SurfaceBody className="space-y-3">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Horizontal scaling</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Desired replicas for the running deployment. Changes converge via the reconciler.
                   </p>
-                )}
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Dockerfile</p>
-                  <p className="font-mono text-sm mt-1">{project.dockerfile_path}</p>
                 </div>
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Root directory</p>
-                  <p className="font-mono text-sm mt-1">{project.root_directory}</p>
-                </div>
-              </div>
-              <div className="border-t pt-4 space-y-2">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Horizontal scaling</p>
-                <p className="text-xs text-muted-foreground">
-                  Desired replicas for the running deployment. Changes converge via the reconciler (may take a few
-                  seconds).
-                </p>
-                {latestRunningDeployment != null ? (
+                {latestRunningDeployment != null && (
                   <p className="text-sm">
                     Current:{" "}
                     <span className="font-mono">
@@ -502,7 +518,7 @@ export function ProjectDetailPage() {
                       {latestRunningDeployment.desired_instance_count ?? project.desired_instance_count ?? 1} running
                     </span>
                   </p>
-                ) : null}
+                )}
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                   <div className="space-y-1 flex-1 min-w-0">
                     <Label className="text-xs text-muted-foreground">Desired instance count</Label>
@@ -525,332 +541,246 @@ export function ProjectDetailPage() {
                     {scalingSaving ? "Saving…" : "Save"}
                   </Button>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-          {latestRunningDeployment ? (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Current reachability</CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  Latest running deployment:{" "}
-                  <span className="font-mono">
-                    {latestRunningDeployment.github_commit ? latestRunningDeployment.github_commit.slice(0, 8) : "manual"}
-                  </span>
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <DeploymentReachability reachable={latestRunningDeployment.reachable} compact />
-                <Link
-                  to={`/deployments/${latestRunningDeployment.id}`}
-                  className="inline-flex text-sm text-primary underline-offset-4 hover:underline"
-                >
-                  View deployment details
-                </Link>
-              </CardContent>
-            </Card>
-          ) : null}
-        </TabsContent>
+              </SurfaceBody>
+            </Surface>
 
-        <TabsContent value="domains" className="mt-4 space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Custom domain</CardTitle>
-              <CardDescription className="leading-relaxed">
-                Put your own hostname (like <span className="font-mono">www.example.com</span>) in front of this project.
-                You only need DNS: one A record for traffic, one TXT record to prove you own the name.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="rounded-lg border bg-muted/30 px-4 py-3 text-sm">
-                <p className="font-medium text-foreground mb-2">Steps</p>
-                <ol className="list-decimal list-inside space-y-2 text-muted-foreground [&>li]:ps-1">
-                  <li>
-                    <span className="text-foreground">Deploy</span> this project so it is running.
-                  </li>
-                  <li>
-                    At your DNS provider, add an <span className="font-medium text-foreground">A</span> (or{" "}
-                    <span className="font-medium text-foreground">AAAA</span>) record: your hostname → the{" "}
-                    <span className="font-medium text-foreground">public IP</span> of the Kindling server (the box that
-                    runs your app and the HTTPS edge).
-                  </li>
-                  <li>
-                    Type that same hostname below and click <span className="font-medium text-foreground">Add domain</span>.
-                  </li>
-                  <li>
-                    Add the <span className="font-medium text-foreground">TXT</span> record we show you. Wait a minute or
-                    two for DNS to update.
-                  </li>
-                  <li>
-                    Click <span className="font-medium text-foreground">I&apos;ve added the TXT — verify</span>.
-                  </li>
-                </ol>
-                <p className="mt-3 text-xs text-muted-foreground border-t border-border/60 pt-3">
-                  After verification, HTTPS works when Kindling is started with TLS on port 443 (Let&apos;s Encrypt). Until
-                  then, you can still use the direct URL on the deployment page.
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="new-domain" className="text-sm">
-                  Hostname to connect
-                </Label>
-                <p className="text-xs text-muted-foreground">Use the full name visitors will type, e.g. www.yourdomain.com</p>
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <Input
-                    id="new-domain"
-                    placeholder="www.kindling.systems"
-                    className="font-mono h-10 sm:max-w-md"
-                    value={newDomainName}
-                    onChange={(e) => setNewDomainName(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && void handleAddDomain()}
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="h-10 w-full sm:w-auto shrink-0"
-                    disabled={domainSaving || !newDomainName.trim()}
-                    onClick={() => void handleAddDomain()}
+            {latestRunningDeployment && (
+              <Surface>
+                <SurfaceHeader>
+                  <SurfaceTitle>Current reachability</SurfaceTitle>
+                  <SurfaceDescription>
+                    Latest running deployment:{" "}
+                    <span className="font-mono">
+                      {latestRunningDeployment.github_commit ? latestRunningDeployment.github_commit.slice(0, 8) : "manual"}
+                    </span>
+                  </SurfaceDescription>
+                </SurfaceHeader>
+                <SurfaceBody className="space-y-4">
+                  <DeploymentReachability reachable={latestRunningDeployment.reachable} compact />
+                  <Link
+                    to={`/deployments/${latestRunningDeployment.id}`}
+                    className="inline-flex text-sm text-primary underline-offset-4 hover:underline"
                   >
-                    {domainSaving ? "Adding…" : "Add domain"}
-                  </Button>
-                </div>
-              </div>
+                    View deployment details
+                  </Link>
+                </SurfaceBody>
+              </Surface>
+            )}
+          </TabsContent>
 
-              {domainsLoading ? (
-                <p className="text-sm text-muted-foreground">Loading domains…</p>
-              ) : domains.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No domains yet. Follow the steps above, then add your hostname.
-                </p>
-              ) : (
-                <ul className="space-y-6">
-                  {domains.map((dom) => (
-                    <li key={dom.id} className="rounded-lg border p-4 space-y-4">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="font-mono text-sm font-medium break-all">{dom.domain_name}</span>
-                        {dom.verified_at ? (
-                          <Badge variant="default" className="shrink-0">
-                            Verified
-                          </Badge>
-                        ) : (
-                          <Badge variant="secondary" className="shrink-0">
-                            Waiting for TXT record
-                          </Badge>
-                        )}
-                      </div>
-
-                      {dom.dns_challenge ? (
-                        <div className="space-y-3">
-                          <div className="text-sm">
-                            <p className="font-medium">Prove you own this name</p>
-                            <ol className="mt-2 list-decimal list-inside space-y-1.5 text-muted-foreground text-xs [&>li]:ps-1">
-                              <li>Open your DNS provider (Cloudflare, Namecheap, Route 53, etc.).</li>
-                              <li>
-                                Create a <strong className="text-foreground">TXT</strong> record.
-                              </li>
-                              <li>
-                                <strong className="text-foreground">Name / Host</strong>: paste the first value below.
-                                Some UIs only want the part before your domain; if verify fails, try the shorter name your
-                                provider expects.
-                              </li>
-                              <li>
-                                <strong className="text-foreground">Value / Content</strong>: paste the second value
-                                (one long line, no quotes).
-                              </li>
-                              <li>Save and wait a minute, then use the verify button.</li>
-                            </ol>
-                          </div>
-                          <div className="rounded-md bg-muted/60 p-3 space-y-3 text-sm">
-                            <div>
-                              <div className="flex items-center justify-between gap-2 mb-1">
-                                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                  TXT — Name / Host
-                                </span>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-7 text-xs"
-                                  onClick={() => void copyText("TXT name", dom.dns_challenge!.name)}
-                                >
-                                  <CopyIcon className="size-3.5 mr-1" />
-                                  Copy
-                                </Button>
-                              </div>
-                              <p className="font-mono text-xs break-all leading-relaxed">{dom.dns_challenge.name}</p>
-                            </div>
-                            <div>
-                              <div className="flex items-center justify-between gap-2 mb-1">
-                                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                  TXT — Value / Content
-                                </span>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-7 text-xs"
-                                  onClick={() => void copyText("TXT value", dom.dns_challenge!.value)}
-                                >
-                                  <CopyIcon className="size-3.5 mr-1" />
-                                  Copy
-                                </Button>
-                              </div>
-                              <p className="font-mono text-xs break-all leading-relaxed">{dom.dns_challenge.value}</p>
-                            </div>
-                          </div>
-                        </div>
-                      ) : null}
-
-                      {dom.verified_at ? (
-                        <p className="text-xs text-muted-foreground">
-                          Traffic for this hostname can be routed here once DNS points at your server and TLS is enabled.
-                        </p>
-                      ) : null}
-
-                      <div className="flex flex-wrap gap-2 pt-1">
-                        {!dom.verified_at ? (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="default"
-                            disabled={verifyingId === dom.id}
-                            onClick={() => void handleVerifyDomain(dom.id)}
-                          >
-                            {verifyingId === dom.id ? "Checking DNS…" : "I've added the TXT — verify"}
-                          </Button>
-                        ) : null}
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          className="text-destructive border-destructive/30 hover:bg-destructive/10"
-                          onClick={() => void handleDeleteDomain(dom.id)}
-                        >
-                          Remove domain
-                        </Button>
-                      </div>
+          {/* ── Domains ─────────────────────────────────────── */}
+          <TabsContent value="domains" className="mt-5 space-y-4">
+            <Surface>
+              <SurfaceHeader>
+                <SurfaceTitle>Custom domain</SurfaceTitle>
+                <SurfaceDescription>
+                  Put your own hostname (like <span className="font-mono">www.example.com</span>) in front of this
+                  project. You only need DNS: one A record for traffic, one TXT record to prove you own the name.
+                </SurfaceDescription>
+              </SurfaceHeader>
+              <SurfaceBody className="space-y-6">
+                <div className="rounded-lg border bg-muted/30 px-4 py-3.5 text-sm">
+                  <p className="font-medium text-foreground mb-2">Steps</p>
+                  <ol className="list-decimal list-inside space-y-2 text-muted-foreground [&>li]:ps-1">
+                    <li><span className="text-foreground">Deploy</span> this project so it is running.</li>
+                    <li>
+                      At your DNS provider, add an <span className="font-medium text-foreground">A</span> (or{" "}
+                      <span className="font-medium text-foreground">AAAA</span>) record: your hostname → the{" "}
+                      <span className="font-medium text-foreground">public IP</span> of the Kindling server.
                     </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="github" className="mt-4">
-          {!project.github_repository ? (
-            <Card>
-              <CardContent className="py-10 text-center text-sm text-muted-foreground px-4">
-                No GitHub repository is linked to this project. Webhook setup applies only when a repo is configured.
-              </CardContent>
-            </Card>
-          ) : !ghSetup ? (
-            <Card>
-              <CardContent className="py-10 text-center text-sm text-muted-foreground">Loading GitHub setup…</CardContent>
-            </Card>
-          ) : (
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">GitHub webhook</CardTitle>
-                <p className="text-sm text-muted-foreground font-normal">{ghSetup.instructions}</p>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {!ghSetup.public_base_url_configured && (
-                  <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-100">
-                    Set the public base URL under <strong>Settings → Public URL</strong> so the GitHub webhook payload
-                    URL is absolute (stored in the database).
-                  </div>
-                )}
-                <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">Payload URL</Label>
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <code className="flex-1 rounded-md border bg-muted/50 px-3 py-2 text-xs font-mono break-all">
-                      {ghSetup.webhook_url || `(your-host)${ghSetup.webhook_path}`}
-                    </code>
-                    {ghSetup.webhook_url ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="shrink-0"
-                        onClick={() => void copyText("webhook", ghSetup.webhook_url)}
-                      >
-                        <CopyIcon className="mr-2 size-3" /> Copy
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <Label className="text-xs text-muted-foreground">Webhook secret</Label>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      disabled={rotating}
-                      onClick={() => void handleRotateSecret()}
-                    >
-                      <RefreshCwIcon className={`mr-1 size-3 ${rotating ? "animate-spin" : ""}`} />
-                      Rotate
-                    </Button>
-                  </div>
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <code className="flex-1 rounded-md border bg-muted/50 px-3 py-2 text-xs font-mono break-all">
-                      {ghSetup.webhook_secret || "—"}
-                    </code>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="shrink-0"
-                      disabled={!ghSetup.webhook_secret}
-                      onClick={() => void copyText("secret", ghSetup.webhook_secret)}
-                    >
-                      <CopyIcon className="mr-2 size-3" /> Copy secret
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    After rotating, update the secret in GitHub. New projects generate a secret when a repo is linked.
+                    <li>Type that same hostname below and click <span className="font-medium text-foreground">Add domain</span>.</li>
+                    <li>Add the <span className="font-medium text-foreground">TXT</span> record we show you. Wait a minute or two for DNS to update.</li>
+                    <li>Click <span className="font-medium text-foreground">I&apos;ve added the TXT — verify</span>.</li>
+                  </ol>
+                  <p className="mt-3 text-xs text-muted-foreground border-t border-border/60 pt-3">
+                    After verification, HTTPS works when Kindling is started with TLS on port 443 (Let&apos;s Encrypt).
+                    Until then, you can still use the direct URL on the deployment page.
                   </p>
                 </div>
 
-                <div className="border-t pt-4 mt-2 space-y-3">
+                <div className="space-y-2">
+                  <Label htmlFor="new-domain" className="text-sm">Hostname to connect</Label>
+                  <p className="text-xs text-muted-foreground">Use the full name visitors will type, e.g. www.yourdomain.com</p>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <Input
+                      id="new-domain"
+                      placeholder="www.kindling.systems"
+                      className="font-mono h-10 sm:max-w-md"
+                      value={newDomainName}
+                      onChange={(e) => setNewDomainName(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && void handleAddDomain()}
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-10 w-full sm:w-auto shrink-0"
+                      disabled={domainSaving || !newDomainName.trim()}
+                      onClick={() => void handleAddDomain()}
+                    >
+                      {domainSaving ? "Adding…" : "Add domain"}
+                    </Button>
+                  </div>
+                </div>
+
+                {domainsLoading ? (
+                  <p className="text-sm text-muted-foreground">Loading domains…</p>
+                ) : domains.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No domains yet. Follow the steps above, then add your hostname.
+                  </p>
+                ) : (
+                  <ul className="space-y-4">
+                    {domains.map((dom) => (
+                      <li key={dom.id} className="rounded-lg border p-4 space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-mono text-sm font-medium break-all">{dom.domain_name}</span>
+                          {dom.verified_at ? (
+                            <Badge variant="default" className="shrink-0">Verified</Badge>
+                          ) : (
+                            <Badge variant="secondary" className="shrink-0">Waiting for TXT record</Badge>
+                          )}
+                        </div>
+
+                        {dom.dns_challenge && (
+                          <div className="space-y-3">
+                            <div className="text-sm">
+                              <p className="font-medium">Prove you own this name</p>
+                              <ol className="mt-2 list-decimal list-inside space-y-1.5 text-muted-foreground text-xs [&>li]:ps-1">
+                                <li>Open your DNS provider (Cloudflare, Namecheap, Route 53, etc.).</li>
+                                <li>Create a <strong className="text-foreground">TXT</strong> record.</li>
+                                <li><strong className="text-foreground">Name / Host</strong>: paste the first value below.</li>
+                                <li><strong className="text-foreground">Value / Content</strong>: paste the second value (one long line, no quotes).</li>
+                                <li>Save and wait a minute, then use the verify button.</li>
+                              </ol>
+                            </div>
+                            <div className="rounded-lg bg-muted/40 p-3.5 space-y-3 text-sm">
+                              <div>
+                                <div className="flex items-center justify-between gap-2 mb-1">
+                                  <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">TXT — Name / Host</span>
+                                  <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => void copyText("TXT name", dom.dns_challenge!.name)}>
+                                    <CopyIcon className="size-3.5 mr-1" /> Copy
+                                  </Button>
+                                </div>
+                                <p className="font-mono text-xs break-all leading-relaxed">{dom.dns_challenge.name}</p>
+                              </div>
+                              <div>
+                                <div className="flex items-center justify-between gap-2 mb-1">
+                                  <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">TXT — Value / Content</span>
+                                  <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" onClick={() => void copyText("TXT value", dom.dns_challenge!.value)}>
+                                    <CopyIcon className="size-3.5 mr-1" /> Copy
+                                  </Button>
+                                </div>
+                                <p className="font-mono text-xs break-all leading-relaxed">{dom.dns_challenge.value}</p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {dom.verified_at && (
+                          <p className="text-xs text-muted-foreground">
+                            Traffic for this hostname can be routed here once DNS points at your server and TLS is enabled.
+                          </p>
+                        )}
+
+                        <div className="flex flex-wrap gap-2 pt-1">
+                          {!dom.verified_at && (
+                            <Button type="button" size="sm" variant="default" disabled={verifyingId === dom.id} onClick={() => void handleVerifyDomain(dom.id)}>
+                              {verifyingId === dom.id ? "Checking DNS…" : "I've added the TXT — verify"}
+                            </Button>
+                          )}
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="text-destructive border-destructive/30 hover:bg-destructive/10"
+                            onClick={() => void handleDeleteDomain(dom.id)}
+                          >
+                            Remove domain
+                          </Button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </SurfaceBody>
+            </Surface>
+          </TabsContent>
+
+          {/* ── GitHub ──────────────────────────────────────── */}
+          <TabsContent value="github" className="mt-5">
+            {!project.github_repository ? (
+              <Surface>
+                <EmptyState
+                  title="No GitHub repository linked"
+                  description="Webhook setup applies only when a repo is configured."
+                  className="py-12"
+                />
+              </Surface>
+            ) : !ghSetup ? (
+              <Surface>
+                <div className="py-10 text-center text-sm text-muted-foreground">Loading GitHub setup…</div>
+              </Surface>
+            ) : (
+              <Surface>
+                <SurfaceHeader>
+                  <SurfaceTitle>GitHub webhook</SurfaceTitle>
+                  <SurfaceDescription>{ghSetup.instructions}</SurfaceDescription>
+                </SurfaceHeader>
+                <SurfaceBody className="space-y-5">
+                  {!ghSetup.public_base_url_configured && (
+                    <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3.5 py-2.5 text-sm text-amber-900 dark:text-amber-100">
+                      Set the public base URL under <strong>Settings → Public URL</strong> so the GitHub webhook payload URL is absolute.
+                    </div>
+                  )}
+                  <div className="space-y-1.5">
+                    <Label className="text-xs text-muted-foreground">Payload URL</Label>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <code className="code-block flex-1">{ghSetup.webhook_url || `(your-host)${ghSetup.webhook_path}`}</code>
+                      {ghSetup.webhook_url && (
+                        <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={() => void copyText("webhook", ghSetup.webhook_url)}>
+                          <CopyIcon className="mr-2 size-3" /> Copy
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <Label className="text-xs text-muted-foreground">Webhook secret</Label>
+                      <Button type="button" variant="ghost" size="sm" disabled={rotating} onClick={() => void handleRotateSecret()}>
+                        <RefreshCwIcon className={`mr-1 size-3 ${rotating ? "animate-spin" : ""}`} /> Rotate
+                      </Button>
+                    </div>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <code className="code-block flex-1">{ghSetup.webhook_secret || "—"}</code>
+                      <Button type="button" variant="outline" size="sm" className="shrink-0" disabled={!ghSetup.webhook_secret} onClick={() => void copyText("secret", ghSetup.webhook_secret)}>
+                        <CopyIcon className="mr-2 size-3" /> Copy secret
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">After rotating, update the secret in GitHub.</p>
+                  </div>
+                </SurfaceBody>
+                <SurfaceSeparator />
+                <SurfaceBody className="space-y-4">
                   <div>
                     <p className="text-sm font-medium">Without a webhook</p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Resolve the tip of a branch from the GitHub API, compare it to your running deployment, then deploy
-                      that commit. Set <code className="font-mono text-[0.7rem]">GITHUB_TOKEN</code> on the kindling server
-                      for private repositories.
+                      Resolve the tip of a branch from the GitHub API, compare it to your running deployment, then deploy that commit.
+                      Set <code className="font-mono text-[0.7rem]">GITHUB_TOKEN</code> on the kindling server for private repositories.
                     </p>
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                     <div className="flex-1 space-y-1 min-w-0">
                       <Label className="text-xs text-muted-foreground">Optional ref (branch or tag)</Label>
-                      <Input
-                        value={gitHeadRef}
-                        onChange={(e) => setGitHeadRef(e.target.value)}
-                        placeholder="repository default branch"
-                        className="font-mono text-sm h-9"
-                      />
+                      <Input value={gitHeadRef} onChange={(e) => setGitHeadRef(e.target.value)} placeholder="repository default branch" className="font-mono text-sm h-9" />
                     </div>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      className="shrink-0"
-                      disabled={gitHeadLoading}
-                      onClick={() => void handleCheckGitHead()}
-                    >
+                    <Button type="button" variant="secondary" size="sm" className="shrink-0" disabled={gitHeadLoading} onClick={() => void handleCheckGitHead()}>
                       <CloudDownloadIcon className={`mr-2 size-4 ${gitHeadLoading ? "animate-pulse" : ""}`} />
                       {gitHeadLoading ? "Checking…" : "Check for updates"}
                     </Button>
                   </div>
-                  {sourceCheckError ? (
-                    <p className="text-xs text-destructive">{sourceCheckError}</p>
-                  ) : null}
-                  {gitHead ? (
-                    <div className="rounded-lg border bg-muted/30 px-3 py-3 text-sm space-y-2">
+                  {sourceCheckError && <p className="text-xs text-destructive">{sourceCheckError}</p>}
+                  {gitHead && (
+                    <div className="rounded-lg border bg-muted/30 px-3.5 py-3 text-sm space-y-2">
                       <p>
                         <span className="text-muted-foreground">Tip of </span>
                         <span className="font-mono">{gitHead.ref}</span>
@@ -860,137 +790,111 @@ export function ProjectDetailPage() {
                       <p className="text-xs">
                         {gitHead.update_available ? (
                           <span className="text-amber-800 dark:text-amber-200">
-                            Differs from your running deployment or latest recorded deployment — a new deploy may be
-                            warranted.
+                            Differs from your running deployment — a new deploy may be warranted.
                           </span>
                         ) : (
-                          <span className="text-muted-foreground">Matches what is already running or last deployed for this ref.</span>
+                          <span className="text-muted-foreground">Matches what is already running or last deployed.</span>
                         )}
                       </p>
-                      {!gitHead.github_token_configured ? (
+                      {!gitHead.github_token_configured && (
                         <p className="text-xs text-amber-900/90 dark:text-amber-100/90">
-                          No <code className="font-mono">GITHUB_TOKEN</code> on the server: public repos only unless you set
-                          the token in the kindling process environment.
+                          No <code className="font-mono">GITHUB_TOKEN</code> on the server: public repos only.
                         </p>
-                      ) : null}
+                      )}
                       <Button size="sm" onClick={() => void handleDeployGitHead(gitHead.sha)} disabled={deploying}>
                         {deploying ? "Deploying…" : `Deploy ${gitHead.short_sha}`}
                       </Button>
                     </div>
-                  ) : null}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </TabsContent>
+                  )}
+                </SurfaceBody>
+              </Surface>
+            )}
+          </TabsContent>
 
-        <TabsContent value="deployments" className="mt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Deployments</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {deployments.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-8 text-center px-2">
-                  <RocketIcon className="size-8 text-muted-foreground mb-3" />
-                  <p className="text-sm text-muted-foreground">No deployments yet.</p>
-                  <Button size="sm" className="mt-3" onClick={() => setDeployDialogOpen(true)}>
-                    Deploy now
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-3">
+          {/* ── Deployments ─────────────────────────────────── */}
+          <TabsContent value="deployments" className="mt-5">
+            {deployments.length === 0 ? (
+              <Surface>
+                <EmptyState
+                  icon={<RocketIcon className="size-8" />}
+                  title="No deployments yet"
+                  action={
+                    <Button size="sm" onClick={() => setDeployDialogOpen(true)}>Deploy now</Button>
+                  }
+                  className="py-12"
+                />
+              </Surface>
+            ) : (
+              <Surface>
+                <ul className="divide-y">
                   {deployments.map((dep) => (
-                    <Link key={dep.id} to={`/deployments/${dep.id}`} className="block">
-                      <div className="flex flex-col gap-2 rounded-lg border p-3 hover:bg-accent/50 transition-colors sm:flex-row sm:items-center sm:justify-between min-w-0">
+                    <li key={dep.id}>
+                      <Link to={`/deployments/${dep.id}`} className="list-row group">
                         <div className="flex flex-wrap items-center gap-2 min-w-0">
                           <Badge variant={phaseVariant(dep.phase)}>{phaseLabel(dep.phase)}</Badge>
-                          <span className="font-mono text-sm">
-                            {dep.github_commit ? dep.github_commit.slice(0, 8) : "manual"}
-                          </span>
-                          {dep.build_status && (
-                            <span className="text-xs text-muted-foreground hidden sm:inline">Build: {dep.build_status}</span>
-                          )}
+                          <span className="font-mono text-sm">{dep.github_commit ? dep.github_commit.slice(0, 8) : "manual"}</span>
+                          {dep.build_status && <span className="text-xs text-muted-foreground hidden sm:inline">Build: {dep.build_status}</span>}
                         </div>
-                        <span className="text-xs text-muted-foreground shrink-0">
-                          {dep.created_at ? new Date(dep.created_at).toLocaleString() : ""}
-                        </span>
-                      </div>
-                    </Link>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground shrink-0">{dep.created_at ? new Date(dep.created_at).toLocaleString() : ""}</span>
+                          <ChevronRightIcon className="size-4 text-muted-foreground/40 shrink-0 transition-transform group-hover:translate-x-0.5" />
+                        </div>
+                      </Link>
+                    </li>
                   ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
+                </ul>
+              </Surface>
+            )}
+          </TabsContent>
 
-        <TabsContent value="usage" className="mt-4 space-y-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-muted-foreground max-w-xl">
-              CPU, memory, and disk from workload instances; HTTP requests and edge traffic require TLS edge on :443.
-              History resolution is per-minute.
-            </p>
-            <div className="flex flex-wrap items-center gap-2">
-              {(["1h", "24h", "7d"] as const).map((w) => (
-                <Button
-                  key={w}
-                  type="button"
-                  size="sm"
-                  variant={usageWindow === w ? "default" : "outline"}
-                  onClick={() => setUsageWindow(w)}
-                >
-                  {w === "7d" ? "7d" : w}
+          {/* ── Usage ───────────────────────────────────────── */}
+          <TabsContent value="usage" className="mt-5 space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-muted-foreground max-w-xl">
+                CPU, memory, and disk from workload instances; HTTP requests and edge traffic require TLS edge on :443.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {(["1h", "24h", "7d"] as const).map((w) => (
+                  <Button key={w} type="button" size="sm" variant={usageWindow === w ? "default" : "outline"} onClick={() => setUsageWindow(w)}>
+                    {w}
+                  </Button>
+                ))}
+                <Button type="button" size="sm" variant="secondary" onClick={() => void loadUsage()} disabled={usageLoading}>
+                  <RefreshCwIcon className={`mr-2 size-4 ${usageLoading ? "animate-spin" : ""}`} /> Refresh
                 </Button>
-              ))}
-              <Button type="button" size="sm" variant="secondary" onClick={() => void loadUsage()} disabled={usageLoading}>
-                <RefreshCwIcon className={`mr-2 size-4 ${usageLoading ? "animate-spin" : ""}`} />
-                Refresh
-              </Button>
+              </div>
             </div>
-          </div>
 
-          {usageLoading && !usageCurrent ? (
-            <div className="space-y-3">
-              <Skeleton className="h-24 rounded-xl" />
-              <Skeleton className="h-40 rounded-xl" />
-            </div>
-          ) : usageCurrent ? (
-            <>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">Avg CPU (instances)</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-2xl font-semibold tabular-nums">
+            {usageLoading && !usageCurrent ? (
+              <div className="space-y-3">
+                <Skeleton className="h-24 rounded-xl" />
+                <Skeleton className="h-40 rounded-xl" />
+              </div>
+            ) : usageCurrent ? (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="stat-card">
+                    <p className="stat-label">Avg CPU (instances)</p>
+                    <p className="stat-value mt-2">
                       {usageCurrent.summary?.cpu_percent_avg != null
                         ? `${usageCurrent.summary.cpu_percent_avg.toFixed(1)}%`
                         : "—"}
                     </p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">Memory (RSS total)</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-2xl font-semibold tabular-nums">
+                  </div>
+                  <div className="stat-card">
+                    <p className="stat-label">Memory (RSS total)</p>
+                    <p className="stat-value mt-2">
                       {formatBytes(usageCurrent.summary?.memory_rss_bytes_total ?? 0)}
                     </p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">HTTP (15m, edge)</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-1 text-sm">
-                    <p>
+                  </div>
+                  <div className="stat-card space-y-1.5">
+                    <p className="stat-label">HTTP (15m, edge)</p>
+                    <p className="text-sm mt-2">
                       <span className="text-muted-foreground">Requests:</span>{" "}
                       <span className="font-mono">{usageCurrent.summary?.http_requests_15m ?? 0}</span>
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      2xx/3xx:{" "}
-                      <span className="font-mono text-foreground">{usageCurrent.summary?.http_status_2xx_15m ?? 0}</span>{" "}
+                      2xx/3xx: <span className="font-mono text-foreground">{usageCurrent.summary?.http_status_2xx_15m ?? 0}</span>{" "}
                       · 4xx: <span className="font-mono text-foreground">{usageCurrent.summary?.http_status_4xx_15m ?? 0}</span>{" "}
                       · 5xx: <span className="font-mono text-foreground">{usageCurrent.summary?.http_status_5xx_15m ?? 0}</span>
                     </p>
@@ -998,101 +902,98 @@ export function ProjectDetailPage() {
                       In: {formatBytes(usageCurrent.summary?.http_bytes_in_15m ?? 0)} · Out:{" "}
                       {formatBytes(usageCurrent.summary?.http_bytes_out_15m ?? 0)}
                     </p>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {(usageCurrent.instances ?? []).length > 0 ? (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base">Instances</CardTitle>
-                    <CardDescription>Latest sample per replica (last ~2h).</CardDescription>
-                  </CardHeader>
-                  <CardContent className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b text-left text-muted-foreground">
-                          <th className="py-2 pr-4 font-medium">Instance</th>
-                          <th className="py-2 pr-4 font-medium">Runtime</th>
-                          <th className="py-2 pr-4 font-medium">CPU %</th>
-                          <th className="py-2 pr-4 font-medium">RAM</th>
-                          <th className="py-2 pr-4 font-medium">Disk R/W</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(usageCurrent.instances ?? []).map((row) => (
-                          <tr key={row.deployment_instance_id} className="border-b border-border/60">
-                            <td className="py-2 pr-4 font-mono text-xs">{row.deployment_instance_id.slice(0, 8)}…</td>
-                            <td className="py-2 pr-4">{row.source}</td>
-                            <td className="py-2 pr-4 tabular-nums">{row.cpu_percent != null ? `${row.cpu_percent.toFixed(1)}%` : "—"}</td>
-                            <td className="py-2 pr-4 tabular-nums">{formatBytes(row.memory_rss_bytes)}</td>
-                            <td className="py-2 pr-4 text-xs tabular-nums text-muted-foreground">
-                              {formatBytes(row.disk_read_bytes)} / {formatBytes(row.disk_write_bytes)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </CardContent>
-                </Card>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  No usage samples yet. Start a deployment on this server; metrics collect every ~15s.
-                </p>
-              )}
-
-              {usageHistory ? (
-                <div className="grid gap-4 lg:grid-cols-2">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-base">Memory (max / minute)</CardTitle>
-                      <CardDescription>Window: {usageHistory.window}</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <MiniBars
-                        label="RSS peak per bucket"
-                        values={(usageHistory.resource ?? []).map((x) => x.memory_rss_bytes_max)}
-                      />
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-base">HTTP requests / minute</CardTitle>
-                      <CardDescription>Aggregated across Kindling edge servers</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <MiniBars
-                        label="Requests"
-                        values={(usageHistory.http ?? []).map((h) => h.request_count)}
-                      />
-                    </CardContent>
-                  </Card>
+                  </div>
                 </div>
-              ) : null}
-            </>
-          ) : (
-            <p className="text-sm text-muted-foreground">Open this tab to load usage.</p>
-          )}
-        </TabsContent>
-      </Tabs>
 
+                {(usageCurrent.instances ?? []).length > 0 ? (
+                  <Surface>
+                    <SurfaceHeader>
+                      <SurfaceTitle>Instances</SurfaceTitle>
+                      <SurfaceDescription>Latest sample per replica (last ~2h).</SurfaceDescription>
+                    </SurfaceHeader>
+                    <SurfaceBody className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b text-left text-muted-foreground">
+                            <th className="py-2 pr-4 font-medium text-xs">Instance</th>
+                            <th className="py-2 pr-4 font-medium text-xs">Runtime</th>
+                            <th className="py-2 pr-4 font-medium text-xs">CPU %</th>
+                            <th className="py-2 pr-4 font-medium text-xs">RAM</th>
+                            <th className="py-2 pr-4 font-medium text-xs">Disk R/W</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(usageCurrent.instances ?? []).map((row) => (
+                            <tr key={row.deployment_instance_id} className="border-b border-border/60">
+                              <td className="py-2.5 pr-4 font-mono text-xs">{row.deployment_instance_id.slice(0, 8)}…</td>
+                              <td className="py-2.5 pr-4 text-sm">{row.source}</td>
+                              <td className="py-2.5 pr-4 tabular-nums text-sm">{row.cpu_percent != null ? `${row.cpu_percent.toFixed(1)}%` : "—"}</td>
+                              <td className="py-2.5 pr-4 tabular-nums text-sm">{formatBytes(row.memory_rss_bytes)}</td>
+                              <td className="py-2.5 pr-4 text-xs tabular-nums text-muted-foreground">
+                                {formatBytes(row.disk_read_bytes)} / {formatBytes(row.disk_write_bytes)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </SurfaceBody>
+                  </Surface>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    No usage samples yet. Start a deployment on this server; metrics collect every ~15s.
+                  </p>
+                )}
+
+                {usageHistory && (
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <Surface>
+                      <SurfaceHeader>
+                        <SurfaceTitle>Memory (max / minute)</SurfaceTitle>
+                        <SurfaceDescription>Window: {usageHistory.window}</SurfaceDescription>
+                      </SurfaceHeader>
+                      <SurfaceBody>
+                        <MiniBars label="RSS peak per bucket" values={(usageHistory.resource ?? []).map((x) => x.memory_rss_bytes_max)} />
+                      </SurfaceBody>
+                    </Surface>
+                    <Surface>
+                      <SurfaceHeader>
+                        <SurfaceTitle>HTTP requests / minute</SurfaceTitle>
+                        <SurfaceDescription>Aggregated across Kindling edge servers</SurfaceDescription>
+                      </SurfaceHeader>
+                      <SurfaceBody>
+                        <MiniBars label="Requests" values={(usageHistory.http ?? []).map((h) => h.request_count)} />
+                      </SurfaceBody>
+                    </Surface>
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">Open this tab to load usage.</p>
+            )}
+          </TabsContent>
+        </Tabs>
+      </PageSection>
+
+      {/* ── Dialogs ──────────────────────────────────────── */}
       <Dialog open={deployDialogOpen} onOpenChange={setDeployDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Deploy</DialogTitle>
             <DialogDescription>Trigger a new deployment for {project.name}.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="commit">Branch or commit SHA</Label>
-            <Input
-              id="commit"
-              placeholder="main"
-              value={commitSha}
-              onChange={(e) => setCommitSha(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleDeploy()}
-              className="font-mono"
-            />
-            <p className="text-xs text-muted-foreground">Defaults to main if left empty.</p>
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="commit">Branch or commit SHA</Label>
+              <Input
+                id="commit"
+                placeholder="main"
+                value={commitSha}
+                onChange={(e) => setCommitSha(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleDeploy()}
+                className="font-mono"
+              />
+              <p className="text-xs text-muted-foreground">Defaults to main if left empty.</p>
+            </div>
             <Button
               type="button"
               variant="outline"
@@ -1106,9 +1007,7 @@ export function ProjectDetailPage() {
             </Button>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeployDialogOpen(false)}>
-              Cancel
-            </Button>
+            <Button variant="outline" onClick={() => setDeployDialogOpen(false)}>Cancel</Button>
             <Button onClick={() => void handleDeploy()} disabled={deploying}>
               {deploying ? "Deploying..." : "Deploy"}
             </Button>
@@ -1121,20 +1020,17 @@ export function ProjectDetailPage() {
           <DialogHeader>
             <DialogTitle>Delete Project</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete <strong>{project.name}</strong>? This will remove all deployments and
-              cannot be undone.
+              Are you sure you want to delete <strong>{project.name}</strong>? This will remove all deployments and cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
-              Cancel
-            </Button>
+            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
             <Button variant="destructive" onClick={() => void handleDelete()} disabled={deleting}>
               {deleting ? "Deleting..." : "Delete Project"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </PageContainer>
   )
 }

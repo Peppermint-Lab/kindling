@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { api, type Project, APIError, dashboardEventTopics, subscribeDashboardEvents } from "@/lib/api"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -15,7 +14,17 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { FolderIcon, PlusIcon } from "lucide-react"
+import { FolderIcon, PlusIcon, ChevronRightIcon } from "lucide-react"
+import {
+  PageContainer,
+  PageHeader,
+  PageTitle,
+  PageActions,
+  PageSection,
+  EmptyState,
+  PageErrorBanner,
+} from "@/components/page-layout"
+import { Surface, SurfaceBody } from "@/components/page-surface"
 
 export function ProjectsPage() {
   const navigate = useNavigate()
@@ -100,70 +109,72 @@ export function ProjectsPage() {
 
   if (loading) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-48" />
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {[1, 2, 3].map((i) => (
-            <Skeleton key={i} className="h-32 rounded-xl" />
-          ))}
+      <PageContainer size="wide">
+        <div className="space-y-6">
+          <Skeleton className="h-8 w-48" />
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {[1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-[88px] rounded-xl" />
+            ))}
+          </div>
         </div>
-      </div>
+      </PageContainer>
     )
   }
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto w-full px-0">
-      {error && (
-        <div className="rounded-xl border border-destructive/50 bg-destructive/5 p-4 text-destructive text-sm">
-          {error}
-        </div>
-      )}
+    <PageContainer size="wide">
+      <PageSection>
+        {error && <PageErrorBanner message={error} />}
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
-        <Button size="sm" className="shrink-0 self-start sm:self-auto" onClick={() => setDialogOpen(true)}>
-          <PlusIcon className="mr-2 size-4" />
-          New Project
-        </Button>
-      </div>
-
-      {projects.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12 text-center px-4">
-            <FolderIcon className="size-10 text-muted-foreground mb-4" />
-            <p className="text-muted-foreground">No projects yet.</p>
-            <p className="text-sm text-muted-foreground mt-1 max-w-sm">
-              Create a project with an optional GitHub repository. You’ll get webhook setup steps on the project
-              page to deploy on push to main.
-            </p>
-            <Button size="sm" className="mt-4" onClick={() => setDialogOpen(true)}>
+        <PageHeader>
+          <PageTitle>Projects</PageTitle>
+          <PageActions>
+            <Button size="sm" onClick={() => setDialogOpen(true)}>
               <PlusIcon className="mr-2 size-4" />
               New Project
             </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {projects.map((project) => (
-            <Link key={project.id} to={`/projects/${project.id}`} className="block min-w-0">
-              <Card className="hover:bg-accent/50 transition-colors cursor-pointer h-full">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base truncate">{project.name}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {project.github_repository ? (
-                    <Badge variant="secondary" className="font-mono text-xs max-w-full truncate">
-                      {project.github_repository}
-                    </Badge>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">No repository linked</span>
-                  )}
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      )}
+          </PageActions>
+        </PageHeader>
+
+        {projects.length === 0 ? (
+          <Surface>
+            <EmptyState
+              icon={<FolderIcon className="size-10" />}
+              title="No projects yet"
+              description="Create a project with an optional GitHub repository. You'll get webhook setup steps on the project page to deploy on push to main."
+              action={
+                <Button size="sm" onClick={() => setDialogOpen(true)}>
+                  <PlusIcon className="mr-2 size-4" />
+                  New Project
+                </Button>
+              }
+            />
+          </Surface>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {projects.map((project) => (
+              <Link key={project.id} to={`/projects/${project.id}`} className="group block min-w-0">
+                <Surface className="h-full transition-colors group-hover:border-foreground/20 group-hover:bg-accent/40">
+                  <SurfaceBody className="flex items-start justify-between gap-3 pt-5 sm:pt-6">
+                    <div className="min-w-0 space-y-2">
+                      <p className="font-medium text-sm truncate">{project.name}</p>
+                      {project.github_repository ? (
+                        <Badge variant="secondary" className="font-mono text-xs max-w-full truncate">
+                          {project.github_repository}
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">No repository linked</span>
+                      )}
+                    </div>
+                    <ChevronRightIcon className="size-4 text-muted-foreground/50 shrink-0 mt-0.5 transition-transform group-hover:translate-x-0.5" />
+                  </SurfaceBody>
+                </Surface>
+              </Link>
+            ))}
+          </div>
+        )}
+      </PageSection>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto">
@@ -242,6 +253,6 @@ export function ProjectsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </PageContainer>
   )
 }

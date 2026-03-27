@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from "react"
 import { useParams, Link, useNavigate } from "react-router-dom"
 import { api, type Deployment, type BuildLog, subscribeDeploymentStream, APIError } from "@/lib/api"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -9,8 +8,24 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Separator } from "@/components/ui/separator"
 import { BuildLogLineBody } from "@/components/build-log-line-body"
 import { DeploymentReachability } from "@/components/deployment-reachability"
-import { ArrowLeftIcon, ScrollTextIcon, LoaderIcon, XCircleIcon, RotateCwIcon, RadioIcon, InfoIcon } from "lucide-react"
+import { ScrollTextIcon, LoaderIcon, XCircleIcon, RotateCwIcon, RadioIcon, InfoIcon } from "lucide-react"
 import { isTerminalDeployment, phaseLabel, phaseVariant } from "@/lib/deploy-badge"
+import {
+  PageContainer,
+  PageHeader,
+  PageTitle,
+  PageBackLink,
+  PageSection,
+  MetadataGrid,
+  MetadataItem,
+  PageErrorBanner,
+} from "@/components/page-layout"
+import {
+  Surface,
+  SurfaceHeader,
+  SurfaceTitle,
+  SurfaceBody,
+} from "@/components/page-surface"
 
 function logKey(l: BuildLog): string {
   if (l.id) return l.id
@@ -127,177 +142,161 @@ export function DeploymentDetailPage() {
 
   if (loading) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-6 w-32" />
-        <Skeleton className="h-32 rounded-xl" />
-        <Skeleton className="h-64 rounded-xl" />
-      </div>
+      <PageContainer>
+        <div className="space-y-4">
+          <Skeleton className="h-5 w-32" />
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-32 rounded-xl" />
+          <Skeleton className="h-64 rounded-xl" />
+        </div>
+      </PageContainer>
     )
   }
 
   if (error || !deployment) {
     return (
-      <div className="rounded-xl border border-destructive/50 bg-destructive/5 p-6 text-destructive text-sm max-w-xl">
-        {error || "Deployment not found"}
-      </div>
+      <PageContainer>
+        <PageErrorBanner message={error || "Deployment not found"} className="max-w-xl" />
+      </PageContainer>
     )
   }
 
   const terminal = isTerminalDeployment(deployment)
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto w-full">
-      <div>
-        <Link
-          to={`/projects/${deployment.project_id}`}
-          className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
-        >
-          <ArrowLeftIcon className="size-3" /> Back to project
-        </Link>
-        <div className="flex flex-col gap-3 mt-2 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex flex-wrap items-center gap-2 min-w-0">
-            <h1 className="text-2xl font-semibold tracking-tight">Deployment</h1>
-            <Badge variant={phaseVariant(deployment.phase)}>{phaseLabel(deployment.phase)}</Badge>
-            {!terminal && (
-              <>
-                {live ? (
-                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground" title="Live updates">
-                    <RadioIcon className="size-3 text-green-600 dark:text-green-400" />
-                    Live
-                  </span>
-                ) : (
-                  <LoaderIcon className="size-4 text-muted-foreground animate-spin" />
-                )}
-              </>
-            )}
-          </div>
-        </div>
-        <p className="text-sm text-muted-foreground mt-2">
-          Commit and build logs are on the tabs below.
-        </p>
-      </div>
-
-      <Tabs defaultValue="overview" className="min-w-0">
-        <TabsList variant="line" className="w-full min-w-0 max-w-full justify-start overflow-x-auto">
-          <TabsTrigger value="overview" className="shrink-0">
-            <InfoIcon className="size-4" />
-            Overview
-          </TabsTrigger>
-          <TabsTrigger value="logs" className="shrink-0">
-            <ScrollTextIcon className="size-4" />
-            Logs
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="overview" className="mt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Status</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4 text-sm">
-              <dl className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Commit</dt>
-                  <dd className="font-mono text-sm mt-1 break-all">
-                    {deployment.github_commit ? deployment.github_commit.slice(0, 8) : "manual"}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Created</dt>
-                  <dd className="mt-1">
-                    {deployment.created_at ? new Date(deployment.created_at).toLocaleString() : "—"}
-                  </dd>
-                </div>
-                {(deployment.desired_instance_count != null || deployment.running_instance_count != null) && (
-                  <div>
-                    <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Instances</dt>
-                    <dd className="font-mono text-sm mt-1">
-                      {deployment.running_instance_count ?? 0} / {deployment.desired_instance_count ?? 1} running
-                    </dd>
-                  </div>
-                )}
-                {deployment.build_status && (
-                  <div className="sm:col-span-2">
-                    <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Build</dt>
-                    <dd className="mt-1">{deployment.build_status}</dd>
-                  </div>
-                )}
-              </dl>
-              <Separator />
-              <div className="space-y-2">
-                <dt className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Reachability</dt>
-                <DeploymentReachability reachable={deployment.reachable} />
-              </div>
-              <div className="flex flex-wrap gap-2 pt-2">
-                {!terminal && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={async () => {
-                      if (!id) return
-                      await api.cancelDeployment(id)
-                      const d = await api.getDeployment(id)
-                      setDeployment(d)
-                    }}
-                  >
-                    <XCircleIcon className="mr-2 size-4" />
-                    Cancel
-                  </Button>
-                )}
-                {terminal && (
-                  <Button
-                    size="sm"
-                    onClick={async () => {
-                      const dep = await api.triggerDeploy(deployment.project_id, deployment.github_commit || "main")
-                      navigate(`/deployments/${dep.id}`)
-                    }}
-                  >
-                    <RotateCwIcon className="mr-2 size-4" />
-                    Redeploy
-                  </Button>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="logs" className="mt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <ScrollTextIcon className="size-4" />
-                Build logs
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {logs.length === 0 ? (
-                <div className="py-4 text-center">
-                  {!terminal ? (
-                    <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground px-2">
-                      <LoaderIcon className="size-4 animate-spin shrink-0" />
-                      Waiting for build to start…
-                    </div>
+    <PageContainer>
+      <PageSection>
+        <div>
+          <PageBackLink to={`/projects/${deployment.project_id}`}>Back to project</PageBackLink>
+          <PageHeader>
+            <div className="flex flex-wrap items-center gap-3 min-w-0">
+              <PageTitle>Deployment</PageTitle>
+              <Badge variant={phaseVariant(deployment.phase)}>{phaseLabel(deployment.phase)}</Badge>
+              {!terminal && (
+                <>
+                  {live ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" title="Live updates">
+                      <RadioIcon className="size-3 text-green-600 dark:text-green-400" /> Live
+                    </span>
                   ) : (
-                    <p className="text-sm text-muted-foreground">No build logs.</p>
+                    <LoaderIcon className="size-4 text-muted-foreground animate-spin" />
+                  )}
+                </>
+              )}
+            </div>
+          </PageHeader>
+        </div>
+
+        <Tabs defaultValue="overview" className="min-w-0">
+          <TabsList variant="line" className="w-full min-w-0 max-w-full justify-start overflow-x-auto">
+            <TabsTrigger value="overview" className="shrink-0">
+              <InfoIcon className="size-4" /> Overview
+            </TabsTrigger>
+            <TabsTrigger value="logs" className="shrink-0">
+              <ScrollTextIcon className="size-4" /> Logs
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="overview" className="mt-5">
+            <Surface>
+              <SurfaceHeader>
+                <SurfaceTitle>Status</SurfaceTitle>
+              </SurfaceHeader>
+              <SurfaceBody className="space-y-5 text-sm">
+                <MetadataGrid>
+                  <MetadataItem label="Commit">
+                    <span className="font-mono text-sm break-all">
+                      {deployment.github_commit ? deployment.github_commit.slice(0, 8) : "manual"}
+                    </span>
+                  </MetadataItem>
+                  <MetadataItem label="Created">
+                    {deployment.created_at ? new Date(deployment.created_at).toLocaleString() : "—"}
+                  </MetadataItem>
+                  {(deployment.desired_instance_count != null || deployment.running_instance_count != null) && (
+                    <MetadataItem label="Instances">
+                      <span className="font-mono text-sm">
+                        {deployment.running_instance_count ?? 0} / {deployment.desired_instance_count ?? 1} running
+                      </span>
+                    </MetadataItem>
+                  )}
+                  {deployment.build_status && (
+                    <MetadataItem label="Build" span="full">{deployment.build_status}</MetadataItem>
+                  )}
+                </MetadataGrid>
+                <Separator />
+                <div className="space-y-2">
+                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Reachability</p>
+                  <DeploymentReachability reachable={deployment.reachable} />
+                </div>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {!terminal && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={async () => {
+                        if (!id) return
+                        await api.cancelDeployment(id)
+                        const d = await api.getDeployment(id)
+                        setDeployment(d)
+                      }}
+                    >
+                      <XCircleIcon className="mr-2 size-4" /> Cancel
+                    </Button>
+                  )}
+                  {terminal && (
+                    <Button
+                      size="sm"
+                      onClick={async () => {
+                        const dep = await api.triggerDeploy(deployment.project_id, deployment.github_commit || "main")
+                        navigate(`/deployments/${dep.id}`)
+                      }}
+                    >
+                      <RotateCwIcon className="mr-2 size-4" /> Redeploy
+                    </Button>
                   )}
                 </div>
-              ) : (
-                <div className="rounded-lg bg-muted/50 p-3 sm:p-4 font-mono text-xs leading-relaxed max-h-[min(70vh,720px)] overflow-y-auto space-y-0.5">
-                  {logs.map((log) => (
-                    <div key={logKey(log)} className={log.level === "error" ? "text-destructive" : "text-foreground"}>
-                      <span className="text-muted-foreground mr-2">
-                        {log.created_at ? new Date(log.created_at).toLocaleTimeString() : ""}
-                      </span>
-                      <BuildLogLineBody message={log.message} />
-                    </div>
-                  ))}
-                  <div ref={logEndRef} />
+              </SurfaceBody>
+            </Surface>
+          </TabsContent>
+
+          <TabsContent value="logs" className="mt-5">
+            <Surface>
+              <SurfaceHeader>
+                <div className="flex items-center gap-2">
+                  <ScrollTextIcon className="size-4 text-muted-foreground" />
+                  <SurfaceTitle>Build logs</SurfaceTitle>
                 </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
-    </div>
+              </SurfaceHeader>
+              <SurfaceBody>
+                {logs.length === 0 ? (
+                  <div className="py-6 text-center">
+                    {!terminal ? (
+                      <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground px-2">
+                        <LoaderIcon className="size-4 animate-spin shrink-0" />
+                        Waiting for build to start…
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No build logs.</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-lg bg-muted/40 p-3.5 sm:p-4 font-mono text-xs leading-relaxed max-h-[min(70vh,720px)] overflow-y-auto space-y-0.5">
+                    {logs.map((log) => (
+                      <div key={logKey(log)} className={log.level === "error" ? "text-destructive" : "text-foreground"}>
+                        <span className="text-muted-foreground mr-2">
+                          {log.created_at ? new Date(log.created_at).toLocaleTimeString() : ""}
+                        </span>
+                        <BuildLogLineBody message={log.message} />
+                      </div>
+                    ))}
+                    <div ref={logEndRef} />
+                  </div>
+                )}
+              </SurfaceBody>
+            </Surface>
+          </TabsContent>
+        </Tabs>
+      </PageSection>
+    </PageContainer>
   )
 }

@@ -7,11 +7,20 @@ import {
   dashboardEventTopics,
   subscribeDashboardEvents,
 } from "@/lib/api"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { RocketIcon } from "lucide-react"
+import { RocketIcon, ChevronRightIcon } from "lucide-react"
 import { phaseLabel, phaseVariant } from "@/lib/deploy-badge"
+import {
+  PageContainer,
+  PageHeader,
+  PageTitle,
+  PageDescription,
+  PageSection,
+  EmptyState,
+  PageErrorBanner,
+} from "@/components/page-layout"
+import { Surface } from "@/components/page-surface"
 
 export function DeploymentsPage() {
   const [items, setItems] = useState<DeploymentListItem[]>([])
@@ -58,75 +67,74 @@ export function DeploymentsPage() {
 
   if (loading) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-64 rounded-xl" />
-      </div>
+      <PageContainer>
+        <div className="space-y-6">
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-64 rounded-xl" />
+        </div>
+      </PageContainer>
     )
   }
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto w-full">
-      {error && (
-        <div className="rounded-xl border border-destructive/50 bg-destructive/5 p-4 text-destructive text-sm">
-          {error}
-        </div>
-      )}
+    <PageContainer>
+      <PageSection>
+        {error && <PageErrorBanner message={error} />}
 
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Deployments</h1>
-        <p className="text-sm text-muted-foreground">Recent activity across all projects</p>
-      </div>
+        <PageHeader>
+          <div className="space-y-1">
+            <PageTitle>Deployments</PageTitle>
+            <PageDescription>Recent activity across all projects</PageDescription>
+          </div>
+        </PageHeader>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <RocketIcon className="size-4" />
-            Recent
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {items.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-center px-2">
-              <RocketIcon className="size-10 text-muted-foreground mb-4" />
-              <p className="text-muted-foreground">No deployments yet.</p>
-              <p className="text-sm text-muted-foreground mt-1 max-w-sm">
-                Create a project and deploy, or connect a GitHub webhook to deploy on push.
-              </p>
-              <Link
-                to="/projects"
-                className="mt-4 text-sm font-medium text-primary underline-offset-4 hover:underline"
-              >
-                Go to projects
-              </Link>
-            </div>
-          ) : (
-            <ul className="divide-y rounded-lg border">
+        {items.length === 0 ? (
+          <Surface>
+            <EmptyState
+              icon={<RocketIcon className="size-10" />}
+              title="No deployments yet"
+              description="Create a project and deploy, or connect a GitHub webhook to deploy on push."
+              action={
+                <Link
+                  to="/projects"
+                  className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+                >
+                  Go to projects
+                </Link>
+              }
+            />
+          </Surface>
+        ) : (
+          <Surface>
+            <ul className="divide-y">
               {items.map((d) => (
                 <li key={d.id}>
                   <Link
                     to={`/deployments/${d.id}`}
-                    className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between hover:bg-accent/50 transition-colors"
+                    className="list-row group"
                   >
                     <div className="flex flex-wrap items-center gap-2 min-w-0">
                       <Badge variant={phaseVariant(d.phase)}>{phaseLabel(d.phase)}</Badge>
-                      <span className="font-medium truncate">{d.project_name}</span>
+                      <span className="font-medium text-sm truncate">{d.project_name}</span>
                       <span className="font-mono text-xs text-muted-foreground truncate">
                         {d.github_commit ? d.github_commit.slice(0, 8) : "—"}
                       </span>
                     </div>
-                    <span className="text-xs text-muted-foreground shrink-0">
-                      {d.created_at
-                        ? new Date(d.created_at).toLocaleString()
-                        : ""}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground shrink-0">
+                        {d.created_at
+                          ? new Date(d.created_at).toLocaleString()
+                          : ""}
+                      </span>
+                      <ChevronRightIcon className="size-4 text-muted-foreground/40 shrink-0 transition-transform group-hover:translate-x-0.5" />
+                    </div>
                   </Link>
                 </li>
               ))}
             </ul>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+          </Surface>
+        )}
+      </PageSection>
+    </PageContainer>
   )
 }
