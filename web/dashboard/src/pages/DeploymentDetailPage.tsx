@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Separator } from "@/components/ui/separator"
+import { BuildLogLineBody } from "@/components/build-log-line-body"
 import { DeploymentReachability } from "@/components/deployment-reachability"
 import { ArrowLeftIcon, ScrollTextIcon, LoaderIcon, XCircleIcon, RotateCwIcon, RadioIcon, InfoIcon } from "lucide-react"
 import { isTerminalDeployment, phaseLabel, phaseVariant } from "@/lib/deploy-badge"
@@ -287,7 +288,7 @@ export function DeploymentDetailPage() {
                       <span className="text-muted-foreground mr-2">
                         {log.created_at ? new Date(log.created_at).toLocaleTimeString() : ""}
                       </span>
-                      {log.message}
+                      <BuildLogLineBody message={log.message} />
                     </div>
                   ))}
                   <div ref={logEndRef} />
