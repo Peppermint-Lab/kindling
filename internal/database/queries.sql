@@ -404,6 +404,16 @@ WHERE v.server_id = $1
   AND d.failed_at IS NULL
   AND d.deleted_at IS NULL;
 
+-- name: DeploymentFindRecoverableByServerID :many
+SELECT DISTINCT d.* FROM deployments d
+JOIN deployment_instances di ON di.deployment_id = d.id AND di.deleted_at IS NULL
+LEFT JOIN vms v ON di.vm_id = v.id AND v.deleted_at IS NULL
+WHERE (di.server_id = $1 OR v.server_id = $1)
+  AND d.stopped_at IS NULL
+  AND d.failed_at IS NULL
+  AND d.deleted_at IS NULL
+ORDER BY d.created_at;
+
 -- name: DeploymentFindByProjectID :many
 SELECT * FROM deployments WHERE project_id = $1 ORDER BY created_at DESC;
 

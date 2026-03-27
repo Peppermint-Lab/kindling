@@ -292,6 +292,13 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	go serverReconciler.Start(ctx)
 	slog.Info("reconcilers started")
 
+	recoveredDeployments, err := queueStartupRecovery(ctx, q, serverID, deploymentReconciler, notifyRouteChange)
+	if err != nil {
+		slog.Warn("startup deployment recovery skipped", "error", err)
+	} else if recoveredDeployments > 0 {
+		slog.Info("startup deployment recovery queued", "server_id", serverID, "deployments", recoveredDeployments)
+	}
+
 	dashboardEvents := rpc.NewDashboardEventBroker()
 	publishDeploymentScopes := func(projectID uuid.UUID) {
 		dashboardEvents.PublishMany(

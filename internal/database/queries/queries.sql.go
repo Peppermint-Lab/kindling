@@ -766,6 +766,56 @@ func (q *Queries) DeploymentFindRecentWithProjectForOrg(ctx context.Context, arg
 	return items, nil
 }
 
+const deploymentFindRecoverableByServerID = `-- name: DeploymentFindRecoverableByServerID :many
+SELECT DISTINCT d.id, d.project_id, d.build_id, d.image_id, d.vm_id, d.github_commit, d.github_branch, d.deployment_kind, d.preview_environment_id, d.preview_last_request_at, d.preview_scaled_to_zero, d.running_at, d.stopped_at, d.failed_at, d.deleted_at, d.wake_requested_at, d.created_at, d.updated_at FROM deployments d
+JOIN deployment_instances di ON di.deployment_id = d.id AND di.deleted_at IS NULL
+LEFT JOIN vms v ON di.vm_id = v.id AND v.deleted_at IS NULL
+WHERE (di.server_id = $1 OR v.server_id = $1)
+  AND d.stopped_at IS NULL
+  AND d.failed_at IS NULL
+  AND d.deleted_at IS NULL
+ORDER BY d.created_at
+`
+
+func (q *Queries) DeploymentFindRecoverableByServerID(ctx context.Context, serverID pgtype.UUID) ([]Deployment, error) {
+	rows, err := q.db.Query(ctx, deploymentFindRecoverableByServerID, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Deployment{}
+	for rows.Next() {
+		var i Deployment
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.BuildID,
+			&i.ImageID,
+			&i.VmID,
+			&i.GithubCommit,
+			&i.GithubBranch,
+			&i.DeploymentKind,
+			&i.PreviewEnvironmentID,
+			&i.PreviewLastRequestAt,
+			&i.PreviewScaledToZero,
+			&i.RunningAt,
+			&i.StoppedAt,
+			&i.FailedAt,
+			&i.DeletedAt,
+			&i.WakeRequestedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deploymentFindRunningAndOlder = `-- name: DeploymentFindRunningAndOlder :many
 SELECT id, project_id, build_id, image_id, vm_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
 WHERE project_id = $1
