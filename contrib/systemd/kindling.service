@@ -18,6 +18,7 @@ WorkingDirectory=/home/ubuntu/kindling
 ExecStart=/usr/local/lib/kindling/serve.sh
 Restart=always
 RestartSec=5
+KillMode=process
 # Cloud Hypervisor TAP + workloads can need many fds.
 LimitNOFILE=1048576
 

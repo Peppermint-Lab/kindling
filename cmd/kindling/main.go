@@ -20,6 +20,7 @@ func main() {
 	root.AddCommand(configCmd())
 	root.AddCommand(authCmd())
 	root.AddCommand(debugCmd())
+	root.AddCommand(chBridgeProxyCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)

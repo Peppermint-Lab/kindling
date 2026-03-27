@@ -85,9 +85,12 @@ jobs:
 
       - name: Stage artifact tree
         run: |
-          mkdir -p _deploy/bin _deploy/web/dashboard/dist
+          mkdir -p _deploy/bin _deploy/web/dashboard/dist _deploy/contrib/systemd
           install -m 755 bin/kindling _deploy/bin/kindling
           cp -r web/dashboard/dist/. _deploy/web/dashboard/dist/
+          install -m 755 contrib/kindling-serve.sh _deploy/contrib/kindling-serve.sh
+          install -m 755 contrib/setup-kindling-prod.sh _deploy/contrib/setup-kindling-prod.sh
+          cp contrib/systemd/kindling.service _deploy/contrib/systemd/kindling.service
 
       - uses: actions/upload-artifact@v4
         with:
@@ -225,11 +228,17 @@ jobs:
           # Dashboard: rsync to dashboard.new then swap in one SSH — never rsync --delete
           # directly into the live tree (canceled jobs can brick static assets mid-transfer).
           ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
-            "mkdir -p '$KH/bin'; rm -rf '$KH/web/dashboard.new'; mkdir -p '$KH/web/dashboard.new/dist'"
+            "mkdir -p '$KH/bin' '$KH/contrib/systemd'; rm -rf '$KH/web/dashboard.new'; mkdir -p '$KH/web/dashboard.new/dist'"
           rsync -az -e "ssh -p $PORT -o StrictHostKeyChecking=yes" \
             pkg/bin/kindling "$H:$KH/bin/kindling.new"
           rsync -az --delete -e "ssh -p $PORT -o StrictHostKeyChecking=yes" \
             pkg/web/dashboard/dist/ "$H:$KH/web/dashboard.new/dist/"
+          rsync -az -e "ssh -p $PORT -o StrictHostKeyChecking=yes" \
+            pkg/contrib/kindling-serve.sh "$H:$KH/contrib/kindling-serve.sh"
+          rsync -az -e "ssh -p $PORT -o StrictHostKeyChecking=yes" \
+            pkg/contrib/setup-kindling-prod.sh "$H:$KH/contrib/setup-kindling-prod.sh"
+          rsync -az -e "ssh -p $PORT -o StrictHostKeyChecking=yes" \
+            pkg/contrib/systemd/kindling.service "$H:$KH/contrib/systemd/kindling.service"
 
           if [ -f extra/vmlinuz.bin ]; then
             echo "Installing vmlinuz.bin to $DATA"
@@ -256,6 +265,10 @@ jobs:
           ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
             "mv -f '$KH/bin/kindling.new' '$KH/bin/kindling'"
           ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
+            "sudo SERVICE_USER='$SSH_USER' KINDLING_HOME='$KH' KINDLING_REPO='$KH' bash '$KH/contrib/setup-kindling-prod.sh'"
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
+            "if sudo test -f /etc/kindling/kindling.env && ! sudo grep -q '^KINDLING_PRESERVE_WORKLOADS_ON_SHUTDOWN=' /etc/kindling/kindling.env; then printf '\nKINDLING_PRESERVE_WORKLOADS_ON_SHUTDOWN=1\n' | sudo tee -a /etc/kindling/kindling.env >/dev/null; fi"
+          ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
             "set -euo pipefail; cd '$KH/web'; rm -rf dashboard.prev; if [ -d dashboard ]; then mv dashboard dashboard.prev; fi; mv dashboard.new dashboard"
           ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
-            "sudo systemctl restart kindling"
+            "sudo systemctl daemon-reload && sudo systemctl restart kindling"

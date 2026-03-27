@@ -313,7 +313,12 @@ func (r *CrunRuntime) Stop(ctx context.Context, id uuid.UUID) error {
 	r.mu.Unlock()
 
 	if !ok {
-		return nil // already stopped
+		containerID := fmt.Sprintf("kindling-%s", id)
+		cmd := exec.CommandContext(ctx, "crun", "delete", "-f", containerID)
+		_ = cmd.Run()
+		_ = os.RemoveAll(fmt.Sprintf("/tmp/kindling-bundle-%s", id))
+		_ = os.RemoveAll(fmt.Sprintf("/tmp/kindling-oci-%s", id))
+		return nil
 	}
 
 	ci.cancel()

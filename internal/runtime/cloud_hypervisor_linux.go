@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/kindlingvm/kindling/internal/chbridge"
 	"github.com/kindlingvm/kindling/internal/oci"
 	"github.com/vishvananda/netlink"
 )
@@ -53,12 +54,12 @@ type CloudHypervisorRuntime struct {
 
 type cloudHypervisorInstance struct {
 	cmd        *exec.Cmd
+	bridgeCmd  *exec.Cmd
 	tapName    string
 	ip         string
 	vmIP       string
 	workDir    string
 	socketBase string
-	hostFwd    net.Listener
 	logs       []string
 	logMu      sync.Mutex
 	cancel     context.CancelFunc
@@ -218,6 +219,11 @@ func (r *CloudHypervisorRuntime) startPreparedVM(ctx context.Context, inst Insta
 		return "", fmt.Errorf("start cloud-hypervisor: %w", err)
 	}
 	ai.cmd = cmd
+	if err := writePIDFile(cloudHypervisorVMPIDPath(workDir), cmd.Process.Pid); err != nil {
+		cancel()
+		_ = os.RemoveAll(workDir)
+		return "", fmt.Errorf("write vm pid: %w", err)
+	}
 	go r.captureOutputCH(ai, stdout)
 	go r.captureOutputCH(ai, stderr)
 
@@ -235,25 +241,41 @@ func (r *CloudHypervisorRuntime) startPreparedVM(ctx context.Context, inst Insta
 		return "", fmt.Errorf("wait for guest ready: %w", err)
 	}
 
-	hostAddrBind := "0.0.0.0:0"
 	if requestedHostPort > 0 {
-		hostAddrBind = net.JoinHostPort("0.0.0.0", strconv.Itoa(requestedHostPort))
+		ai.hostPort = requestedHostPort
+	} else {
+		ai.hostPort, err = pickFreeTCPPort()
+		if err != nil {
+			cancel()
+			_ = os.RemoveAll(workDir)
+			return "", fmt.Errorf("allocate host tcp forward port: %w", err)
+		}
 	}
-	hostLn, err := net.Listen("tcp", hostAddrBind)
-	if err != nil {
-		cancel()
-		_ = os.RemoveAll(workDir)
-		return "", fmt.Errorf("host tcp forward listen: %w", err)
-	}
-	ai.hostFwd = hostLn
-	ai.hostPort = hostLn.Addr().(*net.TCPAddr).Port
-	ai.ip, err = applyAdvertisedHost(hostLn.Addr().String(), r.advertiseHost)
+	ai.ip, err = applyAdvertisedHost(net.JoinHostPort("0.0.0.0", strconv.Itoa(ai.hostPort)), r.advertiseHost)
 	if err != nil {
 		cancel()
 		_ = os.RemoveAll(workDir)
 		return "", err
 	}
-	go r.forwardHostTCPToVM(runCtx, hostLn, ai.socketBase)
+	bridgeCmd, err := startCloudHypervisorBridgeHelper(ai.hostPort, ai.socketBase)
+	if err != nil {
+		cancel()
+		_ = os.RemoveAll(workDir)
+		return "", fmt.Errorf("start host tcp bridge: %w", err)
+	}
+	ai.bridgeCmd = bridgeCmd
+	if err := writePIDFile(cloudHypervisorBridgePIDPath(workDir), bridgeCmd.Process.Pid); err != nil {
+		cancel()
+		_ = terminatePID(bridgeCmd.Process.Pid)
+		_ = os.RemoveAll(workDir)
+		return "", fmt.Errorf("write bridge pid: %w", err)
+	}
+	if err := waitForTCPPort(runCtx, net.JoinHostPort("127.0.0.1", strconv.Itoa(ai.hostPort)), 5*time.Second); err != nil {
+		cancel()
+		_ = terminatePID(bridgeCmd.Process.Pid)
+		_ = os.RemoveAll(workDir)
+		return "", fmt.Errorf("wait for host tcp bridge: %w", err)
+	}
 	go r.waitCH(inst.ID, ai)
 
 	slog.Info("cloud hypervisor VM started",
@@ -413,88 +435,17 @@ func (r *CloudHypervisorRuntime) cleanupGuestVsock(base string) {
 	_ = os.Remove(base + "_" + strconv.Itoa(cloudHypervisorVsockPort))
 }
 
-func (r *CloudHypervisorRuntime) forwardHostTCPToVM(ctx context.Context, hostLn net.Listener, vsockUDS string) {
-	go func() {
-		<-ctx.Done()
-		_ = hostLn.Close()
-	}()
-	for {
-		conn, err := hostLn.Accept()
-		if err != nil {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				slog.Debug("cloud-hypervisor host forward ended", "error", err)
-				return
-			}
-		}
-		go r.relayHostTCPToGuestVsock(conn, vsockUDS)
-	}
-}
-
-// relayHostTCPToGuestVsock forwards one inbound TCP connection to the guest app over
-// virtio-vsock. The app binds 127.0.0.1; dialing guest eth0:port does not work (unlike
-// Docker publish). Cloud Hypervisor uses the Firecracker UDS vsock: Unix-connect to
-// --vsock socket= and send "CONNECT <port>\n" (see cloud-hypervisor docs/vsock.md).
-func (r *CloudHypervisorRuntime) relayHostTCPToGuestVsock(client net.Conn, vsockUDS string) {
-	defer client.Close()
-	back, err := dialCloudHypervisorGuestOverUDS(vsockUDS, cloudHypervisorGuestBridgeVsockPort)
-	if err != nil {
-		slog.Debug("cloud-hypervisor vsock to guest failed", "error", err)
-		return
-	}
-	defer back.Close()
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		_, _ = ioCopyClose(back, client)
-	}()
-	go func() {
-		defer wg.Done()
-		_, _ = ioCopyClose(client, back)
-	}()
-	wg.Wait()
-}
-
 func dialCloudHypervisorGuestOverUDS(vsockUDS string, port uint32) (net.Conn, error) {
-	c, err := net.Dial("unix", vsockUDS)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := fmt.Fprintf(c, "CONNECT %d\n", port); err != nil {
-		_ = c.Close()
-		return nil, err
-	}
-	// Firecracker/CH vsock: host must consume "OK <cid-or-port>\\n" before application data.
-	br := bufio.NewReader(c)
-	line, err := br.ReadString('\n')
-	if err != nil {
-		_ = c.Close()
-		return nil, fmt.Errorf("vsock connect ack: %w", err)
-	}
-	if len(line) < 3 || line[0] != 'O' || line[1] != 'K' {
-		_ = c.Close()
-		return nil, fmt.Errorf("vsock connect ack: got %q", strings.TrimSpace(line))
-	}
-	// br wraps c; after the ACK line, all reads must go through br so peek-ahead stays in order.
-	return &vsockBridgedConn{Conn: c, br: br}, nil
+	return chbridge.DialGuestOverUDS(vsockUDS, port)
 }
-
-type vsockBridgedConn struct {
-	net.Conn
-	br *bufio.Reader
-}
-
-func (v *vsockBridgedConn) Read(b []byte) (int, error) { return v.br.Read(b) }
 
 func (r *CloudHypervisorRuntime) waitCH(id uuid.UUID, ai *cloudHypervisorInstance) {
 	err := ai.cmd.Wait()
-	if ai.hostFwd != nil {
-		_ = ai.hostFwd.Close()
+	if ai.bridgeCmd != nil && ai.bridgeCmd.Process != nil {
+		_ = terminatePID(ai.bridgeCmd.Process.Pid)
 	}
+	_ = os.Remove(cloudHypervisorVMPIDPath(ai.workDir))
+	_ = os.Remove(cloudHypervisorBridgePIDPath(ai.workDir))
 	removeCHTap(ai.tapName)
 	r.cleanupGuestVsock(ai.socketBase)
 	r.mu.Lock()
@@ -527,7 +478,16 @@ func (r *CloudHypervisorRuntime) Stop(ctx context.Context, id uuid.UUID) error {
 	}
 	r.mu.Unlock()
 	if !ok {
+		workDir := cloudHypervisorWorkDir(id)
+		_ = terminatePIDFromFile(cloudHypervisorBridgePIDPath(workDir))
+		_ = terminatePIDFromFile(cloudHypervisorVMPIDPath(workDir))
+		_ = os.Remove(cloudHypervisorBridgePIDPath(workDir))
+		_ = os.Remove(cloudHypervisorVMPIDPath(workDir))
+		_ = os.RemoveAll(workDir)
 		return nil
+	}
+	if ai.bridgeCmd != nil && ai.bridgeCmd.Process != nil {
+		_ = terminatePID(ai.bridgeCmd.Process.Pid)
 	}
 	ai.cancel()
 	return nil
@@ -602,6 +562,82 @@ func tailCloudHypervisorLogs(ai *cloudHypervisorInstance, max int) string {
 		max = len(ai.logs)
 	}
 	return strings.Join(ai.logs[len(ai.logs)-max:], "\n")
+}
+
+func cloudHypervisorWorkDir(id uuid.UUID) string {
+	return filepath.Join(os.TempDir(), "kindling-ch-"+id.String())
+}
+
+func cloudHypervisorVMPIDPath(workDir string) string {
+	return filepath.Join(workDir, "cloud-hypervisor.pid")
+}
+
+func cloudHypervisorBridgePIDPath(workDir string) string {
+	return filepath.Join(workDir, "cloud-hypervisor-bridge.pid")
+}
+
+func startCloudHypervisorBridgeHelper(hostPort int, vsockUDS string) (*exec.Cmd, error) {
+	bin, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(bin,
+		"ch-bridge-proxy",
+		"--listen", net.JoinHostPort("0.0.0.0", strconv.Itoa(hostPort)),
+		"--vsock", vsockUDS,
+		"--guest-port", strconv.Itoa(cloudHypervisorGuestBridgeVsockPort),
+	)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return cmd, nil
+}
+
+func writePIDFile(path string, pid int) error {
+	return os.WriteFile(path, []byte(strconv.Itoa(pid)), 0o600)
+}
+
+func terminatePIDFromFile(path string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		return err
+	}
+	return terminatePID(pid)
+}
+
+func terminatePID(pid int) error {
+	if pid <= 0 {
+		return nil
+	}
+	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil && err != syscall.ESRCH {
+		return err
+	}
+	return nil
+}
+
+func waitForTCPPort(ctx context.Context, addr string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	return fmt.Errorf("timed out waiting for %s", addr)
 }
 
 func cloudHypervisorIPs(slot uint32) (string, string, error) {

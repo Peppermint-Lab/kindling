@@ -50,6 +50,7 @@ func serveCmd() *cobra.Command {
 		edgeHTTPAddr  string
 		acmeEmail     string
 		acmeStaging   bool
+		componentsRaw string
 	)
 
 	cmd := &cobra.Command{
@@ -69,6 +70,7 @@ func serveCmd() *cobra.Command {
 				edgeHTTPAddr:  edgeHTTPAddr,
 				acmeEmail:     acmeEmail,
 				acmeStaging:   acmeStaging,
+				componentsRaw: componentsRaw,
 			})
 		},
 	}
@@ -81,6 +83,7 @@ func serveCmd() *cobra.Command {
 	cmd.Flags().StringVar(&edgeHTTPAddr, "edge-http", ":80", "HTTP listen for edge proxy; stored in cluster_settings.edge_http_addr when missing")
 	cmd.Flags().StringVar(&acmeEmail, "acme-email", "", "Let's Encrypt email; stored in cluster_settings when missing")
 	cmd.Flags().BoolVar(&acmeStaging, "acme-staging", false, "Use Let's Encrypt staging CA; stored in cluster_settings when missing")
+	cmd.Flags().StringVar(&componentsRaw, "components", "", "Comma-separated serve components: api, edge, worker (default: api,edge,worker; env KINDLING_COMPONENTS)")
 
 	return cmd
 }
@@ -94,15 +97,20 @@ type serveOptions struct {
 	edgeHTTPAddr  string
 	acmeEmail     string
 	acmeStaging   bool
+	componentsRaw string
 }
 
 func runServe(ctx context.Context, databaseURL string, opts serveOptions) error {
 	listenAddr := opts.listenAddr
 	publicBaseURL := opts.publicBaseURL
+	components, err := resolveServeComponents(opts.componentsRaw)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	slog.Info("starting kindling", "listen", listenAddr)
+	slog.Info("starting kindling", "listen", listenAddr, "api", components.api, "edge", components.edge, "worker", components.worker)
 
 	// Connect to PostgreSQL
 	db, err := database.New(ctx, databaseURL)
@@ -123,34 +131,36 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	q := queries.New(db.Pool)
 
 	// Register this server in the database.
-	_, err = q.ServerRegister(ctx, queries.ServerRegisterParams{
-		ID:         pgtype.UUID{Bytes: serverID, Valid: true},
-		Hostname:   hostname(),
-		InternalIp: "127.0.0.1",
-		IpRange:    mustParseCIDR("10.0.0.0/20"),
-	})
-	if err != nil {
-		return fmt.Errorf("register server: %w", err)
-	}
-	slog.Info("server registered", "server_id", serverID)
+	if components.worker || components.edge {
+		_, err = q.ServerRegister(ctx, queries.ServerRegisterParams{
+			ID:         pgtype.UUID{Bytes: serverID, Valid: true},
+			Hostname:   hostname(),
+			InternalIp: "127.0.0.1",
+			IpRange:    mustParseCIDR("10.0.0.0/20"),
+		})
+		if err != nil {
+			return fmt.Errorf("register server: %w", err)
+		}
+		slog.Info("server registered", "server_id", serverID)
 
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := q.ServerHeartbeat(ctx, pgtype.UUID{Bytes: serverID, Valid: true}); err != nil {
-					slog.Error("server heartbeat failed", "error", err)
+		go func() {
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if err := q.ServerHeartbeat(ctx, pgtype.UUID{Bytes: serverID, Valid: true}); err != nil {
+						slog.Error("server heartbeat failed", "error", err)
+					}
 				}
 			}
-		}
-	}()
+		}()
 
-	if err := q.ServerSettingEnsure(ctx, pgtype.UUID{Bytes: serverID, Valid: true}); err != nil {
-		return fmt.Errorf("ensure server settings: %w", err)
+		if err := q.ServerSettingEnsure(ctx, pgtype.UUID{Bytes: serverID, Valid: true}); err != nil {
+			return fmt.Errorf("ensure server settings: %w", err)
+		}
 	}
 
 	if err := seedPublicBaseURLIfUnset(ctx, q, publicBaseURL); err != nil {
@@ -166,8 +176,10 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	if err := seedClusterSettingsFromServeFlags(ctx, q, opts); err != nil {
 		return fmt.Errorf("seed cluster settings: %w", err)
 	}
-	if err := seedAdvertiseHostIfUnset(ctx, q, serverID, opts); err != nil {
-		return fmt.Errorf("seed advertise host: %w", err)
+	if components.worker || components.edge {
+		if err := seedAdvertiseHostIfUnset(ctx, q, serverID, opts); err != nil {
+			return fmt.Errorf("seed advertise host: %w", err)
+		}
 	}
 
 	masterKey, err := bootstrap.LoadOrCreateMasterKey()
@@ -185,81 +197,6 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		}
 	}()
 
-	snap := cfgMgr.Snapshot()
-	pullAuth := registryAuthFromSnapshot(snap)
-	rt := crunrt.NewDetectedRuntime(crunrt.HostRuntimeConfig{
-		ForceRuntime:  snap.ServerRuntimeOverride,
-		AdvertiseHost: snap.ServerAdvertiseHost,
-		PullAuth:      pullAuth,
-		CloudHypervisor: crunrt.CloudHypervisorHostConfig{
-			BinaryPath:    snap.ServerCloudHypervisorBin,
-			KernelPath:    snap.ServerCloudHypervisorKernelPath,
-			InitramfsPath: snap.ServerCloudHypervisorInitramfsPath,
-		},
-		AppleKernelPath:    "",
-		AppleInitramfsPath: "",
-	})
-	defer rt.StopAll()
-	slog.Info("runtime detected", "runtime", rt.Name())
-
-	go usage.RunResourcePoller(ctx, q, serverID, rt, 15*time.Second)
-
-	var buildRunner builder.BuildRunner = builder.NewLocalBuildRunner()
-	if runtime.GOOS == "darwin" {
-		home, herr := os.UserHomeDir()
-		if herr == nil {
-			ar, err := builder.NewAppleVZBuildRunner(builder.AppleVZBuildRunnerConfig{
-				KernelPath:       filepath.Join(home, ".kindling", "vmlinuz.bin"),
-				InitramfsPath:    filepath.Join(home, ".kindling", "initramfs.cpio.gz"),
-				BuilderRootfsDir: filepath.Join(home, ".kindling", "builder-rootfs"),
-			})
-			if err != nil {
-				slog.Warn("apple vz oci build runner disabled", "error", err)
-			} else {
-				buildRunner = ar
-				slog.Info("using Apple VZ builder VM for OCI builds")
-			}
-		}
-	}
-
-	bldr := builder.New(func(c context.Context) (builder.Config, error) {
-		s := cfgMgr.Snapshot()
-		if s == nil {
-			return builder.Config{}, fmt.Errorf("config snapshot unavailable")
-		}
-		return builder.Config{
-			GitHubToken:      s.GitHubToken,
-			RegistryURL:      s.RegistryURL,
-			RegistryUsername: s.RegistryUsername,
-			RegistryPassword: s.RegistryPassword,
-		}, nil
-	}, q, serverID, buildRunner)
-
-	deployer := deploy.New(q, db.Pool, serverID)
-	deployer.SetRuntime(rt)
-
-	// Set up reconcilers
-	deploymentReconciler := reconciler.New(reconciler.Config{
-		Name:      "deployment",
-		Reconcile: deployer.ReconcileDeployment,
-	})
-	deployer.SetReconciler(deploymentReconciler)
-
-	buildReconciler := reconciler.New(reconciler.Config{
-		Name:      "build",
-		Reconcile: bldr.ReconcileBuild,
-	})
-
-	// VM/instance reconciler — currently handled by deployment reconciler.
-	vmReconciler := reconciler.New(reconciler.Config{
-		Name: "instance",
-		Reconcile: func(ctx context.Context, id uuid.UUID) error {
-			slog.Info("reconciling instance", "id", id)
-			return nil
-		},
-	})
-
-	// Route change channel — domain/server reconcilers signal the edge proxy.
 	routeChangeCh := make(chan struct{}, 1)
 	notifyRouteChange := func() {
 		select {
@@ -268,39 +205,133 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		}
 	}
 
-	domainReconciler := reconciler.New(reconciler.Config{
-		Name: "domain",
-		Reconcile: func(ctx context.Context, id uuid.UUID) error {
-			slog.Info("reconciling domain", "id", id)
-			notifyRouteChange()
-			return nil
-		},
-	})
-
-	serverDrainHandler := serverreconcile.NewHandler(q, deploymentReconciler, notifyRouteChange)
-	serverReconciler := reconciler.New(reconciler.Config{
-		Name:      "server",
-		Reconcile: serverDrainHandler.Reconcile,
-	})
-	deployer.SetServerScheduler(serverReconciler)
-
-	// Start reconcilers
-	go deploymentReconciler.Start(ctx)
-	go buildReconciler.Start(ctx)
-	go vmReconciler.Start(ctx)
-	go domainReconciler.Start(ctx)
-	go serverReconciler.Start(ctx)
-	slog.Info("reconcilers started")
-
-	recoveredDeployments, err := queueStartupRecovery(ctx, q, serverID, deploymentReconciler, notifyRouteChange)
-	if err != nil {
-		slog.Warn("startup deployment recovery skipped", "error", err)
-	} else if recoveredDeployments > 0 {
-		slog.Info("startup deployment recovery queued", "server_id", serverID, "deployments", recoveredDeployments)
+	snap := cfgMgr.Snapshot()
+	pullAuth := registryAuthFromSnapshot(snap)
+	var rt crunrt.Runtime
+	if components.worker {
+		rt = crunrt.NewDetectedRuntime(crunrt.HostRuntimeConfig{
+			ForceRuntime:  snap.ServerRuntimeOverride,
+			AdvertiseHost: snap.ServerAdvertiseHost,
+			PullAuth:      pullAuth,
+			CloudHypervisor: crunrt.CloudHypervisorHostConfig{
+				BinaryPath:    snap.ServerCloudHypervisorBin,
+				KernelPath:    snap.ServerCloudHypervisorKernelPath,
+				InitramfsPath: snap.ServerCloudHypervisorInitramfsPath,
+			},
+			AppleKernelPath:    "",
+			AppleInitramfsPath: "",
+		})
+		if shouldStopWorkloadsOnShutdown() {
+			defer rt.StopAll()
+		} else {
+			slog.Info("preserving workloads on shutdown", "env", "KINDLING_PRESERVE_WORKLOADS_ON_SHUTDOWN")
+		}
+		slog.Info("runtime detected", "runtime", rt.Name())
+		go usage.RunResourcePoller(ctx, q, serverID, rt, 15*time.Second)
 	}
 
-	dashboardEvents := rpc.NewDashboardEventBroker()
+	var (
+		deploymentReconciler *reconciler.Scheduler
+		buildReconciler      *reconciler.Scheduler
+		vmReconciler         *reconciler.Scheduler
+		domainReconciler     *reconciler.Scheduler
+		serverReconciler     *reconciler.Scheduler
+	)
+	if components.worker {
+		var buildRunner builder.BuildRunner = builder.NewLocalBuildRunner()
+		if runtime.GOOS == "darwin" {
+			home, herr := os.UserHomeDir()
+			if herr == nil {
+				ar, err := builder.NewAppleVZBuildRunner(builder.AppleVZBuildRunnerConfig{
+					KernelPath:       filepath.Join(home, ".kindling", "vmlinuz.bin"),
+					InitramfsPath:    filepath.Join(home, ".kindling", "initramfs.cpio.gz"),
+					BuilderRootfsDir: filepath.Join(home, ".kindling", "builder-rootfs"),
+				})
+				if err != nil {
+					slog.Warn("apple vz oci build runner disabled", "error", err)
+				} else {
+					buildRunner = ar
+					slog.Info("using Apple VZ builder VM for OCI builds")
+				}
+			}
+		}
+		bldr := builder.New(func(c context.Context) (builder.Config, error) {
+			s := cfgMgr.Snapshot()
+			if s == nil {
+				return builder.Config{}, fmt.Errorf("config snapshot unavailable")
+			}
+			return builder.Config{
+				GitHubToken:      s.GitHubToken,
+				RegistryURL:      s.RegistryURL,
+				RegistryUsername: s.RegistryUsername,
+				RegistryPassword: s.RegistryPassword,
+			}, nil
+		}, q, serverID, buildRunner)
+
+		deployer := deploy.New(q, db.Pool, serverID)
+		deployer.SetRuntime(rt)
+
+		deploymentReconciler = reconciler.New(reconciler.Config{
+			Name:      "deployment",
+			Reconcile: deployer.ReconcileDeployment,
+		})
+		deployer.SetReconciler(deploymentReconciler)
+
+		buildReconciler = reconciler.New(reconciler.Config{
+			Name:      "build",
+			Reconcile: bldr.ReconcileBuild,
+		})
+
+		vmReconciler = reconciler.New(reconciler.Config{
+			Name: "instance",
+			Reconcile: func(ctx context.Context, id uuid.UUID) error {
+				slog.Info("reconciling instance", "id", id)
+				return nil
+			},
+		})
+
+		domainReconciler = reconciler.New(reconciler.Config{
+			Name: "domain",
+			Reconcile: func(ctx context.Context, id uuid.UUID) error {
+				slog.Info("reconciling domain", "id", id)
+				notifyRouteChange()
+				return nil
+			},
+		})
+
+		serverDrainHandler := serverreconcile.NewHandler(q, deploymentReconciler, notifyRouteChange)
+		serverReconciler = reconciler.New(reconciler.Config{
+			Name:      "server",
+			Reconcile: serverDrainHandler.Reconcile,
+		})
+		deployer.SetServerScheduler(serverReconciler)
+	}
+
+	// Start reconcilers
+	if components.worker {
+		go deploymentReconciler.Start(ctx)
+		go buildReconciler.Start(ctx)
+		go vmReconciler.Start(ctx)
+		go domainReconciler.Start(ctx)
+		go serverReconciler.Start(ctx)
+		slog.Info("reconcilers started")
+
+		recoveredDeployments, err := queueStartupRecovery(ctx, q, serverID, deploymentReconciler, notifyRouteChange)
+		if err != nil {
+			slog.Warn("startup deployment recovery skipped", "error", err)
+		} else if recoveredDeployments > 0 {
+			slog.Info("startup deployment recovery queued", "server_id", serverID, "deployments", recoveredDeployments)
+		}
+	}
+
+	var dashboardEvents *rpc.DashboardEventBroker
+	if components.api {
+		dashboardEvents = rpc.NewDashboardEventBroker()
+	}
 	publishDeploymentScopes := func(projectID uuid.UUID) {
+		if dashboardEvents == nil {
+			return
+		}
 		dashboardEvents.PublishMany(
 			rpc.TopicDeployments,
 			rpc.TopicProject(projectID),
@@ -312,69 +343,103 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	wal := listener.New(listener.Config{
 		DatabaseURL: databaseURL,
 		OnDeployment: func(ctx context.Context, id uuid.UUID) {
-			deploymentReconciler.ScheduleNow(id)
+			if deploymentReconciler != nil {
+				deploymentReconciler.ScheduleNow(id)
+			}
 			if dep, err := q.DeploymentFirstByID(ctx, pgtype.UUID{Bytes: id, Valid: true}); err == nil {
 				publishDeploymentScopes(uuid.UUID(dep.ProjectID.Bytes))
 			}
 		},
 		OnDeploymentInstance: func(ctx context.Context, instanceID uuid.UUID) {
 			inst, err := q.DeploymentInstanceFirstByID(ctx, pgtype.UUID{Bytes: instanceID, Valid: true})
-			if err == nil && inst.DeploymentID.Valid {
+			if err == nil && inst.DeploymentID.Valid && deploymentReconciler != nil {
 				deploymentReconciler.ScheduleNow(uuid.UUID(inst.DeploymentID.Bytes))
+			}
+			if err == nil && inst.DeploymentID.Valid {
 				if dep, err2 := q.DeploymentFirstByID(ctx, inst.DeploymentID); err2 == nil {
 					publishDeploymentScopes(uuid.UUID(dep.ProjectID.Bytes))
 				}
 			}
-			dashboardEvents.Publish(rpc.TopicServers)
-			notifyRouteChange()
+			if dashboardEvents != nil {
+				dashboardEvents.Publish(rpc.TopicServers)
+			}
+			if components.edge {
+				notifyRouteChange()
+			}
 		},
 		OnProject: func(ctx context.Context, projectID uuid.UUID) {
 			dep, err := q.DeploymentLatestRunningByProjectID(ctx, pgtype.UUID{Bytes: projectID, Valid: true})
-			if err == nil {
+			if err == nil && deploymentReconciler != nil {
 				deploymentReconciler.ScheduleNow(uuid.UUID(dep.ID.Bytes))
 			}
-			dashboardEvents.PublishMany(
-				rpc.TopicProjects,
-				rpc.TopicProject(projectID),
-				rpc.TopicProjectDeployments(projectID),
-			)
+			if dashboardEvents != nil {
+				dashboardEvents.PublishMany(
+					rpc.TopicProjects,
+					rpc.TopicProject(projectID),
+					rpc.TopicProjectDeployments(projectID),
+				)
+			}
 		},
 		OnBuild: func(ctx context.Context, id uuid.UUID) {
-			buildReconciler.ScheduleNow(id)
+			if buildReconciler != nil {
+				buildReconciler.ScheduleNow(id)
+			}
 			if b, err := q.BuildFirstByID(ctx, pgtype.UUID{Bytes: id, Valid: true}); err == nil {
 				publishDeploymentScopes(uuid.UUID(b.ProjectID.Bytes))
 			}
 		},
 		OnVM: func(ctx context.Context, id uuid.UUID) {
-			vmReconciler.ScheduleNow(id)
+			if vmReconciler != nil {
+				vmReconciler.ScheduleNow(id)
+			}
 			dep, err := q.DeploymentFindByVMID(ctx, pgtype.UUID{Bytes: id, Valid: true})
 			if err == nil {
-				deploymentReconciler.ScheduleNow(uuid.UUID(dep.ID.Bytes))
+				if deploymentReconciler != nil {
+					deploymentReconciler.ScheduleNow(uuid.UUID(dep.ID.Bytes))
+				}
 				publishDeploymentScopes(uuid.UUID(dep.ProjectID.Bytes))
 			}
-			dashboardEvents.Publish(rpc.TopicServers)
-			notifyRouteChange()
+			if dashboardEvents != nil {
+				dashboardEvents.Publish(rpc.TopicServers)
+			}
+			if components.edge {
+				notifyRouteChange()
+			}
 		},
 		OnDomain: func(ctx context.Context, id uuid.UUID) {
-			domainReconciler.ScheduleNow(id)
+			if domainReconciler != nil {
+				domainReconciler.ScheduleNow(id)
+			}
 			if projID, err := q.DomainProjectIDByDomainID(ctx, pgtype.UUID{Bytes: id, Valid: true}); err == nil && projID.Valid {
 				publishDeploymentScopes(uuid.UUID(projID.Bytes))
 			}
+			if components.edge && domainReconciler == nil {
+				notifyRouteChange()
+			}
 		},
 		OnServer: func(ctx context.Context, id uuid.UUID) {
-			serverReconciler.ScheduleNow(id)
-			dashboardEvents.Publish(rpc.TopicServers)
+			if serverReconciler != nil {
+				serverReconciler.ScheduleNow(id)
+			}
+			if dashboardEvents != nil {
+				dashboardEvents.Publish(rpc.TopicServers)
+			}
+			if components.edge && serverReconciler == nil {
+				notifyRouteChange()
+			}
 		},
 	})
 
-	go func() {
-		if err := wal.Start(ctx); err != nil && ctx.Err() == nil {
-			slog.Error("WAL listener failed", "error", err)
-		}
-	}()
-	slog.Info("WAL listener started")
+	if components.api || components.edge || components.worker {
+		go func() {
+			if err := wal.Start(ctx); err != nil && ctx.Err() == nil {
+				slog.Error("WAL listener failed", "error", err)
+			}
+		}()
+		slog.Info("WAL listener started")
+	}
 
-	if snap.EdgeHTTPSAddr != "" {
+	if components.edge && snap.EdgeHTTPSAddr != "" {
 		coldStart := snap.ColdStartTimeout
 		edgeHTTP := snap.EdgeHTTPAddr
 		if edgeHTTP == "" {
@@ -414,59 +479,64 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		}()
 	}
 
-	go runIdleScaleDownLoop(ctx, databaseURL, q, deploymentReconciler, cfgMgr)
-	go runPreviewCleanupLoop(ctx, databaseURL, q, deploymentReconciler)
-	go runPreviewIdleScaleDownLoop(ctx, databaseURL, q, deploymentReconciler, cfgMgr)
+	if components.worker {
+		go runIdleScaleDownLoop(ctx, databaseURL, q, deploymentReconciler, cfgMgr)
+		go runPreviewCleanupLoop(ctx, databaseURL, q, deploymentReconciler)
+		go runPreviewIdleScaleDownLoop(ctx, databaseURL, q, deploymentReconciler, cfgMgr)
+	}
 
 	// API server
-	api := rpc.NewAPI(q, cfgMgr, dashboardEvents)
-	webhookHandler := webhook.NewHandler(q)
+	if components.api {
+		api := rpc.NewAPI(q, cfgMgr, dashboardEvents)
+		webhookHandler := webhook.NewHandler(q)
 
-	apiMux := http.NewServeMux()
-	apiMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
-	})
-	// Browsers hit / on the API host; the mux would otherwise 404.
-	apiMux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/api/meta", http.StatusFound)
-	})
-	api.Register(apiMux)
-	apiMux.Handle("POST /webhooks/github", webhookHandler)
+		apiMux := http.NewServeMux()
+		apiMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("ok"))
+		})
+		apiMux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/api/meta", http.StatusFound)
+		})
+		api.Register(apiMux)
+		apiMux.Handle("POST /webhooks/github", webhookHandler)
 
-	dashHostStr, err := dashboardHostnameFromDB(ctx, q)
-	if err != nil {
-		return fmt.Errorf("read dashboard hostname: %w", err)
+		dashHostStr, err := dashboardHostnameFromDB(ctx, q)
+		if err != nil {
+			return fmt.Errorf("read dashboard hostname: %w", err)
+		}
+
+		corsOrigins := corsBuildAllowList(ctx, q, dashHostStr)
+
+		distDir := strings.TrimSpace(os.Getenv("KINDLING_DASHBOARD_DIST"))
+		if distDir == "" {
+			distDir = "web/dashboard/dist"
+		}
+
+		protectedAPI := auth.Middleware(q, apiMux)
+		var handler http.Handler
+		if dashHostStr != "" {
+			handler = hostBasedHandler(corsMiddleware(corsOrigins, protectedAPI), dashboardSPAHandler(distDir), dashHostStr)
+		} else {
+			handler = corsMiddleware(corsOrigins, protectedAPI)
+		}
+
+		srv := &http.Server{Addr: listenAddr, Handler: handler}
+
+		go func() {
+			<-ctx.Done()
+			slog.Info("shutting down")
+			srv.Close()
+		}()
+
+		slog.Info("listening", "addr", listenAddr)
+		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+			return err
+		}
+		return nil
 	}
 
-	corsOrigins := corsBuildAllowList(ctx, q, dashHostStr)
-
-	distDir := strings.TrimSpace(os.Getenv("KINDLING_DASHBOARD_DIST"))
-	if distDir == "" {
-		distDir = "web/dashboard/dist"
-	}
-
-	protectedAPI := auth.Middleware(q, apiMux)
-	var handler http.Handler
-	if dashHostStr != "" {
-		handler = hostBasedHandler(corsMiddleware(corsOrigins, protectedAPI), dashboardSPAHandler(distDir), dashHostStr)
-	} else {
-		handler = corsMiddleware(corsOrigins, protectedAPI)
-	}
-
-	srv := &http.Server{Addr: listenAddr, Handler: handler}
-
-	go func() {
-		<-ctx.Done()
-		slog.Info("shutting down")
-		srv.Close()
-	}()
-
-	slog.Info("listening", "addr", listenAddr)
-	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-		return err
-	}
-
+	<-ctx.Done()
 	return nil
 }
 
