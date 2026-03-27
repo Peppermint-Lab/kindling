@@ -1,0 +1,76 @@
+{
+  "milestone": "structural",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go test ./...",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "go build ./...",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "go vet ./...",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 4,
+    "passed": 2,
+    "failed": 2,
+    "failedFeatures": [
+      "str-split-cloud-hypervisor",
+      "str-split-rpc-package"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "str-split-cloud-hypervisor",
+      "severity": "blocking",
+      "description": "internal/runtime/cloud_hypervisor_linux.go:223 returns runCtx.Err (method value) where error is required, causing a linux-target compile-time type mismatch."
+    },
+    {
+      "featureId": "str-split-rpc-package",
+      "severity": "blocking",
+      "description": "internal/rpc/deployments/handlers.go changed deployment SSE event contract from deployment/logs to state/log, breaking existing dashboard listeners expecting deployment/logs."
+    },
+    {
+      "featureId": "str-split-rpc-package",
+      "severity": "blocking",
+      "description": "internal/rpc/deployments/handlers.go gates incremental log polling on lastLogTS.Valid, so deployments with no initial logs never stream subsequent logs."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "services.yaml",
+      "description": "Added commands.build_linux (GOOS=linux go build ./...) for linux-target validation of platform-specific files.",
+      "sourceFeature": "str-split-cloud-hypervisor"
+    },
+    {
+      "target": "library",
+      "description": "Updated .factory/library/architecture.md RPC package map entry to reflect domain sub-package split.",
+      "sourceFeature": "str-split-rpc-package"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "refactor-worker skill",
+      "suggestion": "Require GOOS=linux build validation when a feature edits *_linux.go files or linux-tagged code.",
+      "evidence": "str-split-cloud-hypervisor introduced a linux-only compile error in internal/runtime/cloud_hypervisor_linux.go:223 that host-only build/vet/test did not catch.",
+      "isSystemic": true
+    },
+    {
+      "target": "refactor-worker skill",
+      "suggestion": "For API/RPC refactors, add an explicit contract verification step against known consumers (routes, payloads, SSE event names).",
+      "evidence": "str-split-rpc-package introduced deployment SSE contract drift in internal/rpc/deployments/handlers.go versus dashboard expectations in web/dashboard/src/lib/api.ts.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": null
+}

@@ -1,0 +1,45 @@
+{
+  "featureId": "str-split-rpc-package",
+  "reviewedAt": "2026-03-27T23:42:23Z",
+  "commitId": "3913da73c14053301ff34c6b8be72894f454c3e0",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The structural split is substantial and mostly coherent, but the deployment SSE stream behavior regressed in a way that breaks existing consumers.",
+    "issues": [
+      {
+        "file": "internal/rpc/deployments/handlers.go",
+        "line": 297,
+        "severity": "blocking",
+        "description": "SSE event contract changed from \"deployment\"/\"logs\" to \"state\"/\"log\" and logs are emitted per-row instead of as a batch; existing dashboard client still listens for \"deployment\" and \"logs\" (web/dashboard/src/lib/api.ts:811,819), so live deployment updates/log streaming will not be processed."
+      },
+      {
+        "file": "internal/rpc/deployments/handlers.go",
+        "line": 331,
+        "severity": "blocking",
+        "description": "New log polling is gated by `lastLogTS.Valid`, but `lastLogTS` starts invalid when there are no initial logs (line 310), so deployments that start with zero logs will never stream subsequent logs."
+      },
+      {
+        "file": "internal/rpc/deployments/handlers.go",
+        "line": 294,
+        "severity": "non_blocking",
+        "description": "Initial `BuildLogsByBuildID` DB error is silently discarded (`logs, _ = ...`), which weakens observability and violates mission guidance against ignoring DB errors."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The refactor-worker procedure does not explicitly require API contract checks against existing route consumers after package splits, which likely contributed to the unnoticed SSE event-schema regression.",
+      "evidence": ".factory/skills/refactor-worker/SKILL.md focuses on build/vet/test and structural checks; regression appears at internal/rpc/deployments/handlers.go:297-338 while consumer expectations remain in web/dashboard/src/lib/api.ts:811-827."
+    },
+    {
+      "area": "knowledge",
+      "observation": "Shared architecture knowledge is now stale for RPC structure after this feature.",
+      "evidence": ".factory/library/architecture.md still states `internal/rpc` is a single package with \"39 files, single API struct\", but commit 3913da73 introduces domain sub-packages (auth/projects/deployments/volumes/domains/servers/settings)."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Review failed: the split achieved package decomposition targets, but deployment SSE behavior changed incompatibly (event names/payload contract) and introduced a log-streaming edge-case that prevents new logs from arriving when initial logs are empty."
+}

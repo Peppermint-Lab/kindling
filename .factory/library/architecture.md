@@ -36,7 +36,7 @@ internal/
   oci/                 — OCI image helpers (skopeo, umoci)
   preview/             — PR preview environment cleanup
   reconciler/          — Generic reconciler scheduler
-  rpc/                 — REST API handlers (39 files, single API struct)
+  rpc/                 — REST API layer with root router + domain subpackages (auth/projects/deployments/volumes/domains/servers/settings)
   runtime/             — VM/container lifecycle (Cloud Hypervisor, crun, Apple VZ)
   server/              — Server registration + heartbeat
   serverreconcile/     — Server drain/failover reconciler

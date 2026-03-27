@@ -1,0 +1,22 @@
+{
+  "featureId": "str-split-deploy",
+  "reviewedAt": "2026-03-27T23:40:46Z",
+  "commitId": "7f92f23",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The refactor meets the structural goals (deploy.go reduced to 400 lines, core logic split into focused helpers/files) and preserves the main reconcile flow. I found one high-confidence non-blocking correctness/maintainability regression in stale-instance cleanup error handling.",
+    "issues": [
+      {
+        "file": "internal/deploy/deploy_instance.go",
+        "line": 226,
+        "severity": "non_blocking",
+        "description": "resetStaleInstance now performs an extra DeploymentFirstByID lookup and silently ignores lookup failure before volume detach. In the pre-refactor flow, dep.ProjectID was already available from the caller and detach was attempted unconditionally. If this lookup fails, detachProjectVolumeIfAttached is skipped, which can leave volume attachment state stale. This is a behavior change in an error path and violates the mission's 'structural only' and no-silent-error intent."
+      }
+    ]
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed handoff, commit 7f92f23 diff, transcript skeleton, and refactor-worker skill. Feature is functionally acceptable overall and satisfies split targets; one non-blocking error-path regression was identified in resetStaleInstance volume-detach handling."
+}

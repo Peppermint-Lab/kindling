@@ -1,0 +1,33 @@
+{
+  "featureId": "str-split-cloud-hypervisor",
+  "reviewedAt": "2026-03-27T23:39:18Z",
+  "commitId": "2ff03b53dca73bc5e1ab91c5c4c210a3be9a497d",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The file split is substantial and mostly aligned with the feature scope, but it introduced a linux-target compile break in the core runtime file.",
+    "issues": [
+      {
+        "file": "internal/runtime/cloud_hypervisor_linux.go",
+        "line": 223,
+        "severity": "blocking",
+        "description": "buildCHInstance returns `runCtx.Err` (a method value) in a position typed as `error`. This is a compile-time type mismatch (`func() error` is not assignable to `error`) for linux builds, breaking the runtime package on its target platform."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The refactor-worker procedure did not require a linux-target compile check when editing `_linux.go` files, so host-only validation on macOS missed a linux-only compile error.",
+      "evidence": "Handoff verification only includes `go build ./...`, `go vet ./...`, and `go test ./...`; this feature changed linux-tagged files and contains a linux compile error at internal/runtime/cloud_hypervisor_linux.go:223."
+    },
+    {
+      "area": "services",
+      "observation": ".factory/services.yaml lacks a linux-target validation command for platform-specific runtime code.",
+      "evidence": ".factory/services.yaml defines only host-platform build/vet/test commands; no GOOS=linux command is present despite linux-specific files under internal/runtime/."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail: structural split goals were met, but a blocking linux-only compile error was introduced in `buildCHInstance`."
+}
