@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 type instanceVMMetadataStore interface {
@@ -74,7 +75,7 @@ func (d *Deployer) persistInstanceVMMetadata(
 		return uuid.Nil, fmt.Errorf("fetch deployment instance: %w", err)
 	}
 	if inst.VmID.Valid {
-		return uuidFromPgtype(inst.VmID), nil
+		return pguuid.FromPgtype(inst.VmID), nil
 	}
 	if !imageID.Valid {
 		return uuid.Nil, fmt.Errorf("deployment image id is missing")
@@ -92,8 +93,8 @@ func (d *Deployer) persistInstanceVMMetadata(
 
 	vmID := uuid.New()
 	if _, err := store.VMCreate(ctx, queries.VMCreateParams{
-		ID:              uuidToPgtype(vmID),
-		ServerID:        uuidToPgtype(serverID),
+		ID:              pguuid.ToPgtype(vmID),
+		ServerID:        pguuid.ToPgtype(serverID),
 		ImageID:         imageID,
 		Status:          "running",
 		Runtime:         meta.Runtime,
@@ -111,10 +112,10 @@ func (d *Deployer) persistInstanceVMMetadata(
 
 	if _, err := store.DeploymentInstanceAttachVM(ctx, queries.DeploymentInstanceAttachVMParams{
 		ID:     instanceID,
-		VmID:   uuidToPgtype(vmID),
+		VmID:   pguuid.ToPgtype(vmID),
 		Status: "running",
 	}); err != nil {
-		_ = store.VMSoftDelete(ctx, uuidToPgtype(vmID))
+		_ = store.VMSoftDelete(ctx, pguuid.ToPgtype(vmID))
 		return uuid.Nil, fmt.Errorf("attach vm to deployment instance: %w", err)
 	}
 

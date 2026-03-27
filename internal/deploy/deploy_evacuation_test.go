@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 func TestCountInstancesOnDrainingServers(t *testing.T) {
@@ -57,7 +58,7 @@ func TestScaleDownPrefersNonDrainingVictim(t *testing.T) {
 	var victim queries.DeploymentInstance
 	found := false
 	for _, inst := range sorted {
-		drain := inst.ServerID.Valid && status[uuidFromPgtype(inst.ServerID)] == "draining"
+		drain := inst.ServerID.Valid && status[pguuid.FromPgtype(inst.ServerID)] == "draining"
 		if !drain {
 			victim = inst
 			found = true
@@ -67,7 +68,7 @@ func TestScaleDownPrefersNonDrainingVictim(t *testing.T) {
 	if !found {
 		t.Fatal("expected a non-draining victim")
 	}
-	if uuidFromPgtype(victim.ServerID) != activeID {
+	if pguuid.FromPgtype(victim.ServerID) != activeID {
 		t.Fatal("should remove non-draining instance first")
 	}
 }

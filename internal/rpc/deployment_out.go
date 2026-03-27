@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 // deploymentOut is the JSON shape for deployment resources (API v0.2).
@@ -91,14 +92,14 @@ func optionalUUIDString(u pgtype.UUID) *string {
 	if !u.Valid {
 		return nil
 	}
-	s := pgUUIDToString(u)
+	s := pguuid.ToString(u)
 	return &s
 }
 
 func deploymentVolumeToOut(v queries.ProjectVolume) deploymentVolumeOut {
 	return deploymentVolumeOut{
-		ID:           pgUUIDToString(v.ID),
-		ProjectID:    pgUUIDToString(v.ProjectID),
+		ID:           pguuid.ToString(v.ID),
+		ProjectID:    pguuid.ToString(v.ProjectID),
 		ServerID:     optionalUUIDString(v.ServerID),
 		AttachedVMID: optionalUUIDString(v.AttachedVmID),
 		MountPath:    v.MountPath,
@@ -139,8 +140,8 @@ func deploymentToOut(dep queries.Deployment, build *queries.Build, reachable *de
 		bs = build.Status
 	}
 	out := deploymentOut{
-		ID:           pgUUIDToString(dep.ID),
-		ProjectID:    pgUUIDToString(dep.ProjectID),
+		ID:           pguuid.ToString(dep.ID),
+		ProjectID:    pguuid.ToString(dep.ProjectID),
 		BuildID:      optionalUUIDString(dep.BuildID),
 		ImageID:      optionalUUIDString(dep.ImageID),
 		VmID:         optionalUUIDString(dep.VmID),

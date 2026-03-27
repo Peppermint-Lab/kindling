@@ -5,19 +5,20 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 func TestBuildRuntimeEnvDecryptsProjectSecrets(t *testing.T) {
 	env, err := buildRuntimeEnv([]queries.EnvironmentVariable{
 		{
-			ID:        pgUUID(uuid.New()),
-			ProjectID: pgUUID(uuid.New()),
+			ID:        pguuid.ToPgtype(uuid.New()),
+			ProjectID: pguuid.ToPgtype(uuid.New()),
 			Name:      "API_KEY",
 			Value:     "enc:v1:opaque",
 		},
 		{
-			ID:        pgUUID(uuid.New()),
-			ProjectID: pgUUID(uuid.New()),
+			ID:        pguuid.ToPgtype(uuid.New()),
+			ProjectID: pguuid.ToPgtype(uuid.New()),
 			Name:      "LEGACY",
 			Value:     "plain",
 		},
@@ -38,8 +39,8 @@ func TestBuildRuntimeEnvDecryptsProjectSecrets(t *testing.T) {
 func TestBuildRuntimeEnvRejectsEncryptedValuesWithoutDecoder(t *testing.T) {
 	_, err := buildRuntimeEnv([]queries.EnvironmentVariable{
 		{
-			ID:        pgUUID(uuid.New()),
-			ProjectID: pgUUID(uuid.New()),
+			ID:        pguuid.ToPgtype(uuid.New()),
+			ProjectID: pguuid.ToPgtype(uuid.New()),
 			Name:      "API_KEY",
 			Value:     "enc:v1:opaque",
 		},

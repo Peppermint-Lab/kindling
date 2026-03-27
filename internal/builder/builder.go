@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/githubapi"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 // Config holds builder configuration.
@@ -72,7 +73,7 @@ func normalizeRegistryURL(registryURL string) string {
 
 // ReconcileBuild is the reconcile function for builds.
 func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
-	build, err := b.q.BuildFirstByID(ctx, uuidToPgtype(buildID))
+	build, err := b.q.BuildFirstByID(ctx, pguuid.ToPgtype(buildID))
 	if err != nil {
 		return fmt.Errorf("fetch build: %w", err)
 	}
@@ -93,7 +94,7 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 	// Claim the build lease.
 	build, err = b.q.BuildClaimLease(ctx, queries.BuildClaimLeaseParams{
 		ID:           build.ID,
-		ProcessingBy: uuidToPgtype(b.serverID),
+		ProcessingBy: pguuid.ToPgtype(b.serverID),
 	})
 	if err != nil {
 		slog.Debug("build lease not available", "build_id", buildID)
@@ -186,7 +187,7 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 
 	// Create image record.
 	image, err := b.q.ImageFindOrCreate(ctx, queries.ImageFindOrCreateParams{
-		ID:         uuidToPgtype(uuid.New()),
+		ID:         pguuid.ToPgtype(uuid.New()),
 		Registry:   registryURL,
 		Repository: ociRepo,
 		Tag:        imageTag,
@@ -542,7 +543,7 @@ func (b *Builder) extractAndDetect(ctx context.Context, build queries.Build, gzi
 
 func (b *Builder) log(ctx context.Context, buildID pgtype.UUID, level, message string) {
 	b.q.BuildLogCreate(ctx, queries.BuildLogCreateParams{
-		ID:      uuidToPgtype(uuid.New()),
+		ID:      pguuid.ToPgtype(uuid.New()),
 		BuildID: buildID,
 		Message: message,
 		Level:   level,
@@ -553,11 +554,7 @@ func (b *Builder) releaseLease(buildID uuid.UUID) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	b.q.BuildReleaseLease(ctx, queries.BuildReleaseLeaseParams{
-		ID:           uuidToPgtype(buildID),
-		ProcessingBy: uuidToPgtype(b.serverID),
+		ID:           pguuid.ToPgtype(buildID),
+		ProcessingBy: pguuid.ToPgtype(b.serverID),
 	})
-}
-
-func uuidToPgtype(id uuid.UUID) pgtype.UUID {
-	return pgtype.UUID{Bytes: id, Valid: true}
 }

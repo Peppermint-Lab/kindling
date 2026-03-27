@@ -29,6 +29,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/reconciler"
 	"github.com/kindlingvm/kindling/internal/rpc"
 	kindlingruntime "github.com/kindlingvm/kindling/internal/runtime"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 type liveMigrationHarness struct {
@@ -133,23 +134,23 @@ func newLiveMigrationHarness(t *testing.T, opts liveMigrationHarnessOptions) *li
 	t.Cleanup(func() {
 		cctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_, _ = db.Pool.Exec(cctx, `DELETE FROM instance_migrations WHERE deployment_instance_id = $1`, pgUUID(h.instance))
-		_, _ = db.Pool.Exec(cctx, `DELETE FROM instance_usage_samples WHERE deployment_instance_id = $1`, pgUUID(h.instance))
-		_, _ = db.Pool.Exec(cctx, `DELETE FROM deployment_instances WHERE id = $1`, pgUUID(h.instance))
-		_, _ = db.Pool.Exec(cctx, `DELETE FROM deployments WHERE id = $1`, pgUUID(h.deploy))
-		_, _ = db.Pool.Exec(cctx, `DELETE FROM vms WHERE image_id = $1 AND (server_id = $2 OR server_id = $3)`, pgUUID(h.image), pgUUID(h.sourceID), pgUUID(h.destID))
-		_, _ = db.Pool.Exec(cctx, `DELETE FROM projects WHERE id = $1`, pgUUID(h.project))
-		_, _ = db.Pool.Exec(cctx, `DELETE FROM images WHERE id = $1`, pgUUID(h.image))
-		_, _ = db.Pool.Exec(cctx, `DELETE FROM server_component_statuses WHERE server_id = $1 OR server_id = $2`, pgUUID(h.sourceID), pgUUID(h.destID))
-		_, _ = db.Pool.Exec(cctx, `DELETE FROM servers WHERE id = $1 OR id = $2`, pgUUID(h.sourceID), pgUUID(h.destID))
+		_, _ = db.Pool.Exec(cctx, `DELETE FROM instance_migrations WHERE deployment_instance_id = $1`, pguuid.ToPgtype(h.instance))
+		_, _ = db.Pool.Exec(cctx, `DELETE FROM instance_usage_samples WHERE deployment_instance_id = $1`, pguuid.ToPgtype(h.instance))
+		_, _ = db.Pool.Exec(cctx, `DELETE FROM deployment_instances WHERE id = $1`, pguuid.ToPgtype(h.instance))
+		_, _ = db.Pool.Exec(cctx, `DELETE FROM deployments WHERE id = $1`, pguuid.ToPgtype(h.deploy))
+		_, _ = db.Pool.Exec(cctx, `DELETE FROM vms WHERE image_id = $1 AND (server_id = $2 OR server_id = $3)`, pguuid.ToPgtype(h.image), pguuid.ToPgtype(h.sourceID), pguuid.ToPgtype(h.destID))
+		_, _ = db.Pool.Exec(cctx, `DELETE FROM projects WHERE id = $1`, pguuid.ToPgtype(h.project))
+		_, _ = db.Pool.Exec(cctx, `DELETE FROM images WHERE id = $1`, pguuid.ToPgtype(h.image))
+		_, _ = db.Pool.Exec(cctx, `DELETE FROM server_component_statuses WHERE server_id = $1 OR server_id = $2`, pguuid.ToPgtype(h.sourceID), pguuid.ToPgtype(h.destID))
+		_, _ = db.Pool.Exec(cctx, `DELETE FROM servers WHERE id = $1 OR id = $2`, pguuid.ToPgtype(h.sourceID), pguuid.ToPgtype(h.destID))
 	})
 
 	if _, err := db.Pool.Exec(ctx, `
 INSERT INTO servers (id, hostname, internal_ip, ip_range, status, last_heartbeat_at)
 VALUES ($1, 'live-migration-source', '10.250.0.1', '10.250.0.0/20'::cidr, 'active', NOW()),
        ($2, 'live-migration-dest', '10.250.16.1', '10.250.16.0/20'::cidr, 'active', NOW())`,
-		pgUUID(h.sourceID),
-		pgUUID(h.destID),
+		pguuid.ToPgtype(h.sourceID),
+		pguuid.ToPgtype(h.destID),
 	); err != nil {
 		t.Fatalf("seed servers: %v", err)
 	}
@@ -162,7 +163,7 @@ VALUES ($1, 'live-migration-source', '10.250.0.1', '10.250.0.0/20'::cidr, 'activ
 	}
 
 	if _, err := q.ProjectCreate(ctx, queries.ProjectCreateParams{
-		ID:                   pgUUID(h.project),
+		ID:                   pguuid.ToPgtype(h.project),
 		OrgID:                auth.PgUUID(auth.BootstrapOrganizationID),
 		Name:                 "live-migration-" + h.project.String()[:8],
 		GithubRepository:     "",
@@ -176,7 +177,7 @@ VALUES ($1, 'live-migration-source', '10.250.0.1', '10.250.0.0/20'::cidr, 'activ
 	}
 
 	if _, err := q.ImageFindOrCreate(ctx, queries.ImageFindOrCreateParams{
-		ID:         pgUUID(h.image),
+		ID:         pguuid.ToPgtype(h.image),
 		Registry:   "registry.test",
 		Repository: "kindling/live-migration",
 		Tag:        h.image.String()[:12],
@@ -185,8 +186,8 @@ VALUES ($1, 'live-migration-source', '10.250.0.1', '10.250.0.0/20'::cidr, 'activ
 	}
 
 	if _, err := q.DeploymentCreate(ctx, queries.DeploymentCreateParams{
-		ID:                   pgUUID(h.deploy),
-		ProjectID:            pgUUID(h.project),
+		ID:                   pguuid.ToPgtype(h.deploy),
+		ProjectID:            pguuid.ToPgtype(h.project),
 		GithubCommit:         "deadbeef",
 		GithubBranch:         "main",
 		DeploymentKind:       "production",
@@ -194,28 +195,28 @@ VALUES ($1, 'live-migration-source', '10.250.0.1', '10.250.0.0/20'::cidr, 'activ
 	}); err != nil {
 		t.Fatalf("deployment create: %v", err)
 	}
-	if err := q.DeploymentMarkRunning(ctx, pgUUID(h.deploy)); err != nil {
+	if err := q.DeploymentMarkRunning(ctx, pguuid.ToPgtype(h.deploy)); err != nil {
 		t.Fatalf("deployment mark running: %v", err)
 	}
 
 	if _, err := q.DeploymentInstanceCreate(ctx, queries.DeploymentInstanceCreateParams{
-		ID:           pgUUID(h.instance),
-		DeploymentID: pgUUID(h.deploy),
+		ID:           pguuid.ToPgtype(h.instance),
+		DeploymentID: pguuid.ToPgtype(h.deploy),
 	}); err != nil {
 		t.Fatalf("deployment instance create: %v", err)
 	}
 	if _, err := q.DeploymentInstanceUpdateServer(ctx, queries.DeploymentInstanceUpdateServerParams{
-		ID:       pgUUID(h.instance),
-		ServerID: pgUUID(h.sourceID),
+		ID:       pguuid.ToPgtype(h.instance),
+		ServerID: pguuid.ToPgtype(h.sourceID),
 	}); err != nil {
 		t.Fatalf("deployment instance update server: %v", err)
 	}
 
 	sharedRootfsRef := sharedRootfsRef(opts.sourceShared, h.instance)
 	vm, err := q.VMCreate(ctx, queries.VMCreateParams{
-		ID:              pgUUID(h.sourceVM),
-		ServerID:        pgUUID(h.sourceID),
-		ImageID:         pgUUID(h.image),
+		ID:              pguuid.ToPgtype(h.sourceVM),
+		ServerID:        pguuid.ToPgtype(h.sourceID),
+		ImageID:         pguuid.ToPgtype(h.image),
 		Status:          "running",
 		Runtime:         "cloud-hypervisor",
 		SnapshotRef:     pgtype.Text{},
@@ -231,7 +232,7 @@ VALUES ($1, 'live-migration-source', '10.250.0.1', '10.250.0.0/20'::cidr, 'activ
 		t.Fatalf("vm create: %v", err)
 	}
 	if _, err := q.DeploymentInstanceAttachVM(ctx, queries.DeploymentInstanceAttachVMParams{
-		ID:     pgUUID(h.instance),
+		ID:     pguuid.ToPgtype(h.instance),
 		VmID:   vm.ID,
 		Status: "running",
 	}); err != nil {
@@ -310,7 +311,7 @@ func TestLiveMigration_HappyPathPreservesStateAndCommits(t *testing.T) {
 		t.Fatal("expected destination runtime url to be recorded")
 	}
 
-	inst, err := h.q.DeploymentInstanceFirstByID(ctx, pgUUID(h.instance))
+	inst, err := h.q.DeploymentInstanceFirstByID(ctx, pguuid.ToPgtype(h.instance))
 	if err != nil {
 		t.Fatalf("deployment instance fetch: %v", err)
 	}
@@ -321,7 +322,7 @@ func TestLiveMigration_HappyPathPreservesStateAndCommits(t *testing.T) {
 		t.Fatal("expected deployment instance vm id to be updated")
 	}
 
-	sourceVM, err := h.q.VMFirstByID(ctx, pgUUID(h.sourceVM))
+	sourceVM, err := h.q.VMFirstByID(ctx, pguuid.ToPgtype(h.sourceVM))
 	if err != nil {
 		t.Fatalf("source vm fetch: %v", err)
 	}
@@ -368,7 +369,7 @@ func TestLiveMigration_APIRejectsIncompatibleDestinations(t *testing.T) {
 		if !strings.Contains(string(body), "destination") {
 			t.Fatalf("expected destination compatibility error, got %q", body)
 		}
-		if _, err := h.q.InstanceMigrationLatestByDeploymentInstanceID(context.Background(), pgUUID(h.instance)); !errors.Is(err, pgx.ErrNoRows) {
+		if _, err := h.q.InstanceMigrationLatestByDeploymentInstanceID(context.Background(), pguuid.ToPgtype(h.instance)); !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatalf("expected no migration row on preflight failure, got err=%v", err)
 		}
 	})
@@ -384,7 +385,7 @@ func TestLiveMigration_APIRejectsIncompatibleDestinations(t *testing.T) {
 		if !strings.Contains(string(body), "destination") {
 			t.Fatalf("expected destination compatibility error, got %q", body)
 		}
-		if _, err := h.q.InstanceMigrationLatestByDeploymentInstanceID(context.Background(), pgUUID(h.instance)); !errors.Is(err, pgx.ErrNoRows) {
+		if _, err := h.q.InstanceMigrationLatestByDeploymentInstanceID(context.Background(), pguuid.ToPgtype(h.instance)); !errors.Is(err, pgx.ErrNoRows) {
 			t.Fatalf("expected no migration row on preflight failure, got err=%v", err)
 		}
 	})
@@ -483,7 +484,7 @@ func (h *liveMigrationHarness) routeNotifications() int {
 
 func (h *liveMigrationHarness) mustMigration(t *testing.T) queries.InstanceMigration {
 	t.Helper()
-	row, err := h.q.InstanceMigrationLatestByDeploymentInstanceID(context.Background(), pgUUID(h.instance))
+	row, err := h.q.InstanceMigrationLatestByDeploymentInstanceID(context.Background(), pguuid.ToPgtype(h.instance))
 	if err != nil {
 		t.Fatalf("latest migration: %v", err)
 	}
@@ -499,7 +500,7 @@ func (h *liveMigrationHarness) startLiveMigration(t *testing.T, wantStatus int) 
 	if err := json.Unmarshal(body, &out); err != nil {
 		t.Fatalf("start live migration json: %v body=%s", err, string(body))
 	}
-	row, err := h.q.InstanceMigrationFirstByID(context.Background(), pgUUID(uuid.MustParse(out.ID)))
+	row, err := h.q.InstanceMigrationFirstByID(context.Background(), pguuid.ToPgtype(uuid.MustParse(out.ID)))
 	if err != nil {
 		t.Fatalf("migration fetch: %v", err)
 	}
@@ -541,7 +542,7 @@ func upsertWorkerStatus(ctx context.Context, q *queries.Queries, serverID uuid.U
 		return err
 	}
 	return q.ServerComponentStatusUpsert(ctx, queries.ServerComponentStatusUpsertParams{
-		ServerID:         pgUUID(serverID),
+		ServerID:         pguuid.ToPgtype(serverID),
 		Component:        "worker",
 		Status:           "healthy",
 		ObservedAt:       pgTS(time.Now()),
@@ -550,10 +551,6 @@ func upsertWorkerStatus(ctx context.Context, q *queries.Queries, serverID uuid.U
 		LastErrorMessage: "",
 		Metadata:         meta,
 	})
-}
-
-func pgUUID(id uuid.UUID) pgtype.UUID {
-	return pgtype.UUID{Bytes: id, Valid: true}
 }
 
 func pgTS(v time.Time) pgtype.Timestamptz {

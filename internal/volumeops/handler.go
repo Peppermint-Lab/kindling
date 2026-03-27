@@ -18,6 +18,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/reconciler"
 	"github.com/kindlingvm/kindling/internal/runtime"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 	"github.com/kindlingvm/kindling/internal/volumebackup"
 )
 
@@ -58,7 +59,7 @@ func (h *Handler) Reconcile(ctx context.Context, operationID uuid.UUID) error {
 	if h == nil || h.q == nil {
 		return nil
 	}
-	op, err := h.q.ProjectVolumeOperationFindByID(ctx, pgUUID(operationID))
+	op, err := h.q.ProjectVolumeOperationFindByID(ctx, pguuid.ToPgtype(operationID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
@@ -157,7 +158,7 @@ func (h *Handler) runBackup(ctx context.Context, op queries.ProjectVolumeOperati
 	if err != nil {
 		return h.failOperation(ctx, op, vol, err.Error(), "", "")
 	}
-	backup, err := h.q.ProjectVolumeBackupFindByID(ctx, pgUUID(backupID))
+	backup, err := h.q.ProjectVolumeBackupFindByID(ctx, pguuid.ToPgtype(backupID))
 	if err != nil {
 		return h.failOperation(ctx, op, vol, fmt.Sprintf("load backup: %v", err), "", "")
 	}
@@ -248,7 +249,7 @@ func (h *Handler) runRestore(ctx context.Context, op queries.ProjectVolumeOperat
 	if err != nil {
 		return h.failOperation(ctx, op, vol, err.Error(), "", "")
 	}
-	backup, err := h.q.ProjectVolumeBackupFindByID(ctx, pgUUID(backupID))
+	backup, err := h.q.ProjectVolumeBackupFindByID(ctx, pguuid.ToPgtype(backupID))
 	if err != nil {
 		return h.failOperation(ctx, op, vol, fmt.Sprintf("load backup: %v", err), "", "")
 	}
@@ -261,7 +262,7 @@ func (h *Handler) runRestore(ctx context.Context, op queries.ProjectVolumeOperat
 	}
 	if _, err := h.q.ProjectVolumeAssignServer(ctx, queries.ProjectVolumeAssignServerParams{
 		ProjectID: vol.ProjectID,
-		ServerID:  pgUUID(targetServerID),
+		ServerID:  pguuid.ToPgtype(targetServerID),
 	}); err != nil {
 		return h.failOperation(ctx, op, vol, fmt.Sprintf("pin restored volume server: %v", err), "degraded", "")
 	}
@@ -284,7 +285,7 @@ func (h *Handler) runMove(ctx context.Context, op queries.ProjectVolumeOperation
 		return h.failOperation(ctx, op, vol, "detach the volume before moving it", "", "")
 	}
 	if strings.TrimSpace(req.SourceServerID) == "" {
-		req.SourceServerID = pgUUIDString(vol.ServerID)
+		req.SourceServerID = pguuid.ToString(vol.ServerID)
 	}
 	if strings.TrimSpace(req.Stage) == "" {
 		req.Stage = "upload"
@@ -327,7 +328,7 @@ func (h *Handler) runMove(ctx context.Context, op queries.ProjectVolumeOperation
 		resultBytes, _ := json.Marshal(result)
 		_, err = h.q.ProjectVolumeOperationUpdateState(ctx, queries.ProjectVolumeOperationUpdateStateParams{
 			ID:              op.ID,
-			ServerID:        pgUUID(targetServerID),
+			ServerID:        pguuid.ToPgtype(targetServerID),
 			Status:          "pending",
 			RequestMetadata: reqBytes,
 			ResultMetadata:  resultBytes,
@@ -344,7 +345,7 @@ func (h *Handler) runMove(ctx context.Context, op queries.ProjectVolumeOperation
 		}
 		if _, err := h.q.ProjectVolumeAssignServer(ctx, queries.ProjectVolumeAssignServerParams{
 			ProjectID: vol.ProjectID,
-			ServerID:  pgUUID(targetServerID),
+			ServerID:  pguuid.ToPgtype(targetServerID),
 		}); err != nil {
 			return h.failOperation(ctx, op, vol, fmt.Sprintf("pin moved volume server: %v", err), "degraded", "")
 		}
@@ -401,7 +402,7 @@ func (h *Handler) failOperation(ctx context.Context, op queries.ProjectVolumeOpe
 	}
 	if backupID != "" {
 		if id, err := uuid.Parse(backupID); err == nil {
-			backup, getErr := h.q.ProjectVolumeBackupFindByID(ctx, pgUUID(id))
+			backup, getErr := h.q.ProjectVolumeBackupFindByID(ctx, pguuid.ToPgtype(id))
 			if getErr == nil {
 				_, _ = h.q.ProjectVolumeBackupUpdateState(ctx, queries.ProjectVolumeBackupUpdateStateParams{
 					ID:         backup.ID,
@@ -582,15 +583,4 @@ func downloadToPath(ctx context.Context, store volumebackup.Store, storageKey, d
 		return fmt.Errorf("replace destination volume: %w", err)
 	}
 	return nil
-}
-
-func pgUUID(id uuid.UUID) pgtype.UUID {
-	return pgtype.UUID{Bytes: id, Valid: true}
-}
-
-func pgUUIDString(id pgtype.UUID) string {
-	if !id.Valid {
-		return ""
-	}
-	return uuid.UUID(id.Bytes).String()
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 const (
@@ -144,8 +145,8 @@ func (m *VsockManager) handleLogs(state *vmState) http.HandlerFunc {
 
 		for scanner.Scan() {
 			m.q.VMLogCreate(r.Context(), queries.VMLogCreateParams{
-				ID:      uuidToPgtype(uuid.New()),
-				VmID:    uuidToPgtype(state.vmID),
+				ID:      pguuid.ToPgtype(uuid.New()),
+				VmID:    pguuid.ToPgtype(state.vmID),
 				Message: scanner.Text(),
 				Level:   "info",
 			})

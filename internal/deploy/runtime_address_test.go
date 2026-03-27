@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 func TestParseRuntimeAddress(t *testing.T) {
@@ -85,8 +86,8 @@ func TestPersistInstanceVMMetadata(t *testing.T) {
 
 	store := &fakeInstanceVMStore{
 		instance: queries.DeploymentInstance{
-			ID:           pgUUID(instanceID),
-			DeploymentID: pgUUID(uuid.New()),
+			ID:           pguuid.ToPgtype(instanceID),
+			DeploymentID: pguuid.ToPgtype(uuid.New()),
 			Status:       "starting",
 		},
 	}
@@ -95,8 +96,8 @@ func TestPersistInstanceVMMetadata(t *testing.T) {
 	vmID, err := d.persistInstanceVMMetadata(
 		context.Background(),
 		store,
-		pgUUID(instanceID),
-		pgUUID(imageID),
+		pguuid.ToPgtype(instanceID),
+		pguuid.ToPgtype(imageID),
 		serverID,
 		"127.0.0.1:32768",
 		1,
@@ -120,11 +121,11 @@ func TestPersistInstanceVMMetadata(t *testing.T) {
 	if !store.attached {
 		t.Fatal("expected DeploymentInstanceAttachVM to be called")
 	}
-	if store.createArg.ServerID != pgUUID(serverID) {
-		t.Fatalf("server_id = %+v, want %+v", store.createArg.ServerID, pgUUID(serverID))
+	if store.createArg.ServerID != pguuid.ToPgtype(serverID) {
+		t.Fatalf("server_id = %+v, want %+v", store.createArg.ServerID, pguuid.ToPgtype(serverID))
 	}
-	if store.createArg.ImageID != pgUUID(imageID) {
-		t.Fatalf("image_id = %+v, want %+v", store.createArg.ImageID, pgUUID(imageID))
+	if store.createArg.ImageID != pguuid.ToPgtype(imageID) {
+		t.Fatalf("image_id = %+v, want %+v", store.createArg.ImageID, pguuid.ToPgtype(imageID))
 	}
 	if store.createArg.Status != "running" {
 		t.Fatalf("status = %q, want running", store.createArg.Status)
@@ -141,7 +142,7 @@ func TestPersistInstanceVMMetadata(t *testing.T) {
 	if store.attachArg.Status != "running" {
 		t.Fatalf("attach status = %q, want running", store.attachArg.Status)
 	}
-	if store.attachArg.ID != pgUUID(instanceID) {
+	if store.attachArg.ID != pguuid.ToPgtype(instanceID) {
 		t.Fatalf("attach instance id mismatch")
 	}
 
@@ -163,7 +164,7 @@ func TestPersistInstanceVMMetadataSoftDeletesVMWhenAttachFails(t *testing.T) {
 
 	store := &fakeInstanceVMStore{
 		instance: queries.DeploymentInstance{
-			ID:     pgUUID(instanceID),
+			ID:     pguuid.ToPgtype(instanceID),
 			Status: "starting",
 		},
 		attachErr: assertErr("attach failed"),
@@ -173,8 +174,8 @@ func TestPersistInstanceVMMetadataSoftDeletesVMWhenAttachFails(t *testing.T) {
 	_, err := d.persistInstanceVMMetadata(
 		context.Background(),
 		store,
-		pgUUID(instanceID),
-		pgUUID(imageID),
+		pguuid.ToPgtype(instanceID),
+		pguuid.ToPgtype(imageID),
 		serverID,
 		"127.0.0.1:32768",
 		1,
@@ -200,8 +201,8 @@ func TestPersistInstanceVMMetadataStoresCloneLineage(t *testing.T) {
 
 	store := &fakeInstanceVMStore{
 		instance: queries.DeploymentInstance{
-			ID:           pgUUID(instanceID),
-			DeploymentID: pgUUID(uuid.New()),
+			ID:           pguuid.ToPgtype(instanceID),
+			DeploymentID: pguuid.ToPgtype(uuid.New()),
 			Status:       "starting",
 		},
 	}
@@ -210,8 +211,8 @@ func TestPersistInstanceVMMetadataStoresCloneLineage(t *testing.T) {
 	_, err := d.persistInstanceVMMetadata(
 		context.Background(),
 		store,
-		pgUUID(instanceID),
-		pgUUID(imageID),
+		pguuid.ToPgtype(instanceID),
+		pguuid.ToPgtype(imageID),
 		serverID,
 		"127.0.0.1:32768",
 		1,
@@ -220,14 +221,14 @@ func TestPersistInstanceVMMetadataStoresCloneLineage(t *testing.T) {
 		instanceVMMetadata{
 			Runtime:         "cloud-hypervisor",
 			SnapshotRef:     "tmpl://clone/rootfs",
-			CloneSourceVMID: pgUUID(parentVMID),
+			CloneSourceVMID: pguuid.ToPgtype(parentVMID),
 		},
 	)
 	if err != nil {
 		t.Fatalf("persistInstanceVMMetadata: %v", err)
 	}
 	if !store.createArg.CloneSourceVmID.Valid || store.createArg.CloneSourceVmID.Bytes != parentVMID {
-		t.Fatalf("clone_source_vm_id = %+v, want %+v", store.createArg.CloneSourceVmID, pgUUID(parentVMID))
+		t.Fatalf("clone_source_vm_id = %+v, want %+v", store.createArg.CloneSourceVmID, pguuid.ToPgtype(parentVMID))
 	}
 }
 
@@ -264,10 +265,6 @@ func (f *fakeInstanceVMStore) VMSoftDelete(_ context.Context, id pgtype.UUID) er
 	f.softDeleted = true
 	_ = id
 	return nil
-}
-
-func pgUUID(id uuid.UUID) pgtype.UUID {
-	return pgtype.UUID{Bytes: id, Valid: true}
 }
 
 func assertErr(msg string) error {

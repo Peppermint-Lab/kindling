@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/runtime"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 type projectVolumeUnavailableError struct {
@@ -38,7 +39,7 @@ func projectVolumeRetryDelay(err error) time.Duration {
 }
 
 func projectVolumeServerStatusMessage(serverID pgtype.UUID, status string) string {
-	return fmt.Sprintf("pinned server %s is %s", uuidFromPgtype(serverID), status)
+	return fmt.Sprintf("pinned server %s is %s", pguuid.FromPgtype(serverID), status)
 }
 
 func (d *Deployer) projectVolumeForProject(ctx context.Context, projectID pgtype.UUID) (*queries.ProjectVolume, *runtime.PersistentVolumeMount, error) {
@@ -61,7 +62,7 @@ func (d *Deployer) projectVolumeForProject(ctx context.Context, projectID pgtype
 
 func (d *Deployer) publishProjectVolumeEvents(projectID pgtype.UUID) {
 	if d.publishProjectEvents != nil && projectID.Valid {
-		d.publishProjectEvents(uuidFromPgtype(projectID))
+		d.publishProjectEvents(pguuid.FromPgtype(projectID))
 	}
 	if d.publishServerEvents != nil {
 		d.publishServerEvents()
@@ -70,8 +71,8 @@ func (d *Deployer) publishProjectVolumeEvents(projectID pgtype.UUID) {
 
 func persistentVolumeMountFromRow(vol queries.ProjectVolume) *runtime.PersistentVolumeMount {
 	return &runtime.PersistentVolumeMount{
-		ID:              uuidFromPgtype(vol.ID),
-		HostPath:        runtime.PersistentVolumePath(uuidFromPgtype(vol.ID)),
+		ID:              pguuid.FromPgtype(vol.ID),
+		HostPath:        runtime.PersistentVolumePath(pguuid.FromPgtype(vol.ID)),
 		MountPath:       vol.MountPath,
 		SizeGB:          int(vol.SizeGb),
 		Filesystem:      vol.Filesystem,
@@ -98,7 +99,7 @@ func (d *Deployer) ensureProjectVolumeServer(ctx context.Context, vol queries.Pr
 			return d.markProjectVolumeUnavailable(ctx, vol.ProjectID, projectVolumeServerStatusMessage(srv.ID, srv.Status))
 		}
 		if !d.serverSupportsCloudHypervisor(ctx, srv.ID) {
-			return d.markProjectVolumeUnavailable(ctx, vol.ProjectID, fmt.Sprintf("pinned server %s is not a cloud-hypervisor worker", uuidFromPgtype(srv.ID)))
+			return d.markProjectVolumeUnavailable(ctx, vol.ProjectID, fmt.Sprintf("pinned server %s is not a cloud-hypervisor worker", pguuid.FromPgtype(srv.ID)))
 		}
 		if vol.Status == "unavailable" && !vol.AttachedVmID.Valid {
 			updated, err := d.q.ProjectVolumeUpdateStatus(ctx, queries.ProjectVolumeUpdateStatusParams{

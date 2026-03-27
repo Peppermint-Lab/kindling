@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 func (d *Deployer) serverStatusByIDs(ctx context.Context, instList []queries.DeploymentInstance) (map[uuid.UUID]string, error) {
@@ -21,7 +22,7 @@ func (d *Deployer) serverStatusByIDs(ctx context.Context, instList []queries.Dep
 		if !inst.ServerID.Valid {
 			continue
 		}
-		id := uuidFromPgtype(inst.ServerID)
+		id := pguuid.FromPgtype(inst.ServerID)
 		if _, ok := seen[id]; ok {
 			continue
 		}
@@ -44,7 +45,7 @@ func (d *Deployer) countInstancesOnDrainingServers(instList []queries.Deployment
 		if !inst.ServerID.Valid {
 			continue
 		}
-		if statusMap[uuidFromPgtype(inst.ServerID)] == "draining" {
+		if statusMap[pguuid.FromPgtype(inst.ServerID)] == "draining" {
 			n++
 		}
 	}
@@ -72,7 +73,7 @@ func (d *Deployer) countReadyOffDrainingServers(ctx context.Context, instList []
 			continue
 		}
 		if inst.ServerID.Valid {
-			sid := uuidFromPgtype(inst.ServerID)
+			sid := pguuid.FromPgtype(inst.ServerID)
 			if statusMap[sid] == "draining" {
 				continue
 			}
@@ -109,7 +110,7 @@ func (d *Deployer) scaleDownExcess(ctx context.Context, deploymentID pgtype.UUID
 			if !isActiveInstance(inst) {
 				continue
 			}
-			drain := inst.ServerID.Valid && statusMap[uuidFromPgtype(inst.ServerID)] == "draining"
+			drain := inst.ServerID.Valid && statusMap[pguuid.FromPgtype(inst.ServerID)] == "draining"
 			if !drain {
 				victim = inst
 				found = true
@@ -122,7 +123,7 @@ func (d *Deployer) scaleDownExcess(ctx context.Context, deploymentID pgtype.UUID
 		if len(sorted) == 0 {
 			break
 		}
-		logger.Info("scaling down excess instance", "instance_id", uuidFromPgtype(victim.ID), "have", len(list), "target", target)
+		logger.Info("scaling down excess instance", "instance_id", pguuid.FromPgtype(victim.ID), "have", len(list), "target", target)
 		d.cleanupInstance(ctx, victim)
 		list, err = d.q.DeploymentInstanceFindByDeploymentID(ctx, deploymentID)
 		if err != nil {
@@ -152,7 +153,7 @@ func (d *Deployer) removeInstancesOnDrainingServers(ctx context.Context, depID p
 		if !inst.ServerID.Valid {
 			continue
 		}
-		if statusMap[uuidFromPgtype(inst.ServerID)] != "draining" {
+		if statusMap[pguuid.FromPgtype(inst.ServerID)] != "draining" {
 			continue
 		}
 		toRemove = append(toRemove, inst)
@@ -163,9 +164,9 @@ func (d *Deployer) removeInstancesOnDrainingServers(ctx context.Context, depID p
 	serversToNotify := make(map[uuid.UUID]struct{})
 	for _, inst := range toRemove {
 		if inst.ServerID.Valid {
-			serversToNotify[uuidFromPgtype(inst.ServerID)] = struct{}{}
+			serversToNotify[pguuid.FromPgtype(inst.ServerID)] = struct{}{}
 		}
-		logger.Info("retiring instance from draining server", "instance_id", uuidFromPgtype(inst.ID))
+		logger.Info("retiring instance from draining server", "instance_id", pguuid.FromPgtype(inst.ID))
 		d.deleteInstancePermanently(ctx, inst)
 	}
 	list, err := d.q.DeploymentInstanceFindByDeploymentID(ctx, depID)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 const (
@@ -91,11 +92,11 @@ type serverDetailOut struct {
 func buildServerVolumeOut(volume queries.ProjectVolume, projectName string) serverVolumeOut {
 	projectName = strings.TrimSpace(projectName)
 	if projectName == "" {
-		projectName = pgUUIDToString(volume.ProjectID)
+		projectName = pguuid.ToString(volume.ProjectID)
 	}
 	return serverVolumeOut{
-		ID:           pgUUIDToString(volume.ID),
-		ProjectID:    pgUUIDToString(volume.ProjectID),
+		ID:           pguuid.ToString(volume.ID),
+		ProjectID:    pguuid.ToString(volume.ProjectID),
 		ProjectName:  projectName,
 		ServerID:     optionalUUIDString(volume.ServerID),
 		AttachedVMID: optionalUUIDString(volume.AttachedVmID),
@@ -119,7 +120,7 @@ func (a *API) serverOverviewRows(ctx context.Context) ([]serverSummaryOut, error
 	}
 	byServer := make(map[string][]queries.ServerComponentStatus, len(servers))
 	for _, status := range statuses {
-		byServer[pgUUIDToString(status.ServerID)] = append(byServer[pgUUIDToString(status.ServerID)], status)
+		byServer[pguuid.ToString(status.ServerID)] = append(byServer[pguuid.ToString(status.ServerID)], status)
 	}
 
 	now := time.Now().UTC()
@@ -133,7 +134,7 @@ func (a *API) serverOverviewRows(ctx context.Context) ([]serverSummaryOut, error
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, buildServerSummary(server, instanceCount, activeCount, 0, byServer[pgUUIDToString(server.ID)], now))
+		out = append(out, buildServerSummary(server, instanceCount, activeCount, 0, byServer[pguuid.ToString(server.ID)], now))
 	}
 	return out, nil
 }
@@ -199,12 +200,12 @@ func (a *API) getServerDetails(w http.ResponseWriter, r *http.Request) {
 		}
 		var vmID *string
 		if row.VmID.Valid {
-			s := pgUUIDToString(row.VmID)
+			s := pguuid.ToString(row.VmID)
 			vmID = &s
 		}
 		var migrationID *string
 		if row.MigrationID.Valid {
-			s := pgUUIDToString(row.MigrationID)
+			s := pguuid.ToString(row.MigrationID)
 			migrationID = &s
 		}
 		resourceHealth := "missing"
@@ -218,9 +219,9 @@ func (a *API) getServerDetails(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		instances = append(instances, serverInstanceOut{
-			DeploymentInstanceID: pgUUIDToString(row.DeploymentInstanceID),
-			DeploymentID:         pgUUIDToString(row.DeploymentID),
-			ProjectID:            pgUUIDToString(row.ProjectID),
+			DeploymentInstanceID: pguuid.ToString(row.DeploymentInstanceID),
+			DeploymentID:         pguuid.ToString(row.DeploymentID),
+			ProjectID:            pguuid.ToString(row.ProjectID),
 			ProjectName:          row.ProjectName,
 			VmID:                 vmID,
 			Role:                 row.Role,

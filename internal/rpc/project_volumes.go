@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/runtime"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 type projectVolumeBackupPolicyOut struct {
@@ -72,8 +73,8 @@ type projectVolumeOut struct {
 
 func projectVolumeToOut(v queries.ProjectVolume) projectVolumeOut {
 	return projectVolumeOut{
-		ID:           pgUUIDToString(v.ID),
-		ProjectID:    pgUUIDToString(v.ProjectID),
+		ID:           pguuid.ToString(v.ID),
+		ProjectID:    pguuid.ToString(v.ProjectID),
 		ServerID:     optionalUUIDString(v.ServerID),
 		AttachedVMID: optionalUUIDString(v.AttachedVmID),
 		MountPath:    v.MountPath,
@@ -122,7 +123,7 @@ func projectVolumeOperationToOut(op queries.ProjectVolumeOperation) projectVolum
 		backupID = &s
 	}
 	return projectVolumeOperationOut{
-		ID:             pgUUIDToString(op.ID),
+		ID:             pguuid.ToString(op.ID),
 		Kind:           op.Kind,
 		Status:         op.Status,
 		ServerID:       optionalUUIDString(op.ServerID),
@@ -139,7 +140,7 @@ func projectVolumeOperationToOut(op queries.ProjectVolumeOperation) projectVolum
 
 func projectVolumeBackupToOut(backup queries.ProjectVolumeBackup) projectVolumeBackupOut {
 	return projectVolumeBackupOut{
-		ID:          pgUUIDToString(backup.ID),
+		ID:          pguuid.ToString(backup.ID),
 		Kind:        backup.Kind,
 		Status:      backup.Status,
 		StorageURL:  strings.TrimSpace(backup.StorageUrl),
@@ -462,7 +463,7 @@ func (a *API) deleteProjectVolume(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		op, err := a.enqueueProjectVolumeOperation(r.Context(), vol, vol.ServerID, "backup", projectVolumeOperationRequest{
-			BackupID:    pgUUIDToString(backup.ID),
+			BackupID:    pguuid.ToString(backup.ID),
 			BackupKind:  "pre_delete",
 			DeleteAfter: true,
 		}, "deleting")

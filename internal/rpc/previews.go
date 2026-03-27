@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/preview"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 type previewLatestDeploymentOut struct {
@@ -51,10 +52,6 @@ func previewLifecycleState(pe queries.PreviewEnvironment, now time.Time) string 
 	return "closed"
 }
 
-func pgUUIDEqual(a, b pgtype.UUID) bool {
-	return a.Valid == b.Valid && (!a.Valid || a.Bytes == b.Bytes)
-}
-
 func (a *API) previewLatestDeploymentOut(ctx context.Context, latestID pgtype.UUID) (*previewLatestDeploymentOut, error) {
 	if !latestID.Valid {
 		return nil, nil
@@ -73,7 +70,7 @@ func (a *API) previewLatestDeploymentOut(ctx context.Context, latestID pgtype.UU
 		}
 	}
 	return &previewLatestDeploymentOut{
-		ID:                  pgUUIDToString(dep.ID),
+		ID:                  pguuid.ToString(dep.ID),
 		GithubCommit:        dep.GithubCommit,
 		Phase:               deploymentPhase(dep, build),
 		BuildStatus:         buildStatus,
@@ -92,7 +89,7 @@ func (a *API) previewProjectAndEnv(ctx context.Context, orgID pgtype.UUID, proje
 		return queries.Project{}, queries.PreviewEnvironment{}, false
 	}
 	pe, err := a.q.PreviewEnvironmentByID(ctx, previewID)
-	if err != nil || !pgUUIDEqual(pe.ProjectID, projectID) {
+	if err != nil || !pguuid.Equal(pe.ProjectID, projectID) {
 		return project, queries.PreviewEnvironment{}, false
 	}
 	return project, pe, true
@@ -131,12 +128,12 @@ func (a *API) listProjectPreviews(w http.ResponseWriter, r *http.Request) {
 	}
 	immutByEnv := make(map[string][]previewImmutableURLOut)
 	for _, row := range immutRows {
-		eid := pgUUIDToString(row.PreviewEnvironmentID)
+		eid := pguuid.ToString(row.PreviewEnvironmentID)
 		entry := previewImmutableURLOut{
 			URL: "https://" + row.DomainName,
 		}
 		if row.DeploymentID.Valid {
-			entry.DeploymentID = pgUUIDToString(row.DeploymentID)
+			entry.DeploymentID = pguuid.ToString(row.DeploymentID)
 		}
 		if row.GithubCommit.Valid && row.GithubCommit.String != "" {
 			entry.GithubCommit = row.GithubCommit.String
@@ -148,7 +145,7 @@ func (a *API) listProjectPreviews(w http.ResponseWriter, r *http.Request) {
 	out := make([]previewEnvironmentOut, 0, len(envs))
 	for _, e := range envs {
 		item := previewEnvironmentOut{
-			ID:             pgUUIDToString(e.ID),
+			ID:             pguuid.ToString(e.ID),
 			PRNumber:       e.PrNumber,
 			HeadBranch:     e.HeadBranch,
 			HeadSHA:        e.HeadSha,

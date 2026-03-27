@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 var projectSecretNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -23,7 +24,7 @@ type projectSecretOut struct {
 
 func projectSecretFromEnv(row queries.EnvironmentVariable) projectSecretOut {
 	return projectSecretOut{
-		ID:        pgUUIDToString(row.ID),
+		ID:        pguuid.ToString(row.ID),
 		Name:      row.Name,
 		CreatedAt: formatTS(row.CreatedAt),
 		UpdatedAt: formatTS(row.UpdatedAt),
@@ -32,7 +33,7 @@ func projectSecretFromEnv(row queries.EnvironmentVariable) projectSecretOut {
 
 func projectSecretFromMetadataRow(row queries.EnvironmentVariableMetadataFindByProjectIDRow) projectSecretOut {
 	return projectSecretOut{
-		ID:        pgUUIDToString(row.ID),
+		ID:        pguuid.ToString(row.ID),
 		Name:      row.Name,
 		CreatedAt: formatTS(row.CreatedAt),
 		UpdatedAt: formatTS(row.UpdatedAt),

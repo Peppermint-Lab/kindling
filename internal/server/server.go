@@ -17,9 +17,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 const (
@@ -86,10 +86,10 @@ func (s *Server) Register(ctx context.Context) (queries.Server, error) {
 	hostname, _ := os.Hostname()
 
 	// Check if this server already exists (restart case).
-	existing, err := s.q.ServerFindByID(ctx, uuidToPgtype(s.id))
+	existing, err := s.q.ServerFindByID(ctx, pguuid.ToPgtype(s.id))
 	if err == nil {
 		server, err := s.q.ServerRegister(ctx, queries.ServerRegisterParams{
-			ID:         uuidToPgtype(s.id),
+			ID:         pguuid.ToPgtype(s.id),
 			Hostname:   hostname,
 			InternalIp: s.cfg.InternalIP,
 			IpRange:    existing.IpRange,
@@ -120,7 +120,7 @@ func (s *Server) Register(ctx context.Context) (queries.Server, error) {
 	}
 
 	server, err := qtx.ServerRegister(ctx, queries.ServerRegisterParams{
-		ID:         uuidToPgtype(s.id),
+		ID:         pguuid.ToPgtype(s.id),
 		Hostname:   hostname,
 		InternalIp: s.cfg.InternalIP,
 		IpRange:    ipRange,
@@ -147,7 +147,7 @@ func (s *Server) RunHeartbeat(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := s.q.ServerHeartbeat(ctx, uuidToPgtype(s.id)); err != nil {
+			if err := s.q.ServerHeartbeat(ctx, pguuid.ToPgtype(s.id)); err != nil {
 				slog.Error("heartbeat failed", "error", err)
 			}
 		}
@@ -280,8 +280,4 @@ func loadOrCreateServerID() (uuid.UUID, error) {
 
 	slog.Info("generated new server ID", "server_id", id)
 	return id, nil
-}
-
-func uuidToPgtype(id uuid.UUID) pgtype.UUID {
-	return pgtype.UUID{Bytes: id, Valid: true}
 }

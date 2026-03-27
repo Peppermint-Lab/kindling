@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/githubapi"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 func commitsEquivalent(a, b string) bool {
@@ -71,7 +72,7 @@ func (a *API) gitHead(w http.ResponseWriter, r *http.Request) {
 	running, err := a.q.DeploymentLatestRunningByProjectID(r.Context(), id)
 	if err == nil {
 		runningCommit = strings.TrimSpace(running.GithubCommit)
-		runningDepID = pgUUIDToString(running.ID)
+		runningDepID = pguuid.ToString(running.ID)
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "deployment_lookup", err)
 		return

@@ -22,6 +22,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/preview"
 	"github.com/kindlingvm/kindling/internal/reconciler"
 	"github.com/kindlingvm/kindling/internal/runtime"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 // Deployer orchestrates deployments via reconciliation.
@@ -126,7 +127,7 @@ func buildRuntimeEnv(envVars []queries.EnvironmentVariable, decoder projectSecre
 
 // ReconcileDeployment is the reconcile function for deployments.
 func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UUID) error {
-	dep, err := d.q.DeploymentFirstByID(ctx, uuidToPgtype(deploymentID))
+	dep, err := d.q.DeploymentFirstByID(ctx, pguuid.ToPgtype(deploymentID))
 	if err != nil {
 		return fmt.Errorf("fetch deployment: %w", err)
 	}
@@ -178,7 +179,7 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 			branch = "main"
 		}
 		build, err := d.q.BuildCreate(ctx, queries.BuildCreateParams{
-			ID:           uuidToPgtype(uuid.New()),
+			ID:           pguuid.ToPgtype(uuid.New()),
 			ProjectID:    dep.ProjectID,
 			Status:       "pending",
 			GithubCommit: dep.GithubCommit,
@@ -215,7 +216,7 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 	if projectVolume != nil {
 		resolvedVolume, err := d.ensureProjectVolumeServer(ctx, *projectVolume)
 		if err != nil {
-			logger.Warn("project volume unavailable", "project_id", uuidFromPgtype(dep.ProjectID), "error", err)
+			logger.Warn("project volume unavailable", "project_id", pguuid.FromPgtype(dep.ProjectID), "error", err)
 			d.scheduleRetry(deploymentID, projectVolumeRetryDelay(err))
 			return nil
 		}
@@ -328,7 +329,7 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 
 	for _, inst := range instList {
 		if err := d.reconcileOneInstance(ctx, dep, inst, imageRef, env, templateRef, templateSourceVMID, persistentVolume, logger); err != nil {
-			logger.Info("instance reconcile deferred", "instance_id", uuidFromPgtype(inst.ID), "error", err)
+			logger.Info("instance reconcile deferred", "instance_id", pguuid.FromPgtype(inst.ID), "error", err)
 			d.scheduleRetry(deploymentID, 5*time.Second)
 			return nil
 		}
@@ -442,7 +443,7 @@ func (d *Deployer) ensurePreviewRoutes(ctx context.Context, dep queries.Deployme
 			return fmt.Errorf("lookup immutable preview domain: %w", err)
 		}
 		if _, err := d.q.DomainCreatePreview(ctx, queries.DomainCreatePreviewParams{
-			ID:                   uuidToPgtype(uuid.New()),
+			ID:                   pguuid.ToPgtype(uuid.New()),
 			ProjectID:            dep.ProjectID,
 			DeploymentID:         dep.ID,
 			DomainName:           immutableHost,
@@ -467,8 +468,8 @@ func (d *Deployer) cleanupDeploymentAllInstances(ctx context.Context, deployment
 }
 
 func (d *Deployer) cleanupInstance(ctx context.Context, inst queries.DeploymentInstance) {
-	iid := uuidFromPgtype(inst.ID)
-	if inst.VmID.Valid && d.rt != nil && d.rt.Supports(runtime.CapabilitySuspendResume) && inst.ServerID.Valid && uuidFromPgtype(inst.ServerID) == d.serverID {
+	iid := pguuid.FromPgtype(inst.ID)
+	if inst.VmID.Valid && d.rt != nil && d.rt.Supports(runtime.CapabilitySuspendResume) && inst.ServerID.Valid && pguuid.FromPgtype(inst.ServerID) == d.serverID {
 		vm, err := d.q.VMFirstByID(ctx, inst.VmID)
 		if err == nil && !vm.DeletedAt.Valid && vm.Status == "running" {
 			if _, err := d.q.DeploymentInstanceUpdateRole(ctx, queries.DeploymentInstanceUpdateRoleParams{
@@ -529,7 +530,7 @@ func (d *Deployer) cleanupInstance(ctx context.Context, inst queries.DeploymentI
 }
 
 func (d *Deployer) deleteInstancePermanently(ctx context.Context, inst queries.DeploymentInstance) {
-	iid := uuidFromPgtype(inst.ID)
+	iid := pguuid.FromPgtype(inst.ID)
 	if d.rt != nil && iid != uuid.Nil {
 		_ = d.rt.Stop(ctx, iid)
 	}
@@ -552,14 +553,14 @@ func (d *Deployer) repairInstancesOnBadServers(ctx context.Context, instList []q
 		if srv.Status != "dead" && srv.Status != "drained" {
 			continue
 		}
-		logger.Info("resetting instance on unavailable server", "instance_id", uuidFromPgtype(inst.ID), "server_status", srv.Status)
+		logger.Info("resetting instance on unavailable server", "instance_id", pguuid.FromPgtype(inst.ID), "server_status", srv.Status)
 		if d.rt != nil {
-			_ = d.rt.Stop(ctx, uuidFromPgtype(inst.ID))
+			_ = d.rt.Stop(ctx, pguuid.FromPgtype(inst.ID))
 		}
 		if inst.VmID.Valid {
 			handledUnavailable, volumeErr := d.markProjectVolumeUnavailableForInstance(ctx, inst, srv.Status)
 			if volumeErr != nil {
-				logger.Warn("mark project volume unavailable failed", "instance_id", uuidFromPgtype(inst.ID), "error", volumeErr)
+				logger.Warn("mark project volume unavailable failed", "instance_id", pguuid.FromPgtype(inst.ID), "error", volumeErr)
 			} else if !handledUnavailable {
 				_ = d.detachProjectVolumeForInstance(ctx, inst, "available", "")
 			}
@@ -594,7 +595,7 @@ func (d *Deployer) scaleDownInstances(ctx context.Context, instList []queries.De
 		if !isActiveInstance(inst) {
 			continue
 		}
-		logger.Info("scaling down instance", "instance_id", uuidFromPgtype(inst.ID))
+		logger.Info("scaling down instance", "instance_id", pguuid.FromPgtype(inst.ID))
 		d.cleanupInstance(ctx, inst)
 		excess--
 	}
@@ -616,7 +617,7 @@ func (d *Deployer) ensureInstanceCountUp(ctx context.Context, deploymentID pgtyp
 		}
 		defer tx.Rollback(ctx)
 		qtx := queries.New(tx)
-		if err := qtx.AdvisoryLock(ctx, "kindling:deploy:"+uuidFromPgtype(deploymentID).String()); err != nil {
+		if err := qtx.AdvisoryLock(ctx, "kindling:deploy:"+pguuid.FromPgtype(deploymentID).String()); err != nil {
 			return fmt.Errorf("advisory lock: %w", err)
 		}
 		rows, err := qtx.DeploymentInstanceFindByDeploymentID(ctx, deploymentID)
@@ -625,7 +626,7 @@ func (d *Deployer) ensureInstanceCountUp(ctx context.Context, deploymentID pgtyp
 		}
 		for d.countProvisionableInstances(rows) < int(desired) {
 			if _, err := qtx.DeploymentInstanceCreate(ctx, queries.DeploymentInstanceCreateParams{
-				ID:           uuidToPgtype(uuid.New()),
+				ID:           pguuid.ToPgtype(uuid.New()),
 				DeploymentID: deploymentID,
 			}); err != nil {
 				return fmt.Errorf("create deployment instance: %w", err)
@@ -643,7 +644,7 @@ func (d *Deployer) ensureInstanceCountUp(ctx context.Context, deploymentID pgtyp
 	}
 	for d.countProvisionableInstances(rows) < int(desired) {
 		if _, err := d.q.DeploymentInstanceCreate(ctx, queries.DeploymentInstanceCreateParams{
-			ID:           uuidToPgtype(uuid.New()),
+			ID:           pguuid.ToPgtype(uuid.New()),
 			DeploymentID: deploymentID,
 		}); err != nil {
 			return fmt.Errorf("create deployment instance: %w", err)
@@ -710,7 +711,7 @@ func (d *Deployer) reconcileOneInstance(
 	if inst.VmID.Valid {
 		vm, err := d.q.VMFirstByID(ctx, inst.VmID)
 		if err == nil && vm.Status == vmStatusSuspended && (isActiveInstance(inst) || isWarmPoolInstance(inst)) {
-			if uuidFromPgtype(inst.ServerID) != d.serverID {
+			if pguuid.FromPgtype(inst.ServerID) != d.serverID {
 				return nil
 			}
 			if isWarmPoolInstance(inst) {
@@ -729,7 +730,7 @@ func (d *Deployer) reconcileOneInstance(
 			}); err != nil {
 				return fmt.Errorf("mark resuming: %w", err)
 			}
-			ip, err := d.rt.Resume(ctx, uuidFromPgtype(inst.ID))
+			ip, err := d.rt.Resume(ctx, pguuid.FromPgtype(inst.ID))
 			if err != nil {
 				if errors.Is(err, runtime.ErrInstanceNotRunning) {
 					if inst.VmID.Valid {
@@ -786,7 +787,7 @@ func (d *Deployer) reconcileOneInstance(
 
 	if (inst.VmID.Valid && !isWarmPoolInstance(inst)) || inst.Status == "failed" {
 		if d.rt != nil {
-			_ = d.rt.Stop(ctx, uuidFromPgtype(inst.ID))
+			_ = d.rt.Stop(ctx, pguuid.FromPgtype(inst.ID))
 		}
 		if inst.VmID.Valid {
 			if persistentVolume != nil {
@@ -830,7 +831,7 @@ func (d *Deployer) reconcileOneInstance(
 		inst = updated
 	}
 
-	if uuidFromPgtype(inst.ServerID) != d.serverID {
+	if pguuid.FromPgtype(inst.ServerID) != d.serverID {
 		return nil
 	}
 
@@ -841,7 +842,7 @@ func (d *Deployer) reconcileOneInstance(
 		return fmt.Errorf("mark starting: %w", err)
 	}
 
-	instID := uuidFromPgtype(inst.ID)
+	instID := pguuid.FromPgtype(inst.ID)
 	startInst := runtime.Instance{
 		ID:               instID,
 		ImageRef:         imageRef,
@@ -862,7 +863,7 @@ func (d *Deployer) reconcileOneInstance(
 	)
 	switch {
 	case mode == launchModeClone && d.rt.Supports(runtime.CapabilityWarmClone):
-		startedIP, startMeta, err := d.rt.StartClone(ctx, startInst, templateRef, uuidFromPgtype(templateSourceVMID))
+		startedIP, startMeta, err := d.rt.StartClone(ctx, startInst, templateRef, pguuid.FromPgtype(templateSourceVMID))
 		if err != nil {
 			if errors.Is(err, runtime.ErrInstanceNotRunning) {
 				startedIP, coldErr := d.rt.Start(ctx, startInst)
@@ -889,7 +890,7 @@ func (d *Deployer) reconcileOneInstance(
 			Runtime:         d.rt.Name(),
 			SnapshotRef:     startMeta.SnapshotRef,
 			SharedRootfsRef: startMeta.SharedRootfsRef,
-			CloneSourceVMID: uuidToPgtype(startMeta.CloneSourceVMID),
+			CloneSourceVMID: pguuid.ToPgtype(startMeta.CloneSourceVMID),
 		}
 	default:
 		startedIP, err := d.rt.Start(ctx, startInst)
@@ -914,7 +915,7 @@ func (d *Deployer) reconcileOneInstance(
 		return fmt.Errorf("health check failed")
 	}
 
-	vmID, err := d.persistInstanceVMMetadata(ctx, d.q, inst.ID, dep.ImageID, uuidFromPgtype(inst.ServerID), ip, 1, 512, env, meta)
+	vmID, err := d.persistInstanceVMMetadata(ctx, d.q, inst.ID, dep.ImageID, pguuid.FromPgtype(inst.ServerID), ip, 1, 512, env, meta)
 	if err != nil {
 		_ = d.rt.Stop(ctx, instID)
 		_, _ = d.q.DeploymentInstanceUpdateStatus(ctx, queries.DeploymentInstanceUpdateStatusParams{
@@ -927,7 +928,7 @@ func (d *Deployer) reconcileOneInstance(
 		if _, err := d.q.ProjectVolumeAttachVM(ctx, queries.ProjectVolumeAttachVMParams{
 			ProjectID:    dep.ProjectID,
 			ServerID:     inst.ServerID,
-			AttachedVmID: uuidToPgtype(vmID),
+			AttachedVmID: pguuid.ToPgtype(vmID),
 		}); err != nil {
 			_ = d.rt.Stop(ctx, instID)
 			_, _ = d.q.DeploymentInstanceUpdateStatus(ctx, queries.DeploymentInstanceUpdateStatusParams{
@@ -1030,7 +1031,7 @@ func (d *Deployer) templateSourceForDeployment(ctx context.Context, instList []q
 		if imageID.Valid && vm.ImageID != imageID {
 			continue
 		}
-		if vm.ServerID.Valid && uuidFromPgtype(vm.ServerID) != d.serverID {
+		if vm.ServerID.Valid && pguuid.FromPgtype(vm.ServerID) != d.serverID {
 			continue
 		}
 		return vm.SnapshotRef.String, vm.ID
@@ -1060,7 +1061,7 @@ func (d *Deployer) healthCheck(addr string, port int) bool {
 // many hosts cannot reach via hairpin NAT. Use loopback when the VM belongs
 // to this server.
 func (d *Deployer) healthCheckVMFromHost(vm queries.Vm, port int) bool {
-	if vm.ServerID.Valid && uuidFromPgtype(vm.ServerID) == d.serverID {
+	if vm.ServerID.Valid && pguuid.FromPgtype(vm.ServerID) == d.serverID {
 		return d.healthCheck("127.0.0.1", port)
 	}
 	return d.healthCheck(vm.IpAddress.String(), port)
@@ -1127,15 +1128,4 @@ func (d *Deployer) scheduleRetry(id uuid.UUID, delay time.Duration) {
 	if d.deploymentReconciler != nil {
 		d.deploymentReconciler.Schedule(id, time.Now().Add(delay))
 	}
-}
-
-func uuidToPgtype(id uuid.UUID) pgtype.UUID {
-	return pgtype.UUID{Bytes: id, Valid: true}
-}
-
-func uuidFromPgtype(u pgtype.UUID) uuid.UUID {
-	if !u.Valid {
-		return uuid.Nil
-	}
-	return u.Bytes
 }

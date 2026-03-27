@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 func TestBackfillProjectSecretsEncryptsLegacyRows(t *testing.T) {
@@ -21,24 +22,24 @@ func TestBackfillProjectSecretsEncryptsLegacyRows(t *testing.T) {
 	store := &fakeProjectSecretBackfillStore{
 		rows: []queries.EnvironmentVariable{
 			{
-				ID:        pgUUID(uuid.New()),
-				ProjectID: pgUUID(uuid.New()),
+				ID:        pguuid.ToPgtype(uuid.New()),
+				ProjectID: pguuid.ToPgtype(uuid.New()),
 				Name:      "LEGACY",
 				Value:     "plain-value",
 				CreatedAt: ts(time.Now().UTC()),
 				UpdatedAt: ts(time.Now().UTC()),
 			},
 			{
-				ID:        pgUUID(uuid.New()),
-				ProjectID: pgUUID(uuid.New()),
+				ID:        pguuid.ToPgtype(uuid.New()),
+				ProjectID: pguuid.ToPgtype(uuid.New()),
 				Name:      "EMPTY_VALUE",
 				Value:     "",
 				CreatedAt: ts(time.Now().UTC()),
 				UpdatedAt: ts(time.Now().UTC()),
 			},
 			{
-				ID:        pgUUID(uuid.New()),
-				ProjectID: pgUUID(uuid.New()),
+				ID:        pguuid.ToPgtype(uuid.New()),
+				ProjectID: pguuid.ToPgtype(uuid.New()),
 				Name:      "ALREADY",
 				Value:     alreadyEncrypted,
 				CreatedAt: ts(time.Now().UTC()),
@@ -80,8 +81,8 @@ func TestBackfillProjectSecretsRejectsMalformedEncryptedRows(t *testing.T) {
 	store := &fakeProjectSecretBackfillStore{
 		rows: []queries.EnvironmentVariable{
 			{
-				ID:        pgUUID(uuid.New()),
-				ProjectID: pgUUID(uuid.New()),
+				ID:        pguuid.ToPgtype(uuid.New()),
+				ProjectID: pguuid.ToPgtype(uuid.New()),
 				Name:      "BROKEN",
 				Value:     projectSecretEnvelopePrefix + "not-base64***",
 			},
@@ -117,6 +118,4 @@ func ts(v time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: v, Valid: true}
 }
 
-func pgUUID(id uuid.UUID) pgtype.UUID {
-	return pgtype.UUID{Bytes: id, Valid: true}
-}
+

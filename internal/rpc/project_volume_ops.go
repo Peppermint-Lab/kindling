@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 type projectVolumeOperationRequest struct {
@@ -93,7 +94,7 @@ func (a *API) postProjectVolumeBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	op, err := a.enqueueProjectVolumeOperation(r.Context(), vol, vol.ServerID, "backup", projectVolumeOperationRequest{
-		BackupID:   pgUUIDToString(backup.ID),
+		BackupID:   pguuid.ToString(backup.ID),
 		BackupKind: "manual",
 	}, "backing_up")
 	if err != nil {
@@ -157,7 +158,7 @@ func (a *API) postProjectVolumeRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	op, err := a.enqueueProjectVolumeOperation(r.Context(), vol, targetServer.ID, "restore", projectVolumeOperationRequest{
 		BackupID:       backupID.String(),
-		TargetServerID: pgUUIDToString(targetServer.ID),
+		TargetServerID: pguuid.ToString(targetServer.ID),
 	}, "restoring")
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "restore_project_volume", err)
@@ -208,8 +209,8 @@ func (a *API) postProjectVolumeMove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	op, err := a.enqueueProjectVolumeOperation(r.Context(), vol, vol.ServerID, "move", projectVolumeOperationRequest{
-		TargetServerID: pgUUIDToString(targetServer.ID),
-		SourceServerID: pgUUIDToString(vol.ServerID),
+		TargetServerID: pguuid.ToString(targetServer.ID),
+		SourceServerID: pguuid.ToString(vol.ServerID),
 		Stage:          "upload",
 	}, "restoring")
 	if err != nil {

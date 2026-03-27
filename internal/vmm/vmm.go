@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 	"github.com/kindlingvm/kindling/internal/oci"
 )
 
@@ -85,13 +86,13 @@ func NewManager(cfg Config, serverID uuid.UUID, q *queries.Queries) *Manager {
 // ReconcileVM is the reconcile function for VMs.
 // It handles starting pending VMs and cleaning up deleted ones.
 func (m *Manager) ReconcileVM(ctx context.Context, vmID uuid.UUID) error {
-	vm, err := m.q.VMFirstByID(ctx, uuidToPgtype(vmID))
+	vm, err := m.q.VMFirstByID(ctx, pguuid.ToPgtype(vmID))
 	if err != nil {
 		return fmt.Errorf("fetch VM: %w", err)
 	}
 
 	// Only reconcile VMs assigned to this server.
-	if uuidFromPgtype(vm.ServerID) != m.serverID {
+	if pguuid.FromPgtype(vm.ServerID) != m.serverID {
 		return nil
 	}
 
@@ -131,7 +132,7 @@ func (m *Manager) ReconcileVM(ctx context.Context, vmID uuid.UUID) error {
 }
 
 func (m *Manager) startVM(ctx context.Context, vm queries.Vm) error {
-	vmID := uuidFromPgtype(vm.ID)
+	vmID := pguuid.FromPgtype(vm.ID)
 
 	// Ensure work disk exists (CoW overlay).
 	image, err := m.q.ImageFindByID(ctx, vm.ImageID)
@@ -143,7 +144,7 @@ func (m *Manager) startVM(ctx context.Context, vm queries.Vm) error {
 		return fmt.Errorf("base image: %w", err)
 	}
 
-	if err := m.createWorkDisk(ctx, vmID, uuidFromPgtype(image.ID)); err != nil {
+	if err := m.createWorkDisk(ctx, vmID, pguuid.FromPgtype(image.ID)); err != nil {
 		return fmt.Errorf("work disk: %w", err)
 	}
 
@@ -253,7 +254,7 @@ func (m *Manager) waitVM(vmID uuid.UUID, dbID pgtype.UUID, cmd *exec.Cmd, stdout
 
 // cleanupVM kills a running VM and removes its resources.
 func (m *Manager) cleanupVM(ctx context.Context, vm queries.Vm) error {
-	vmID := uuidFromPgtype(vm.ID)
+	vmID := pguuid.FromPgtype(vm.ID)
 	slog.Info("cleaning up VM", "vm_id", vmID)
 
 	m.mu.Lock()
@@ -281,7 +282,7 @@ func (m *Manager) cleanupVM(ctx context.Context, vm queries.Vm) error {
 // ensureBaseImage checks if the base qcow2 image exists on disk.
 // If not, it downloads and converts the OCI image.
 func (m *Manager) ensureBaseImage(ctx context.Context, image queries.Image) error {
-	imageID := uuidFromPgtype(image.ID)
+	imageID := pguuid.FromPgtype(image.ID)
 	basePath := fmt.Sprintf("%s/%s.qcow2", m.cfg.BaseImageDir, imageID)
 
 	if _, err := os.Stat(basePath); err == nil {
@@ -376,12 +377,4 @@ func runCmd(ctx context.Context, name string, args ...string) error {
 		return fmt.Errorf("%s: %w", name, err)
 	}
 	return nil
-}
-
-func uuidToPgtype(id uuid.UUID) pgtype.UUID {
-	return pgtype.UUID{Bytes: id, Valid: true}
-}
-
-func uuidFromPgtype(id pgtype.UUID) uuid.UUID {
-	return id.Bytes
 }

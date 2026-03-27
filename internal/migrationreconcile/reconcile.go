@@ -19,6 +19,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/reconciler"
 	"github.com/kindlingvm/kindling/internal/runtime"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 type Handler struct {
@@ -38,7 +39,7 @@ func (h *Handler) Reconcile(ctx context.Context, migrationID uuid.UUID) error {
 	if h == nil || h.q == nil {
 		return nil
 	}
-	mig, err := h.q.InstanceMigrationFirstByID(ctx, pgUUID(migrationID))
+	mig, err := h.q.InstanceMigrationFirstByID(ctx, pguuid.ToPgtype(migrationID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
@@ -273,7 +274,7 @@ func (h *Handler) commitOnDestination(ctx context.Context, mig queries.InstanceM
 	qtx := h.q.WithTx(tx)
 	newVMID := uuid.New()
 	newVM, err := qtx.VMCreate(ctx, queries.VMCreateParams{
-		ID:              pgUUID(newVMID),
+		ID:              pguuid.ToPgtype(newVMID),
 		ServerID:        mig.DestinationServerID,
 		ImageID:         sourceVM.ImageID,
 		Status:          "running",
@@ -354,10 +355,6 @@ func parseRuntimeAddress(raw string) (netip.Addr, int, error) {
 		return netip.Addr{}, 0, err
 	}
 	return ip, port, nil
-}
-
-func pgUUID(id uuid.UUID) pgtype.UUID {
-	return pgtype.UUID{Bytes: id, Valid: id != uuid.Nil}
 }
 
 type liveMigrationWorkerMetadata struct {

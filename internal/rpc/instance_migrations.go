@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 type liveMigrationWorkerMetadata struct {
@@ -293,11 +294,11 @@ func stringValue(v any) string {
 
 func migrationToOut(row queries.InstanceMigration) deploymentInstanceMigrationOut {
 	return deploymentInstanceMigrationOut{
-		ID:                    pgUUIDToString(row.ID),
-		DeploymentInstanceID:  pgUUIDToString(row.DeploymentInstanceID),
-		SourceServerID:        pgUUIDToString(row.SourceServerID),
-		DestinationServerID:   pgUUIDToString(row.DestinationServerID),
-		SourceVMID:            pgUUIDToString(row.SourceVmID),
+		ID:                    pguuid.ToString(row.ID),
+		DeploymentInstanceID:  pguuid.ToString(row.DeploymentInstanceID),
+		SourceServerID:        pguuid.ToString(row.SourceServerID),
+		DestinationServerID:   pguuid.ToString(row.DestinationServerID),
+		SourceVMID:            pguuid.ToString(row.SourceVmID),
 		State:                 row.State,
 		Mode:                  row.Mode,
 		ReceiveAddr:           row.ReceiveAddr,
