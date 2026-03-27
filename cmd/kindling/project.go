@@ -18,10 +18,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func projectCmd() *cobra.Command {
+func adminProjectCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "project",
-		Short: "Manage projects",
+		Short: "Manage projects directly via PostgreSQL (break-glass / local operator)",
 	}
 
 	cmd.AddCommand(projectCreateCmd())
@@ -89,7 +89,7 @@ func projectCreateCmd() *cobra.Command {
 				return fmt.Errorf("create project: %w", err)
 			}
 
-			fmt.Printf("Project created: %s (id: %x)\n", project.Name, project.ID.Bytes)
+			fmt.Printf("Project created: %s (id: %s)\n", project.Name, uuid.UUID(project.ID.Bytes).String())
 			return nil
 		},
 	}
@@ -134,7 +134,7 @@ func projectListCmd() *cobra.Command {
 			}
 
 			for _, p := range projects {
-				fmt.Printf("%-20s %-40s %x\n", p.Name, p.GithubRepository, p.ID.Bytes)
+				fmt.Printf("%-20s %-40s %s\n", p.Name, p.GithubRepository, uuid.UUID(p.ID.Bytes).String())
 			}
 			return nil
 		},
@@ -190,7 +190,7 @@ func projectDeleteCmd() *cobra.Command {
 	return cmd
 }
 
-func deployCmd() *cobra.Command {
+func adminDeployCmd() *cobra.Command {
 	var (
 		projectID string
 		commit    string
@@ -271,7 +271,7 @@ Private repositories need github_token stored encrypted in cluster_secrets (see 
 				return fmt.Errorf("create deployment: %w", err)
 			}
 
-			fmt.Printf("Deployment created: %x (commit: %s)\n", dep.ID.Bytes, resolved)
+			fmt.Printf("Deployment created: %s (commit: %s)\n", uuid.UUID(dep.ID.Bytes).String(), resolved)
 			return nil
 		},
 	}
@@ -285,7 +285,7 @@ Private repositories need github_token stored encrypted in cluster_secrets (see 
 	return cmd
 }
 
-func logsCmd() *cobra.Command {
+func adminLogsCmd() *cobra.Command {
 	var (
 		deploymentID string
 		dbURL        string

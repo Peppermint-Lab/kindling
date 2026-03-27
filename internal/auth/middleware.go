@@ -25,11 +25,64 @@ func writeAPIError(w http.ResponseWriter, status int, code, message string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": message, "code": code})
 }
 
-// Middleware enforces session cookies on API routes except PublicRoute.
+func bearerValue(r *http.Request) (string, bool) {
+	h := r.Header.Get("Authorization")
+	if h == "" {
+		return "", false
+	}
+	parts := strings.SplitN(strings.TrimSpace(h), " ", 2)
+	if len(parts) != 2 {
+		return "", false
+	}
+	if !strings.EqualFold(parts[0], "Bearer") {
+		return "", false
+	}
+	return strings.TrimSpace(parts[1]), true
+}
+
+// Middleware enforces session cookies or API keys (Bearer knd_...) on API routes except PublicRoute.
 func Middleware(q *queries.Queries, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if PublicRoute(r) {
 			next.ServeHTTP(w, r)
+			return
+		}
+
+		if tok, ok := bearerValue(r); ok && strings.HasPrefix(tok, APIKeyPrefix) {
+			keyRow, err := q.UserApiKeyByTokenHash(r.Context(), HashAPIKeyToken(tok))
+			if err != nil {
+				if err == pgx.ErrNoRows {
+					writeUnauthorized(w)
+					return
+				}
+				writeAPIError(w, http.StatusInternalServerError, "internal", "api key lookup failed")
+				return
+			}
+			_ = q.UserApiKeyTouchLastUsed(r.Context(), keyRow.ID)
+			u, err := q.UserByID(r.Context(), keyRow.UserID)
+			if err != nil {
+				writeUnauthorized(w)
+				return
+			}
+			mem, err := q.OrganizationMembershipByUserAndOrg(r.Context(), queries.OrganizationMembershipByUserAndOrgParams{
+				UserID:         keyRow.UserID,
+				OrganizationID: keyRow.OrganizationID,
+			})
+			if err != nil {
+				writeUnauthorized(w)
+				return
+			}
+			p := Principal{
+				UserID:         uuid.UUID(u.ID.Bytes),
+				Email:          u.Email,
+				PlatformAdmin:  u.IsPlatformAdmin,
+				OrgID:          uuid.UUID(keyRow.OrganizationID.Bytes),
+				OrgRole:        mem.Role,
+				SessionID:      uuid.Nil,
+				APIKeyID:       uuid.UUID(keyRow.ID.Bytes),
+				OrganizationID: keyRow.OrganizationID,
+			}
+			next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))
 			return
 		}
 
@@ -76,6 +129,7 @@ func Middleware(q *queries.Queries, next http.Handler) http.Handler {
 			OrgID:          uuid.UUID(sess.CurrentOrganizationID.Bytes),
 			OrgRole:        mem.Role,
 			SessionID:      uuid.UUID(sess.ID.Bytes),
+			APIKeyID:       uuid.Nil,
 			OrganizationID: sess.CurrentOrganizationID,
 		}
 		next.ServeHTTP(w, r.WithContext(WithPrincipal(r.Context(), p)))

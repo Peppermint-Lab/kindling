@@ -88,6 +88,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/servers/{id}/activate", a.postServerActivate)
 	a.registerUsageRoutes(mux)
 	a.registerAuthRoutes(mux)
+	a.registerAPIKeyRoutes(mux)
 	a.registerProviderRoutes(mux)
 }
 

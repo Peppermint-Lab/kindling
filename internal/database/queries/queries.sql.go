@@ -5391,6 +5391,130 @@ func (q *Queries) TrySessionAdvisoryLock(ctx context.Context, hashtext string) (
 	return pg_try_advisory_lock, err
 }
 
+const userApiKeyByTokenHash = `-- name: UserApiKeyByTokenHash :one
+SELECT id, user_id, organization_id, name, token_hash, created_at, last_used_at, revoked_at FROM user_api_keys
+WHERE token_hash = $1 AND revoked_at IS NULL
+`
+
+func (q *Queries) UserApiKeyByTokenHash(ctx context.Context, tokenHash []byte) (UserApiKey, error) {
+	row := q.db.QueryRow(ctx, userApiKeyByTokenHash, tokenHash)
+	var i UserApiKey
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.OrganizationID,
+		&i.Name,
+		&i.TokenHash,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const userApiKeyCreate = `-- name: UserApiKeyCreate :one
+INSERT INTO user_api_keys (id, user_id, organization_id, name, token_hash)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, user_id, organization_id, name, token_hash, created_at, last_used_at, revoked_at
+`
+
+type UserApiKeyCreateParams struct {
+	ID             pgtype.UUID `json:"id"`
+	UserID         pgtype.UUID `json:"user_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	Name           string      `json:"name"`
+	TokenHash      []byte      `json:"token_hash"`
+}
+
+func (q *Queries) UserApiKeyCreate(ctx context.Context, arg UserApiKeyCreateParams) (UserApiKey, error) {
+	row := q.db.QueryRow(ctx, userApiKeyCreate,
+		arg.ID,
+		arg.UserID,
+		arg.OrganizationID,
+		arg.Name,
+		arg.TokenHash,
+	)
+	var i UserApiKey
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.OrganizationID,
+		&i.Name,
+		&i.TokenHash,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const userApiKeyListByUserAndOrg = `-- name: UserApiKeyListByUserAndOrg :many
+SELECT id, user_id, organization_id, name, token_hash, created_at, last_used_at, revoked_at FROM user_api_keys
+WHERE user_id = $1 AND organization_id = $2 AND revoked_at IS NULL
+ORDER BY created_at DESC
+`
+
+type UserApiKeyListByUserAndOrgParams struct {
+	UserID         pgtype.UUID `json:"user_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) UserApiKeyListByUserAndOrg(ctx context.Context, arg UserApiKeyListByUserAndOrgParams) ([]UserApiKey, error) {
+	rows, err := q.db.Query(ctx, userApiKeyListByUserAndOrg, arg.UserID, arg.OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UserApiKey{}
+	for rows.Next() {
+		var i UserApiKey
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.OrganizationID,
+			&i.Name,
+			&i.TokenHash,
+			&i.CreatedAt,
+			&i.LastUsedAt,
+			&i.RevokedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const userApiKeyRevoke = `-- name: UserApiKeyRevoke :exec
+UPDATE user_api_keys
+SET revoked_at = NOW()
+WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+`
+
+type UserApiKeyRevokeParams struct {
+	ID     pgtype.UUID `json:"id"`
+	UserID pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) UserApiKeyRevoke(ctx context.Context, arg UserApiKeyRevokeParams) error {
+	_, err := q.db.Exec(ctx, userApiKeyRevoke, arg.ID, arg.UserID)
+	return err
+}
+
+const userApiKeyTouchLastUsed = `-- name: UserApiKeyTouchLastUsed :exec
+UPDATE user_api_keys
+SET last_used_at = NOW()
+WHERE id = $1
+`
+
+func (q *Queries) UserApiKeyTouchLastUsed(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, userApiKeyTouchLastUsed, id)
+	return err
+}
+
 const userByEmail = `-- name: UserByEmail :one
 SELECT id, email, password_hash, display_name, is_platform_admin, created_at, updated_at FROM users WHERE LOWER(email) = LOWER($1)
 `

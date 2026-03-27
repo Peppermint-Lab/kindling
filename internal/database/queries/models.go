@@ -317,6 +317,17 @@ type User struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
+type UserApiKey struct {
+	ID             pgtype.UUID        `json:"id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	Name           string             `json:"name"`
+	TokenHash      []byte             `json:"token_hash"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
+}
+
 type UserIdentity struct {
 	ID                  pgtype.UUID        `json:"id"`
 	UserID              pgtype.UUID        `json:"user_id"`

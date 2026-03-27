@@ -133,6 +133,24 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_user_sessions_token_hash ON user_sessions (token_hash);
 
+-- API keys for machine and CLI access (Authorization: Bearer knd_...)
+CREATE TABLE IF NOT EXISTS user_api_keys (
+    id                UUID PRIMARY KEY,
+    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    organization_id   UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name              TEXT NOT NULL DEFAULT '',
+    token_hash        BYTEA NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_used_at      TIMESTAMPTZ,
+    revoked_at        TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_api_keys_token_hash_active
+ON user_api_keys (token_hash)
+WHERE revoked_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_user_api_keys_user_org ON user_api_keys (user_id, organization_id);
+
 CREATE TABLE IF NOT EXISTS org_provider_connections (
     id                     UUID PRIMARY KEY,
     organization_id        UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,

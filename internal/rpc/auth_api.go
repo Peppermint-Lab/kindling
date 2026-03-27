@@ -46,7 +46,79 @@ func (a *API) authBootstrapStatus(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) authSession(w http.ResponseWriter, r *http.Request) {
 	out := a.sessionPayload(r)
+	if v, ok := out["authenticated"].(bool); ok && v {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	// This route is public (no middleware principal). Still honor API keys for CLI whoami/status.
+	if apiOut := a.sessionPayloadFromAPIKey(r); apiOut != nil {
+		writeJSON(w, http.StatusOK, apiOut)
+		return
+	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func parseBearerToken(r *http.Request) (string, bool) {
+	h := r.Header.Get("Authorization")
+	if h == "" {
+		return "", false
+	}
+	parts := strings.SplitN(strings.TrimSpace(h), " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return "", false
+	}
+	return strings.TrimSpace(parts[1]), true
+}
+
+func (a *API) sessionPayloadFromAPIKey(r *http.Request) map[string]any {
+	tok, ok := parseBearerToken(r)
+	if !ok || !strings.HasPrefix(tok, auth.APIKeyPrefix) {
+		return nil
+	}
+	keyRow, err := a.q.UserApiKeyByTokenHash(r.Context(), auth.HashAPIKeyToken(tok))
+	if err != nil {
+		return nil
+	}
+	_ = a.q.UserApiKeyTouchLastUsed(r.Context(), keyRow.ID)
+	u, err := a.q.UserByID(r.Context(), keyRow.UserID)
+	if err != nil {
+		return nil
+	}
+	mem, err := a.q.OrganizationMembershipByUserAndOrg(r.Context(), queries.OrganizationMembershipByUserAndOrgParams{
+		UserID:         keyRow.UserID,
+		OrganizationID: keyRow.OrganizationID,
+	})
+	if err != nil {
+		return nil
+	}
+	org, err := a.q.OrganizationByID(r.Context(), keyRow.OrganizationID)
+	if err != nil {
+		return nil
+	}
+	orgs, err := a.q.OrganizationsForUser(r.Context(), keyRow.UserID)
+	if err != nil {
+		slog.Warn("list orgs for api key session", "error", err)
+		orgs = nil
+	}
+	return map[string]any{
+		"authenticated": true,
+		"user": map[string]any{
+			"id":           uuid.UUID(u.ID.Bytes).String(),
+			"email":        u.Email,
+			"display_name": u.DisplayName,
+		},
+		"platform_admin": u.IsPlatformAdmin,
+		"organization":   organizationJSON(org),
+		"role":           mem.Role,
+		"organizations": func() []any {
+			sl := make([]any, 0, len(orgs))
+			for _, o := range orgs {
+				sl = append(sl, organizationJSON(o))
+			}
+			return sl
+		}(),
+		"auth": "api_key",
+	}
 }
 
 func (a *API) authSuccessPayload(ctx context.Context, u queries.User, org queries.Organization, role string, allOrgs []queries.Organization) map[string]any {
@@ -309,6 +381,10 @@ func (a *API) authLogout(w http.ResponseWriter, r *http.Request) {
 func (a *API) authSwitchOrg(w http.ResponseWriter, r *http.Request) {
 	p, ok := mustPrincipal(w, r)
 	if !ok {
+		return
+	}
+	if p.APIKeyID != uuid.Nil {
+		writeAPIError(w, http.StatusBadRequest, "api_key_org_fixed", "organization is fixed for API keys; create another key for a different organization")
 		return
 	}
 	var req struct {

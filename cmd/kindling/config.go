@@ -12,10 +12,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func configCmd() *cobra.Command {
+func adminConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
-		Short: "Bootstrap cluster configuration in Postgres",
+		Short: "Bootstrap cluster configuration in Postgres (local/break-glass)",
 	}
 	cmd.AddCommand(configImportEnvCmd())
 	return cmd

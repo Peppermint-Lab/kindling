@@ -13,10 +13,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func authCmd() *cobra.Command {
+func adminAuthCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "auth",
-		Short: "User and session administration (requires database access)",
+		Short: "User administration (requires database access; break-glass)",
 	}
 	cmd.AddCommand(authCreateSuperuserCmd())
 	return cmd

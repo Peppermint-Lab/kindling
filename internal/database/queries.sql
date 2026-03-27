@@ -1088,6 +1088,30 @@ SET current_organization_id = $2
 WHERE id = $1
 RETURNING *;
 
+-- name: UserApiKeyCreate :one
+INSERT INTO user_api_keys (id, user_id, organization_id, name, token_hash)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING *;
+
+-- name: UserApiKeyByTokenHash :one
+SELECT * FROM user_api_keys
+WHERE token_hash = $1 AND revoked_at IS NULL;
+
+-- name: UserApiKeyListByUserAndOrg :many
+SELECT * FROM user_api_keys
+WHERE user_id = $1 AND organization_id = $2 AND revoked_at IS NULL
+ORDER BY created_at DESC;
+
+-- name: UserApiKeyRevoke :exec
+UPDATE user_api_keys
+SET revoked_at = NOW()
+WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL;
+
+-- name: UserApiKeyTouchLastUsed :exec
+UPDATE user_api_keys
+SET last_used_at = NOW()
+WHERE id = $1;
+
 -- name: UserIdentityListByUser :many
 SELECT * FROM user_identities
 WHERE user_id = $1

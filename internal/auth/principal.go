@@ -19,6 +19,9 @@ type Principal struct {
 	OrgID          uuid.UUID
 	OrgRole        string
 	SessionID      uuid.UUID
+	// APIKeyID is non-zero when the request was authenticated with an API key
+	// (organization is fixed for that key; switch-org is not supported).
+	APIKeyID uuid.UUID
 	OrganizationID pgtype.UUID // same as OrgID in pgtype form for sqlc calls
 }
 
