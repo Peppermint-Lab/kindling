@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/shared/conv"
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
@@ -242,9 +243,9 @@ func parseLiveMigrationWorkerMetadata(status queries.ServerComponentStatus) live
 	var raw map[string]any
 	_ = json.Unmarshal(status.Metadata, &raw)
 	meta := liveMigrationWorkerMetadata{
-		Runtime:                strings.TrimSpace(stringValue(raw["runtime"])),
-		CloudHypervisorVersion: strings.TrimSpace(stringValue(raw["cloud_hypervisor_version"])),
-		SharedRootfsDir:        strings.TrimSpace(stringValue(raw["shared_rootfs_dir"])),
+		Runtime:                strings.TrimSpace(conv.String(raw["runtime"])),
+		CloudHypervisorVersion: strings.TrimSpace(conv.String(raw["cloud_hypervisor_version"])),
+		SharedRootfsDir:        strings.TrimSpace(conv.String(raw["shared_rootfs_dir"])),
 	}
 	if b, ok := raw["live_migration_enabled"].(bool); ok {
 		meta.LiveMigrationEnabled = b
@@ -285,11 +286,6 @@ func validateLiveMigrationDestination(source liveMigrationWorkerMetadata, server
 		return fmt.Errorf("destination worker cloud-hypervisor version %q does not match source %q", destination.CloudHypervisorVersion, source.CloudHypervisorVersion)
 	}
 	return nil
-}
-
-func stringValue(v any) string {
-	s, _ := v.(string)
-	return s
 }
 
 func migrationToOut(row queries.InstanceMigration) deploymentInstanceMigrationOut {

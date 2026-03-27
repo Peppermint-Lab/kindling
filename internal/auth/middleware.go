@@ -2,7 +2,6 @@ package auth
 
 import (
 	"encoding/hex"
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -12,18 +11,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/shared/httputil"
 )
 
 func writeUnauthorized(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusUnauthorized)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized", "code": "unauthorized"})
-}
-
-func writeAPIError(w http.ResponseWriter, status int, code, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": message, "code": code})
+	httputil.WriteAPIError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
 }
 
 func bearerValue(r *http.Request) (string, bool) {
@@ -109,7 +101,7 @@ func Middleware(q *queries.Queries, next http.Handler) http.Handler {
 					writeUnauthorized(w)
 					return
 				}
-				writeAPIError(w, http.StatusInternalServerError, "internal", "api key lookup failed")
+				httputil.WriteAPIError(w, http.StatusInternalServerError, "internal", "api key lookup failed")
 				return
 			}
 			_ = q.UserApiKeyTouchLastUsed(r.Context(), keyRow.ID)
@@ -146,7 +138,7 @@ func Middleware(q *queries.Queries, next http.Handler) http.Handler {
 			return
 		}
 		if !RequestHasTrustedOrigin(r) {
-			writeAPIError(w, http.StatusForbidden, "csrf_forbidden", "request origin is not allowed")
+			httputil.WriteAPIError(w, http.StatusForbidden, "csrf_forbidden", "request origin is not allowed")
 			return
 		}
 		raw, err := hex.DecodeString(strings.TrimSpace(cookie.Value))
@@ -161,7 +153,7 @@ func Middleware(q *queries.Queries, next http.Handler) http.Handler {
 				writeUnauthorized(w)
 				return
 			}
-			writeAPIError(w, http.StatusInternalServerError, "internal", "session lookup failed")
+			httputil.WriteAPIError(w, http.StatusInternalServerError, "internal", "session lookup failed")
 			return
 		}
 

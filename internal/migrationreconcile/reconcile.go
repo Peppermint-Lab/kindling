@@ -19,6 +19,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/reconciler"
 	"github.com/kindlingvm/kindling/internal/runtime"
+	"github.com/kindlingvm/kindling/internal/shared/conv"
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
@@ -372,9 +373,9 @@ func liveMigrationWorkerMetadataFromStatuses(statuses []queries.ServerComponentS
 		var raw map[string]any
 		_ = json.Unmarshal(status.Metadata, &raw)
 		meta := liveMigrationWorkerMetadata{
-			Runtime:                strings.TrimSpace(metadataString(raw["runtime"])),
-			CloudHypervisorVersion: strings.TrimSpace(metadataString(raw["cloud_hypervisor_version"])),
-			SharedRootfsDir:        strings.TrimSpace(metadataString(raw["shared_rootfs_dir"])),
+			Runtime:                strings.TrimSpace(conv.String(raw["runtime"])),
+			CloudHypervisorVersion: strings.TrimSpace(conv.String(raw["cloud_hypervisor_version"])),
+			SharedRootfsDir:        strings.TrimSpace(conv.String(raw["shared_rootfs_dir"])),
 		}
 		if b, ok := raw["live_migration_enabled"].(bool); ok {
 			meta.LiveMigrationEnabled = b
@@ -384,7 +385,4 @@ func liveMigrationWorkerMetadataFromStatuses(statuses []queries.ServerComponentS
 	return liveMigrationWorkerMetadata{}, errors.New("destination server worker heartbeat is missing")
 }
 
-func metadataString(v any) string {
-	s, _ := v.(string)
-	return s
-}
+
