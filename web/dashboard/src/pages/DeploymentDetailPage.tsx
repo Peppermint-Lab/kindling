@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react"
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import { api, type Deployment, type BuildLog, subscribeDeploymentStream, APIError } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Separator } from "@/components/ui/separator"
-import { BuildLogLineBody } from "@/components/build-log-line-body"
 import { DeploymentReachability } from "@/components/deployment-reachability"
 import { ScrollTextIcon, LoaderIcon, XCircleIcon, RotateCwIcon, RadioIcon, InfoIcon } from "lucide-react"
 import { isTerminalDeployment, phaseLabel, phaseVariant } from "@/lib/deploy-badge"
@@ -26,6 +25,12 @@ import {
   SurfaceTitle,
   SurfaceBody,
 } from "@/components/page-surface"
+
+const DeploymentLogsPanel = lazy(() =>
+  import("@/components/deployment-logs-panel").then((module) => ({
+    default: module.DeploymentLogsPanel,
+  }))
+)
 
 function logKey(l: BuildLog): string {
   if (l.id) return l.id
@@ -50,10 +55,10 @@ export function DeploymentDetailPage() {
   const navigate = useNavigate()
   const [deployment, setDeployment] = useState<Deployment | null>(null)
   const [logs, setLogs] = useState<BuildLog[]>([])
+  const [activeTab, setActiveTab] = useState<"overview" | "logs">("overview")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [live, setLive] = useState(false)
-  const logEndRef = useRef<HTMLDivElement>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const deploymentRef = useRef<Deployment | null>(null)
   deploymentRef.current = deployment
@@ -136,10 +141,6 @@ export function DeploymentDetailPage() {
     }
   }, [id, loading, stopPoll])
 
-  useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [logs])
-
   if (loading) {
     return (
       <PageContainer>
@@ -187,7 +188,11 @@ export function DeploymentDetailPage() {
           </PageHeader>
         </div>
 
-        <Tabs defaultValue="overview" className="min-w-0">
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => setActiveTab(value === "logs" ? "logs" : "overview")}
+          className="min-w-0"
+        >
           <TabsList variant="line" className="w-full min-w-0 max-w-full justify-start overflow-x-auto">
             <TabsTrigger value="overview" className="shrink-0">
               <InfoIcon className="size-4" /> Overview
@@ -260,40 +265,28 @@ export function DeploymentDetailPage() {
           </TabsContent>
 
           <TabsContent value="logs" className="mt-5">
-            <Surface>
-              <SurfaceHeader>
-                <div className="flex items-center gap-2">
-                  <ScrollTextIcon className="size-4 text-muted-foreground" />
-                  <SurfaceTitle>Build logs</SurfaceTitle>
-                </div>
-              </SurfaceHeader>
-              <SurfaceBody>
-                {logs.length === 0 ? (
-                  <div className="py-6 text-center">
-                    {!terminal ? (
-                      <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground px-2">
+            {activeTab === "logs" ? (
+              <Suspense
+                fallback={
+                  <Surface>
+                    <SurfaceHeader>
+                      <div className="flex items-center gap-2">
+                        <ScrollTextIcon className="size-4 text-muted-foreground" />
+                        <SurfaceTitle>Build logs</SurfaceTitle>
+                      </div>
+                    </SurfaceHeader>
+                    <SurfaceBody>
+                      <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
                         <LoaderIcon className="size-4 animate-spin shrink-0" />
-                        Waiting for build to start…
+                        Loading logs…
                       </div>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">No build logs.</p>
-                    )}
-                  </div>
-                ) : (
-                  <div className="rounded-lg bg-muted/40 p-3.5 sm:p-4 font-mono text-xs leading-relaxed max-h-[min(70vh,720px)] overflow-y-auto space-y-0.5">
-                    {logs.map((log) => (
-                      <div key={logKey(log)} className={log.level === "error" ? "text-destructive" : "text-foreground"}>
-                        <span className="text-muted-foreground mr-2">
-                          {log.created_at ? new Date(log.created_at).toLocaleTimeString() : ""}
-                        </span>
-                        <BuildLogLineBody message={log.message} />
-                      </div>
-                    ))}
-                    <div ref={logEndRef} />
-                  </div>
-                )}
-              </SurfaceBody>
-            </Surface>
+                    </SurfaceBody>
+                  </Surface>
+                }
+              >
+                <DeploymentLogsPanel logs={logs} terminal={terminal} />
+              </Suspense>
+            ) : null}
           </TabsContent>
         </Tabs>
       </PageSection>

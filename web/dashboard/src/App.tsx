@@ -1,3 +1,4 @@
+import { lazy, Suspense, type ReactNode } from "react"
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { AppSidebar } from "@/components/app-sidebar"
 import {
@@ -13,16 +14,49 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { ProjectsPage } from "@/pages/ProjectsPage"
-import { ProjectDetailPage } from "@/pages/ProjectDetailPage"
-import { DeploymentDetailPage } from "@/pages/DeploymentDetailPage"
-import { DeploymentsPage } from "@/pages/DeploymentsPage"
-import { SettingsPage } from "@/pages/SettingsPage"
-import { ServerDetailPage } from "@/pages/ServerDetailPage"
-import { LoginPage } from "@/pages/LoginPage"
-import { BootstrapPage } from "@/pages/BootstrapPage"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { AuthProvider, useAuth } from "@/contexts/AuthContext"
+
+const ProjectsPage = lazy(() =>
+  import("@/pages/ProjectsPage").then((module) => ({
+    default: module.ProjectsPage,
+  }))
+)
+const ProjectDetailPage = lazy(() =>
+  import("@/pages/ProjectDetailPage").then((module) => ({
+    default: module.ProjectDetailPage,
+  }))
+)
+const DeploymentsPage = lazy(() =>
+  import("@/pages/DeploymentsPage").then((module) => ({
+    default: module.DeploymentsPage,
+  }))
+)
+const DeploymentDetailPage = lazy(() =>
+  import("@/pages/DeploymentDetailPage").then((module) => ({
+    default: module.DeploymentDetailPage,
+  }))
+)
+const SettingsPage = lazy(() =>
+  import("@/pages/SettingsPage").then((module) => ({
+    default: module.SettingsPage,
+  }))
+)
+const ServerDetailPage = lazy(() =>
+  import("@/pages/ServerDetailPage").then((module) => ({
+    default: module.ServerDetailPage,
+  }))
+)
+const LoginPage = lazy(() =>
+  import("@/pages/LoginPage").then((module) => ({
+    default: module.LoginPage,
+  }))
+)
+const BootstrapPage = lazy(() =>
+  import("@/pages/BootstrapPage").then((module) => ({
+    default: module.BootstrapPage,
+  }))
+)
 
 function pageName(pathname: string): string {
   if (pathname.startsWith("/settings/servers/")) return "Server"
@@ -31,6 +65,26 @@ function pageName(pathname: string): string {
   if (pathname.startsWith("/projects/")) return "Project"
   if (pathname === "/settings") return "Settings"
   return "Projects"
+}
+
+function PublicRouteFallback() {
+  return (
+    <div className="flex min-h-svh items-center justify-center text-muted-foreground text-sm">
+      Loading page…
+    </div>
+  )
+}
+
+function PrivateRouteFallback() {
+  return (
+    <div className="flex min-h-[50vh] items-center justify-center text-muted-foreground text-sm">
+      Loading page…
+    </div>
+  )
+}
+
+function PrivateRouteContent({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<PrivateRouteFallback />}>{children}</Suspense>
 }
 
 function Layout() {
@@ -64,13 +118,62 @@ function Layout() {
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
           <Routes>
-            <Route path="/" element={<ProjectsPage />} />
-            <Route path="/projects" element={<ProjectsPage />} />
-            <Route path="/projects/:id" element={<ProjectDetailPage />} />
-            <Route path="/deployments" element={<DeploymentsPage />} />
-            <Route path="/deployments/:id" element={<DeploymentDetailPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/settings/servers/:id" element={<ServerDetailPage />} />
+            <Route
+              path="/"
+              element={
+                <PrivateRouteContent>
+                  <ProjectsPage />
+                </PrivateRouteContent>
+              }
+            />
+            <Route
+              path="/projects"
+              element={
+                <PrivateRouteContent>
+                  <ProjectsPage />
+                </PrivateRouteContent>
+              }
+            />
+            <Route
+              path="/projects/:id"
+              element={
+                <PrivateRouteContent>
+                  <ProjectDetailPage />
+                </PrivateRouteContent>
+              }
+            />
+            <Route
+              path="/deployments"
+              element={
+                <PrivateRouteContent>
+                  <DeploymentsPage />
+                </PrivateRouteContent>
+              }
+            />
+            <Route
+              path="/deployments/:id"
+              element={
+                <PrivateRouteContent>
+                  <DeploymentDetailPage />
+                </PrivateRouteContent>
+              }
+            />
+            <Route
+              path="/settings"
+              element={
+                <PrivateRouteContent>
+                  <SettingsPage />
+                </PrivateRouteContent>
+              }
+            />
+            <Route
+              path="/settings/servers/:id"
+              element={
+                <PrivateRouteContent>
+                  <ServerDetailPage />
+                </PrivateRouteContent>
+              }
+            />
           </Routes>
         </div>
       </SidebarInset>
@@ -98,11 +201,13 @@ export default function App() {
     <TooltipProvider>
       <BrowserRouter>
         <AuthProvider>
-          <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/bootstrap" element={<BootstrapPage />} />
-            <Route path="/*" element={<PrivateRoutes />} />
-          </Routes>
+          <Suspense fallback={<PublicRouteFallback />}>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/bootstrap" element={<BootstrapPage />} />
+              <Route path="/*" element={<PrivateRoutes />} />
+            </Routes>
+          </Suspense>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>

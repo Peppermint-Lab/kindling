@@ -50,4 +50,4 @@ jobs:
             exit 1
           fi
           npm ci
-          npm run build
+          npm run check:bundle

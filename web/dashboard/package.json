@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:analyze": "tsc -b && vite build --sourcemap && node scripts/report-bundle.mjs",
+    "check:bundle": "npm run build && node scripts/report-bundle.mjs --max-js-kb=500",
     "lint": "eslint .",
     "test": "vitest run",
     "preview": "vite preview"
