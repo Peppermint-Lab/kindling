@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -737,7 +738,7 @@ func (a *API) triggerDeploy(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Commit string `json:"commit"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "malformed JSON body")
 		return
 	}
