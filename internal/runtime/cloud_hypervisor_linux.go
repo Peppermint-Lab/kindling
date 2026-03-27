@@ -127,11 +127,6 @@ func (r *CloudHypervisorRuntime) Start(ctx context.Context, inst Instance) (stri
 }
 
 func (r *CloudHypervisorRuntime) startVM(ctx context.Context, inst Instance) (string, error) {
-	port := inst.Port
-	if port == 0 {
-		port = 3000
-	}
-
 	workDir := filepath.Join(os.TempDir(), "kindling-ch-"+inst.ID.String())
 	_ = os.RemoveAll(workDir)
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
@@ -152,6 +147,11 @@ func (r *CloudHypervisorRuntime) startVM(ctx context.Context, inst Instance) (st
 }
 
 func (r *CloudHypervisorRuntime) startPreparedVM(ctx context.Context, inst Instance, workDir, workDisk string, requestedHostPort int) (string, error) {
+	port := inst.Port
+	if port == 0 {
+		port = 3000
+	}
+
 	slot := r.nextSlot.Add(1) - 1
 	hostIP, guestCIDR, err := cloudHypervisorIPs(slot)
 	if err != nil {
@@ -247,7 +247,7 @@ func (r *CloudHypervisorRuntime) startPreparedVM(ctx context.Context, inst Insta
 	}
 	ai.hostFwd = hostLn
 	ai.hostPort = hostLn.Addr().(*net.TCPAddr).Port
-		ai.ip, err = applyAdvertisedHost(hostLn.Addr().String(), r.advertiseHost)
+	ai.ip, err = applyAdvertisedHost(hostLn.Addr().String(), r.advertiseHost)
 	if err != nil {
 		cancel()
 		_ = os.RemoveAll(workDir)

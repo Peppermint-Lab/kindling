@@ -260,6 +260,40 @@ CREATE TABLE IF NOT EXISTS deployment_instances (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Upgrade path: older DBs may have deployment_instances without role or clone FK;
+-- must run before any index or INSERT referencing those columns.
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'deployment_instances' AND column_name = 'role'
+    ) THEN
+        ALTER TABLE deployment_instances ADD COLUMN role TEXT NOT NULL DEFAULT 'active';
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE deployment_instances DROP CONSTRAINT IF EXISTS deployment_instances_role_check;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'deployment_instances_role_check'
+    ) THEN
+        ALTER TABLE deployment_instances ADD CONSTRAINT deployment_instances_role_check
+            CHECK (role IN ('active', 'warm_pool', 'template'));
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'deployment_instances' AND column_name = 'clone_source_instance_id'
+    ) THEN
+        ALTER TABLE deployment_instances ADD COLUMN clone_source_instance_id UUID REFERENCES deployment_instances(id);
+    END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_deployment_instances_deployment_id
     ON deployment_instances(deployment_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_deployment_instances_server_id
@@ -316,38 +350,6 @@ DO $$ BEGIN
         WHERE table_schema = 'public' AND table_name = 'vms' AND column_name = 'clone_source_vm_id'
     ) THEN
         ALTER TABLE vms ADD COLUMN clone_source_vm_id UUID REFERENCES vms(id);
-    END IF;
-END $$;
-
-DO $$ BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'deployment_instances' AND column_name = 'role'
-    ) THEN
-        ALTER TABLE deployment_instances ADD COLUMN role TEXT NOT NULL DEFAULT 'active';
-    END IF;
-END $$;
-
-DO $$ BEGIN
-    ALTER TABLE deployment_instances DROP CONSTRAINT IF EXISTS deployment_instances_role_check;
-EXCEPTION WHEN undefined_object THEN NULL;
-END $$;
-
-DO $$ BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'deployment_instances_role_check'
-    ) THEN
-        ALTER TABLE deployment_instances ADD CONSTRAINT deployment_instances_role_check
-            CHECK (role IN ('active', 'warm_pool', 'template'));
-    END IF;
-END $$;
-
-DO $$ BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'deployment_instances' AND column_name = 'clone_source_instance_id'
-    ) THEN
-        ALTER TABLE deployment_instances ADD COLUMN clone_source_instance_id UUID REFERENCES deployment_instances(id);
     END IF;
 END $$;
 
