@@ -23,6 +23,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext"
 import { Button } from "@/components/ui/button"
 import type { AuthOrganization } from "@/lib/api"
+import { kindlingVersion } from "@/lib/version"
 
 const data = {
   navMain: [
@@ -73,6 +74,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-medium">Kindling</span>
                 <span className="truncate text-xs">Self-hosted PaaS</span>
+                <span className="truncate font-mono text-[11px] text-sidebar-foreground/60">
+                  {kindlingVersion.tag}
+                </span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>
