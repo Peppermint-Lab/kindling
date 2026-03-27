@@ -39,6 +39,9 @@ export function SettingsPage() {
   const [meta, setMeta] = useState<APIMeta | null>(null)
   const [publicUrlInput, setPublicUrlInput] = useState("")
   const [dashboardHostInput, setDashboardHostInput] = useState("")
+  const [previewBaseDomainInput, setPreviewBaseDomainInput] = useState("")
+  const [previewRetentionInput, setPreviewRetentionInput] = useState("3600")
+  const [previewIdleInput, setPreviewIdleInput] = useState("300")
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -62,6 +65,9 @@ export function SettingsPage() {
         setMeta(m)
         setPublicUrlInput(m.public_base_url || "")
         setDashboardHostInput(m.dashboard_public_host || "")
+        setPreviewBaseDomainInput(m.preview_base_domain || "")
+        setPreviewRetentionInput(String(m.preview_retention_after_close_seconds ?? 3600))
+        setPreviewIdleInput(String(m.preview_idle_scale_seconds ?? 300))
         setProviders(p as ProviderRow[])
       }),
     [],
@@ -102,10 +108,16 @@ export function SettingsPage() {
       const m = await api.updateMeta({
         public_base_url: publicUrlInput.trim(),
         dashboard_public_host: dashboardHostInput.trim(),
+        preview_base_domain: previewBaseDomainInput.trim(),
+        preview_retention_after_close_seconds: Number.parseInt(previewRetentionInput, 10) || 0,
+        preview_idle_scale_seconds: Number.parseInt(previewIdleInput, 10) || 300,
       })
       setMeta(m)
       setPublicUrlInput(m.public_base_url || "")
       setDashboardHostInput(m.dashboard_public_host || "")
+      setPreviewBaseDomainInput(m.preview_base_domain || "")
+      setPreviewRetentionInput(String(m.preview_retention_after_close_seconds ?? 3600))
+      setPreviewIdleInput(String(m.preview_idle_scale_seconds ?? 300))
     } catch (e) {
       setError(e instanceof APIError ? e.message : String(e))
     } finally {
@@ -173,6 +185,49 @@ export function SettingsPage() {
                     value={dashboardHostInput}
                     onChange={(e) => setDashboardHostInput(e.target.value)}
                   />
+                </div>
+                <div className="rounded-xl border border-dashed border-border/80 p-4 space-y-3 max-w-2xl bg-muted/20">
+                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">PR preview URLs</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Hostname suffix for generated previews (e.g.{" "}
+                    <span className="font-mono">preview.example.com</span>). Point wildcard DNS{" "}
+                    <span className="font-mono">*.preview.example.com</span> at the Kindling edge. Enable the{" "}
+                    <span className="font-mono">pull_request</span> event on the repo webhook in GitHub.
+                  </p>
+                  <div className="space-y-1 max-w-xl">
+                    <Label htmlFor="preview-base">Preview base domain</Label>
+                    <Input
+                      id="preview-base"
+                      placeholder="preview.example.com"
+                      className="font-mono text-sm"
+                      value={previewBaseDomainInput}
+                      onChange={(e) => setPreviewBaseDomainInput(e.target.value)}
+                    />
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2 max-w-xl">
+                    <div className="space-y-1">
+                      <Label htmlFor="preview-retention">Retention after PR close (seconds)</Label>
+                      <Input
+                        id="preview-retention"
+                        type="number"
+                        min={0}
+                        className="font-mono text-sm"
+                        value={previewRetentionInput}
+                        onChange={(e) => setPreviewRetentionInput(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="preview-idle">Preview idle scale-down (seconds)</Label>
+                      <Input
+                        id="preview-idle"
+                        type="number"
+                        min={1}
+                        className="font-mono text-sm"
+                        value={previewIdleInput}
+                        onChange={(e) => setPreviewIdleInput(e.target.value)}
+                      />
+                    </div>
+                  </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
                   <Button size="sm" onClick={() => void handleSavePublicURL()} disabled={saving}>

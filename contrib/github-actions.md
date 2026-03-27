@@ -14,14 +14,6 @@ The deploy job uses `environment: production`. In the repo’s **Settings → En
 
 Until `production` exists, GitHub creates it on first run (with default repo rules).
 
-| Name | Required | Description |
-|------|----------|-------------|
-| `SSH_PRIVATE_KEY` | Yes | Private key for the deploy user (PEM). Loaded via [webfactory/ssh-agent](https://github.com/webfactory/ssh-agent). |
-| `SSH_HOST` | Yes | Hostname or IP of the Kindling server. |
-| `SSH_USER` | Yes | SSH user (e.g. `ubuntu`). Must match `User=` in `kindling.service` / `KINDLING_HOME`. |
-| `SSH_PORT` | No | SSH port; defaults to `22`. |
-| `SSH_KNOWN_HOSTS` | No | One host key per line for `known_hosts`. If omitted, the workflow runs `ssh-keyscan` (TOFU). Prefer pinning keys in production. |
-
 ## Secrets (CI)
 
 | Name | Required | Description |
@@ -29,6 +21,14 @@ Until `production` exists, GitHub creates it on first run (with default repo rul
 | `VITE_API_URL` | Yes (for `ci.yml` dashboard job) | API origin baked into the dashboard static build (e.g. `https://api.kindling.systems`). |
 
 ## Secrets (deploy)
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `SSH_PRIVATE_KEY` | Yes | Private key for the deploy user (PEM). Loaded via [webfactory/ssh-agent](https://github.com/webfactory/ssh-agent). |
+| `SSH_HOST` | Yes | Hostname or IP of the Kindling server. |
+| `SSH_USER` | Yes | SSH user (e.g. `ubuntu`). Must match `User=` in `kindling.service` / `KINDLING_HOME`. |
+| `SSH_PORT` | No | SSH port; defaults to `22`. |
+| `SSH_KNOWN_HOSTS` | No | One host key per line for `known_hosts`. If omitted, the workflow runs `ssh-keyscan` (TOFU). Prefer pinning keys in production. |
 
 The deploy user must be able to run **without a password**:
 
@@ -43,8 +43,7 @@ Repository or **production** environment variables:
 
 | Name | Default used in workflow | Description |
 |------|-------------------------|-------------|
-| `VITE_API_URL` | _none — CI fails if unset_ | **CI** (`ci.yml`): passed to Vite for the dashboard build. Set under **Settings → Secrets and variables → Actions → Variables**. |
-| `DEPLOY_VITE_API_URL` | `https://api.kindling.systems` if unset | **Deploy** (`deploy-prod.yml`): production dashboard API origin. |
+| `DEPLOY_VITE_API_URL` | `https://api.kindling.systems` if unset | **Deploy** (`deploy-prod.yml`): production dashboard API origin (repository or environment **variable**). |
 | `KINDLING_HOME` | `/home/$SSH_USER/kindling` | Deploy path for `bin/kindling` and `web/dashboard/`. |
 | `KINDLING_DATA` | `/home/$SSH_USER/.kindling` | Where `vmlinuz.bin` and `initramfs.cpio.gz` are copied when those artifacts are built. |
 

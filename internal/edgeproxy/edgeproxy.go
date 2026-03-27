@@ -76,6 +76,7 @@ type Backend struct {
 type Route struct {
 	ProjectID          pgtype.UUID
 	DeploymentID       pgtype.UUID
+	DeploymentKind     string
 	Backends           []Backend
 	RedirectTo         string
 	RedirectStatusCode int32
@@ -256,12 +257,14 @@ func (s *Service) loadRoutes(ctx context.Context) error {
 	proxyBackends := make(map[string][]Backend)
 	proxyProjectID := make(map[string]pgtype.UUID)
 	proxyDeploymentID := make(map[string]pgtype.UUID)
+	proxyDeploymentKind := make(map[string]string)
 
 	for _, row := range rows {
 		if row.RedirectTo.Valid {
 			redirects[row.DomainName] = Route{
 				ProjectID:          row.ProjectID,
 				DeploymentID:       row.DeploymentID,
+				DeploymentKind:     row.DeploymentKind,
 				RedirectTo:         row.RedirectTo.String,
 				RedirectStatusCode: row.RedirectStatusCode.Int32,
 			}
@@ -289,6 +292,9 @@ func (s *Service) loadRoutes(ctx context.Context) error {
 		})
 		proxyProjectID[row.DomainName] = row.ProjectID
 		proxyDeploymentID[row.DomainName] = row.DeploymentID
+		if row.DeploymentKind != "" {
+			proxyDeploymentKind[row.DomainName] = row.DeploymentKind
+		}
 	}
 
 	newRoutes := make(map[string]Route)
@@ -303,9 +309,10 @@ func (s *Service) loadRoutes(ctx context.Context) error {
 			continue
 		}
 		newRoutes[domain] = Route{
-			Backends:     bes,
-			ProjectID:    proxyProjectID[domain],
-			DeploymentID: proxyDeploymentID[domain],
+			Backends:         bes,
+			ProjectID:        proxyProjectID[domain],
+			DeploymentID:     proxyDeploymentID[domain],
+			DeploymentKind:   proxyDeploymentKind[domain],
 		}
 	}
 
@@ -468,8 +475,15 @@ func (s *Service) serveRedirect(w http.ResponseWriter, r *http.Request, route Ro
 }
 
 func (s *Service) requestColdStart(ctx context.Context, lookup queries.DomainEdgeLookupRow) error {
-	if err := s.q.ProjectClearScaledToZero(ctx, lookup.ProjectID); err != nil {
-		return fmt.Errorf("clear scaled_to_zero: %w", err)
+	isPreview := lookup.DeploymentKind.Valid && lookup.DeploymentKind.String == "preview"
+	if isPreview {
+		if err := s.q.DeploymentPreviewClearScaledToZero(ctx, lookup.DeploymentID); err != nil {
+			return fmt.Errorf("clear preview scaled_to_zero: %w", err)
+		}
+	} else {
+		if err := s.q.ProjectClearScaledToZero(ctx, lookup.ProjectID); err != nil {
+			return fmt.Errorf("clear scaled_to_zero: %w", err)
+		}
 	}
 	if _, err := s.q.DeploymentRequestWake(ctx, lookup.DeploymentID); err != nil {
 		return fmt.Errorf("request wake: %w", err)
@@ -532,7 +546,16 @@ func (s *Service) reverseProxy(w http.ResponseWriter, r *http.Request, host stri
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		statusCaptured = resp.StatusCode
 		resp.Header.Set("Server", "Kindling")
-		if projID.Valid && resp.StatusCode < 500 {
+		if resp.StatusCode >= 500 {
+			return nil
+		}
+		if strings.EqualFold(route.DeploymentKind, "preview") {
+			if depID.Valid {
+				if err := s.q.DeploymentPreviewUpdateLastRequestAt(resp.Request.Context(), depID); err != nil {
+					slog.Warn("preview_last_request_at update", "error", err)
+				}
+			}
+		} else if projID.Valid {
 			if err := s.q.ProjectUpdateLastRequestAt(resp.Request.Context(), projID); err != nil {
 				slog.Warn("last_request_at update", "error", err)
 			}

@@ -33,6 +33,9 @@ type deploymentOut struct {
 	ScaledToZero         bool                       `json:"scaled_to_zero,omitempty"`
 	ScaleToZeroEnabled   bool                       `json:"scale_to_zero_enabled,omitempty"`
 	WakeRequestedAt      *string                    `json:"wake_requested_at,omitempty"`
+	DeploymentKind       string                     `json:"deployment_kind,omitempty"`
+	GithubBranch         string                     `json:"github_branch,omitempty"`
+	PreviewEnvironmentID *string                    `json:"preview_environment_id,omitempty"`
 	Reachable            *deploymentReachabilityOut `json:"reachable,omitempty"`
 }
 
@@ -80,7 +83,7 @@ func deploymentToOut(dep queries.Deployment, build *queries.Build, reachable *de
 	if build != nil {
 		bs = build.Status
 	}
-	return deploymentOut{
+	out := deploymentOut{
 		ID:           pgUUIDToString(dep.ID),
 		ProjectID:    pgUUIDToString(dep.ProjectID),
 		BuildID:      optionalUUIDString(dep.BuildID),
@@ -96,6 +99,14 @@ func deploymentToOut(dep queries.Deployment, build *queries.Build, reachable *de
 		Phase:        deploymentPhase(dep, build),
 		Reachable:    reachable,
 	}
+	if strings.TrimSpace(dep.DeploymentKind) != "" && dep.DeploymentKind != "production" {
+		out.DeploymentKind = dep.DeploymentKind
+	}
+	if strings.TrimSpace(dep.GithubBranch) != "" {
+		out.GithubBranch = dep.GithubBranch
+	}
+	out.PreviewEnvironmentID = optionalUUIDString(dep.PreviewEnvironmentID)
+	return out
 }
 
 func (a *API) deploymentToOutCtx(ctx context.Context, dep queries.Deployment) deploymentOut {
@@ -136,21 +147,26 @@ func (a *API) deploymentToOutCtx(ctx context.Context, dep queries.Deployment) de
 
 func (a *API) listRowForOrgToOutCtx(ctx context.Context, row queries.DeploymentFindRecentWithProjectForOrgRow) deploymentListItemOut {
 	return a.listRowToOutCtx(ctx, queries.DeploymentFindRecentWithProjectRow{
-		ID:              row.ID,
-		ProjectID:       row.ProjectID,
-		BuildID:         row.BuildID,
-		ImageID:         row.ImageID,
-		VmID:            row.VmID,
-		GithubCommit:    row.GithubCommit,
-		RunningAt:       row.RunningAt,
-		StoppedAt:       row.StoppedAt,
-		FailedAt:        row.FailedAt,
-		DeletedAt:       row.DeletedAt,
-		WakeRequestedAt: row.WakeRequestedAt,
-		CreatedAt:       row.CreatedAt,
-		UpdatedAt:       row.UpdatedAt,
-		ProjectName:     row.ProjectName,
-		BuildStatus:     row.BuildStatus,
+		ID:                   row.ID,
+		ProjectID:            row.ProjectID,
+		BuildID:              row.BuildID,
+		ImageID:              row.ImageID,
+		VmID:                 row.VmID,
+		GithubCommit:         row.GithubCommit,
+		GithubBranch:         row.GithubBranch,
+		DeploymentKind:       row.DeploymentKind,
+		PreviewEnvironmentID: row.PreviewEnvironmentID,
+		PreviewLastRequestAt: row.PreviewLastRequestAt,
+		PreviewScaledToZero:  row.PreviewScaledToZero,
+		RunningAt:            row.RunningAt,
+		StoppedAt:            row.StoppedAt,
+		FailedAt:             row.FailedAt,
+		DeletedAt:            row.DeletedAt,
+		WakeRequestedAt:      row.WakeRequestedAt,
+		CreatedAt:            row.CreatedAt,
+		UpdatedAt:            row.UpdatedAt,
+		ProjectName:          row.ProjectName,
+		BuildStatus:          row.BuildStatus,
 	})
 }
 
@@ -164,19 +180,24 @@ func (a *API) listRowToOutCtx(ctx context.Context, row queries.DeploymentFindRec
 		buildPtr = &queries.Build{Status: st}
 	}
 	dep := queries.Deployment{
-		ID:              row.ID,
-		ProjectID:       row.ProjectID,
-		BuildID:         row.BuildID,
-		ImageID:         row.ImageID,
-		VmID:            row.VmID,
-		GithubCommit:    row.GithubCommit,
-		RunningAt:       row.RunningAt,
-		StoppedAt:       row.StoppedAt,
-		FailedAt:        row.FailedAt,
-		DeletedAt:       row.DeletedAt,
-		WakeRequestedAt: row.WakeRequestedAt,
-		CreatedAt:       row.CreatedAt,
-		UpdatedAt:       row.UpdatedAt,
+		ID:                   row.ID,
+		ProjectID:            row.ProjectID,
+		BuildID:              row.BuildID,
+		ImageID:              row.ImageID,
+		VmID:                 row.VmID,
+		GithubCommit:         row.GithubCommit,
+		GithubBranch:         row.GithubBranch,
+		DeploymentKind:       row.DeploymentKind,
+		PreviewEnvironmentID: row.PreviewEnvironmentID,
+		PreviewLastRequestAt: row.PreviewLastRequestAt,
+		PreviewScaledToZero:  row.PreviewScaledToZero,
+		RunningAt:            row.RunningAt,
+		StoppedAt:            row.StoppedAt,
+		FailedAt:             row.FailedAt,
+		DeletedAt:            row.DeletedAt,
+		WakeRequestedAt:      row.WakeRequestedAt,
+		CreatedAt:            row.CreatedAt,
+		UpdatedAt:            row.UpdatedAt,
 	}
 	out := deploymentToOut(dep, buildPtr, a.deploymentReachability(ctx, dep))
 	out.WakeRequestedAt = formatTS(dep.WakeRequestedAt)

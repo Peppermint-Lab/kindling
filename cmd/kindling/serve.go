@@ -30,6 +30,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/edgeproxy"
 	"github.com/kindlingvm/kindling/internal/listener"
 	"github.com/kindlingvm/kindling/internal/oci"
+	"github.com/kindlingvm/kindling/internal/preview"
 	"github.com/kindlingvm/kindling/internal/reconciler"
 	"github.com/kindlingvm/kindling/internal/rpc"
 	"github.com/kindlingvm/kindling/internal/serverreconcile"
@@ -407,6 +408,8 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	}
 
 	go runIdleScaleDownLoop(ctx, databaseURL, q, deploymentReconciler, cfgMgr)
+	go runPreviewCleanupLoop(ctx, databaseURL, q, deploymentReconciler)
+	go runPreviewIdleScaleDownLoop(ctx, databaseURL, q, deploymentReconciler, cfgMgr)
 
 	// API server
 	api := rpc.NewAPI(q, cfgMgr, dashboardEvents)
@@ -617,6 +620,36 @@ func runIdleScaleDownLoop(ctx context.Context, databaseURL string, q *queries.Qu
 				idleSeconds = cfgMgr.Snapshot().ScaleToZeroIdleSeconds
 			}
 			runIdleScaleDownOnce(ctx, databaseURL, q, deploymentReconciler, idleSeconds)
+		}
+	}
+}
+
+func runPreviewCleanupLoop(ctx context.Context, databaseURL string, q *queries.Queries, deploymentReconciler *reconciler.Scheduler) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			preview.RunCleanupOnce(ctx, databaseURL, q, deploymentReconciler)
+		}
+	}
+}
+
+func runPreviewIdleScaleDownLoop(ctx context.Context, databaseURL string, q *queries.Queries, deploymentReconciler *reconciler.Scheduler, cfgMgr *config.Manager) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			idle := int64(300)
+			if cfgMgr != nil && cfgMgr.Snapshot() != nil {
+				idle = cfgMgr.Snapshot().PreviewIdleSeconds
+			}
+			preview.RunIdleScaleDownOnce(ctx, databaseURL, q, deploymentReconciler, idle)
 		}
 	}
 }

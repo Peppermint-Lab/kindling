@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -46,6 +47,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/projects/{id}", a.patchProject)
 	mux.HandleFunc("DELETE /api/projects/{id}", a.deleteProject)
 	mux.HandleFunc("GET /api/projects/{id}/deployments", a.listDeployments)
+	mux.HandleFunc("GET /api/projects/{id}/previews", a.listProjectPreviews)
 	mux.HandleFunc("GET /api/projects/{id}/github-setup", a.getGitHubSetup)
 	mux.HandleFunc("GET /api/projects/{id}/git-head", a.gitHead)
 	mux.HandleFunc("POST /api/projects/{id}/rotate-webhook-secret", a.rotateWebhookSecret)
@@ -90,6 +92,7 @@ func (a *API) getMeta(w http.ResponseWriter, r *http.Request) {
 	if dash != "" {
 		out["dashboard_public_host"] = dash
 	}
+	mergePreviewMeta(r.Context(), a.q, out)
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -103,8 +106,11 @@ func (a *API) putMeta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		PublicBaseURL       *string `json:"public_base_url"`
-		DashboardPublicHost *string `json:"dashboard_public_host"`
+		PublicBaseURL                    *string `json:"public_base_url"`
+		DashboardPublicHost              *string `json:"dashboard_public_host"`
+		PreviewBaseDomain                *string `json:"preview_base_domain"`
+		PreviewRetentionAfterCloseSeconds *int64  `json:"preview_retention_after_close_seconds"`
+		PreviewIdleScaleSeconds          *int64  `json:"preview_idle_scale_seconds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
@@ -118,6 +124,33 @@ func (a *API) putMeta(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DashboardPublicHost != nil {
 		if err := a.clusterSettingUpsertDashboardPublicHost(r.Context(), *req.DashboardPublicHost); err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
+			return
+		}
+	}
+	if req.PreviewBaseDomain != nil {
+		if err := a.q.ClusterSettingUpsert(r.Context(), queries.ClusterSettingUpsertParams{
+			Key:   config.SettingPreviewBaseDomain,
+			Value: strings.TrimSpace(*req.PreviewBaseDomain),
+		}); err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
+			return
+		}
+	}
+	if req.PreviewRetentionAfterCloseSeconds != nil {
+		if err := a.q.ClusterSettingUpsert(r.Context(), queries.ClusterSettingUpsertParams{
+			Key:   config.SettingPreviewRetentionAfterCloseSecs,
+			Value: strconv.FormatInt(*req.PreviewRetentionAfterCloseSeconds, 10),
+		}); err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
+			return
+		}
+	}
+	if req.PreviewIdleScaleSeconds != nil {
+		if err := a.q.ClusterSettingUpsert(r.Context(), queries.ClusterSettingUpsertParams{
+			Key:   config.SettingPreviewIdleSeconds,
+			Value: strconv.FormatInt(*req.PreviewIdleScaleSeconds, 10),
+		}); err != nil {
 			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
 			return
 		}
@@ -140,7 +173,36 @@ func (a *API) putMeta(w http.ResponseWriter, r *http.Request) {
 	if dash != "" {
 		out["dashboard_public_host"] = dash
 	}
+	mergePreviewMeta(r.Context(), a.q, out)
 	writeJSON(w, http.StatusOK, out)
+}
+
+func mergePreviewMeta(ctx context.Context, q *queries.Queries, out map[string]any) {
+	pb := ""
+	if v, err := q.ClusterSettingGet(ctx, config.SettingPreviewBaseDomain); err == nil {
+		pb = strings.TrimSpace(v)
+	}
+	out["preview_base_domain"] = pb
+	ret := int64(3600)
+	if v, err := q.ClusterSettingGet(ctx, config.SettingPreviewRetentionAfterCloseSecs); err == nil {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+				ret = n
+			}
+		}
+	}
+	out["preview_retention_after_close_seconds"] = ret
+	idle := int64(300)
+	if v, err := q.ClusterSettingGet(ctx, config.SettingPreviewIdleSeconds); err == nil {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+				idle = n
+			}
+		}
+	}
+	out["preview_idle_scale_seconds"] = idle
 }
 
 func projectStripSecret(p queries.Project) queries.Project {
@@ -402,7 +464,7 @@ func (a *API) getGitHubSetup(w http.ResponseWriter, r *http.Request) {
 		"webhook_path":               "/webhooks/github",
 		"webhook_secret":             project.GithubWebhookSecret,
 		"public_base_url_configured": base != "",
-		"instructions":               "In GitHub: Settings → Webhooks → Add webhook. Use the payload URL and secret below. Content type: application/json. Events: Just the push event.",
+		"instructions":               "In GitHub: Settings → Webhooks → Add webhook. Use the payload URL and secret below. Content type: application/json. Events: push (production) and pull_request (PR previews; requires cluster preview_base_domain).",
 	})
 }
 
@@ -597,9 +659,12 @@ func (a *API) triggerDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dep, err := a.q.DeploymentCreate(r.Context(), queries.DeploymentCreateParams{
-		ID:           pgtype.UUID{Bytes: uuid.New(), Valid: true},
-		ProjectID:    projectID,
-		GithubCommit: req.Commit,
+		ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		ProjectID:            projectID,
+		GithubCommit:         req.Commit,
+		GithubBranch:         req.Commit,
+		DeploymentKind:       "production",
+		PreviewEnvironmentID: pgtype.UUID{Valid: false},
 	})
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "create_deployment", err)

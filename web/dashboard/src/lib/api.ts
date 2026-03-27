@@ -85,6 +85,9 @@ export type Deployment = {
   image_id?: string | null
   vm_id?: string | null
   github_commit: string
+  deployment_kind?: string
+  github_branch?: string
+  preview_environment_id?: string
   running_at?: string | null
   stopped_at?: string | null
   failed_at?: string | null
@@ -236,6 +239,29 @@ export type APIMeta = {
   webhook_path: string
   /** Hostname for the dashboard when split from API (e.g. app.example.com). */
   dashboard_public_host?: string
+  /** Wildcard DNS base for PR previews, e.g. preview.example.com (DNS: *.preview.example.com → edge). */
+  preview_base_domain?: string
+  preview_retention_after_close_seconds?: number
+  preview_idle_scale_seconds?: number
+}
+
+export type PreviewImmutableURL = {
+  url: string
+  deployment_id?: string
+  github_commit?: string
+}
+
+export type PreviewEnvironment = {
+  id: string
+  pr_number: number
+  head_branch: string
+  head_sha: string
+  stable_url?: string
+  latest_deployment_id?: string
+  closed_at?: string
+  expires_at?: string
+  /** Per-deployment preview hostnames (unchanging until cleanup). */
+  immutable_urls?: PreviewImmutableURL[]
 }
 
 export type GitHubSetup = {
@@ -326,7 +352,13 @@ export const api = {
     request<void>(`/api/org/provider-connections/${id}`, { method: "DELETE" }),
 
   getMeta: () => request<APIMeta>("/api/meta"),
-  updateMeta: (data: { public_base_url?: string; dashboard_public_host?: string }) =>
+  updateMeta: (data: {
+    public_base_url?: string
+    dashboard_public_host?: string
+    preview_base_domain?: string
+    preview_retention_after_close_seconds?: number
+    preview_idle_scale_seconds?: number
+  }) =>
     request<APIMeta>("/api/meta", {
       method: "PUT",
       body: JSON.stringify(data),
@@ -363,6 +395,9 @@ export const api = {
 
   listDeployments: (projectId: string) =>
     request<Deployment[]>(`/api/projects/${projectId}/deployments`),
+
+  listProjectPreviews: (projectId: string) =>
+    request<PreviewEnvironment[]>(`/api/projects/${projectId}/previews`),
 
   listProjectDomains: (projectId: string) => request<ProjectDomain[]>(`/api/projects/${projectId}/domains`),
 

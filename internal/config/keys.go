@@ -10,6 +10,9 @@ const (
 	SettingACMEStaging             = "acme_staging"
 	SettingColdStartTimeout        = "cold_start_timeout"
 	SettingScaleToZeroIdleSeconds  = "scale_to_zero_idle_seconds"
+	SettingPreviewBaseDomain              = "preview_base_domain"
+	SettingPreviewRetentionAfterCloseSecs = "preview_retention_after_close_seconds"
+	SettingPreviewIdleSeconds             = "preview_idle_scale_seconds"
 )
 
 // Cluster secret keys (cluster_secrets.key, ciphertext).

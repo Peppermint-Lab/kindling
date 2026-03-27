@@ -165,6 +165,26 @@ DO $$ BEGIN
     END IF;
 END $$;
 
+-- PR preview environments (one row per open/closed PR per project)
+CREATE TABLE IF NOT EXISTS preview_environments (
+    id                   UUID PRIMARY KEY,
+    project_id           UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    provider             TEXT NOT NULL DEFAULT 'github' CHECK (provider IN ('github')),
+    pr_number            INT NOT NULL,
+    head_branch          TEXT NOT NULL DEFAULT '',
+    head_sha             TEXT NOT NULL DEFAULT '',
+    latest_deployment_id UUID,
+    stable_domain_name   TEXT NOT NULL DEFAULT '',
+    closed_at            TIMESTAMPTZ,
+    expires_at           TIMESTAMPTZ,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (project_id, provider, pr_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_preview_environments_project_id ON preview_environments(project_id);
+CREATE INDEX IF NOT EXISTS idx_preview_environments_expires_at ON preview_environments(expires_at) WHERE expires_at IS NOT NULL;
+
 -- Environment variables per project (values are encrypted)
 CREATE TABLE IF NOT EXISTS environment_variables (
     id          UUID PRIMARY KEY,
@@ -219,19 +239,25 @@ END $$;
 
 -- Deployments: a specific version of a project deployed to an environment
 CREATE TABLE IF NOT EXISTS deployments (
-    id              UUID PRIMARY KEY,
-    project_id      UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    build_id        UUID REFERENCES builds(id),
-    image_id        UUID REFERENCES images(id),
-    vm_id           UUID REFERENCES vms(id),
-    github_commit   TEXT NOT NULL DEFAULT '',
-    running_at      TIMESTAMPTZ,
-    stopped_at      TIMESTAMPTZ,
-    failed_at       TIMESTAMPTZ,
-    deleted_at      TIMESTAMPTZ,
-    wake_requested_at TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id                  UUID PRIMARY KEY,
+    project_id          UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    build_id            UUID REFERENCES builds(id),
+    image_id            UUID REFERENCES images(id),
+    vm_id               UUID REFERENCES vms(id),
+    github_commit       TEXT NOT NULL DEFAULT '',
+    github_branch       TEXT NOT NULL DEFAULT '',
+    deployment_kind     TEXT NOT NULL DEFAULT 'production'
+        CHECK (deployment_kind IN ('production', 'preview')),
+    preview_environment_id UUID REFERENCES preview_environments(id) ON DELETE SET NULL,
+    preview_last_request_at TIMESTAMPTZ,
+    preview_scaled_to_zero BOOLEAN NOT NULL DEFAULT false,
+    running_at          TIMESTAMPTZ,
+    stopped_at          TIMESTAMPTZ,
+    failed_at           TIMESTAMPTZ,
+    deleted_at          TIMESTAMPTZ,
+    wake_requested_at   TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Upgrade path: DBs created before wake_requested_at existed
@@ -243,6 +269,69 @@ DO $$ BEGIN
         ALTER TABLE deployments ADD COLUMN wake_requested_at TIMESTAMPTZ;
     END IF;
 END $$;
+
+-- Preview / branch metadata on deployments (production rows use defaults)
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'deployments' AND column_name = 'github_branch'
+    ) THEN
+        ALTER TABLE deployments ADD COLUMN github_branch TEXT NOT NULL DEFAULT '';
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'deployments' AND column_name = 'deployment_kind'
+    ) THEN
+        ALTER TABLE deployments ADD COLUMN deployment_kind TEXT NOT NULL DEFAULT 'production';
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE deployments DROP CONSTRAINT IF EXISTS deployments_deployment_kind_check;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'deployments_deployment_kind_check'
+    ) THEN
+        ALTER TABLE deployments ADD CONSTRAINT deployments_deployment_kind_check
+            CHECK (deployment_kind IN ('production', 'preview'));
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'deployments' AND column_name = 'preview_environment_id'
+    ) THEN
+        ALTER TABLE deployments ADD COLUMN preview_environment_id UUID REFERENCES preview_environments(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'deployments' AND column_name = 'preview_last_request_at'
+    ) THEN
+        ALTER TABLE deployments ADD COLUMN preview_last_request_at TIMESTAMPTZ;
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'deployments' AND column_name = 'preview_scaled_to_zero'
+    ) THEN
+        ALTER TABLE deployments ADD COLUMN preview_scaled_to_zero BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_deployments_preview_environment_id
+    ON deployments(preview_environment_id) WHERE preview_environment_id IS NOT NULL AND deleted_at IS NULL;
 
 -- Deployment instances: one row per replica (horizontal scale) for a deployment revision
 CREATE TABLE IF NOT EXISTS deployment_instances (
@@ -363,9 +452,47 @@ CREATE TABLE IF NOT EXISTS domains (
     verified_at         TIMESTAMPTZ,
     redirect_to         TEXT,
     redirect_status_code INT,
+    domain_kind         TEXT NOT NULL DEFAULT 'production'
+        CHECK (domain_kind IN ('production', 'preview_stable', 'preview_immutable')),
+    preview_environment_id UUID REFERENCES preview_environments(id) ON DELETE CASCADE,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Preview vs production domain rows (custom domains are production)
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'domains' AND column_name = 'domain_kind'
+    ) THEN
+        ALTER TABLE domains ADD COLUMN domain_kind TEXT NOT NULL DEFAULT 'production';
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE domains DROP CONSTRAINT IF EXISTS domains_domain_kind_check;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'domains_domain_kind_check'
+    ) THEN
+        ALTER TABLE domains ADD CONSTRAINT domains_domain_kind_check
+            CHECK (domain_kind IN ('production', 'preview_stable', 'preview_immutable'));
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'domains' AND column_name = 'preview_environment_id'
+    ) THEN
+        ALTER TABLE domains ADD COLUMN preview_environment_id UUID REFERENCES preview_environments(id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_domains_preview_environment_id ON domains(preview_environment_id) WHERE preview_environment_id IS NOT NULL;
 
 -- Existing DBs: add verification_token for DNS domain verification
 DO $$ BEGIN

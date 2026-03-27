@@ -338,8 +338,8 @@ SELECT * FROM build_logs WHERE build_id = $1 ORDER BY created_at;
 -- Deployments --
 
 -- name: DeploymentCreate :one
-INSERT INTO deployments (id, project_id, github_commit)
-VALUES ($1, $2, $3)
+INSERT INTO deployments (id, project_id, github_commit, github_branch, deployment_kind, preview_environment_id)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: DeploymentFirstByID :one
@@ -380,6 +380,7 @@ WHERE di.vm_id = $1 AND d.deleted_at IS NULL;
 -- name: DeploymentFindRunningAndOlder :many
 SELECT * FROM deployments
 WHERE project_id = $1
+  AND deployment_kind = 'production'
   AND running_at IS NOT NULL
   AND stopped_at IS NULL
   AND failed_at IS NULL
@@ -403,6 +404,7 @@ SELECT * FROM deployments WHERE project_id = $1 ORDER BY created_at DESC;
 -- name: DeploymentLatestRunningByProjectID :one
 SELECT * FROM deployments
 WHERE project_id = $1
+  AND deployment_kind = 'production'
   AND running_at IS NOT NULL
   AND stopped_at IS NULL
   AND failed_at IS NULL
@@ -418,6 +420,11 @@ SELECT
     d.image_id,
     d.vm_id,
     d.github_commit,
+    d.github_branch,
+    d.deployment_kind,
+    d.preview_environment_id,
+    d.preview_last_request_at,
+    d.preview_scaled_to_zero,
     d.running_at,
     d.stopped_at,
     d.failed_at,
@@ -442,6 +449,11 @@ SELECT
     d.image_id,
     d.vm_id,
     d.github_commit,
+    d.github_branch,
+    d.deployment_kind,
+    d.preview_environment_id,
+    d.preview_last_request_at,
+    d.preview_scaled_to_zero,
     d.running_at,
     d.stopped_at,
     d.failed_at,
@@ -458,6 +470,106 @@ WHERE d.deleted_at IS NULL
   AND p.org_id = $2
 ORDER BY d.created_at DESC
 LIMIT $1;
+
+-- Preview environments --
+
+-- name: PreviewEnvironmentCreate :one
+INSERT INTO preview_environments (id, project_id, provider, pr_number, head_branch, head_sha, stable_domain_name)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING *;
+
+-- name: PreviewEnvironmentByProjectAndPR :one
+SELECT * FROM preview_environments
+WHERE project_id = $1 AND provider = $2 AND pr_number = $3;
+
+-- name: PreviewEnvironmentByID :one
+SELECT * FROM preview_environments WHERE id = $1;
+
+-- name: PreviewEnvironmentUpdateHead :one
+UPDATE preview_environments
+SET head_branch = $2, head_sha = $3, updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: PreviewEnvironmentSetLatestDeployment :exec
+UPDATE preview_environments SET latest_deployment_id = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: PreviewEnvironmentSetStableDomain :exec
+UPDATE preview_environments SET stable_domain_name = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: PreviewEnvironmentMarkClosed :one
+UPDATE preview_environments
+SET closed_at = NOW(), expires_at = $2, updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: PreviewEnvironmentsByProjectID :many
+SELECT * FROM preview_environments WHERE project_id = $1 ORDER BY updated_at DESC;
+
+-- name: PreviewImmutableDomainsByProjectID :many
+SELECT
+  d.preview_environment_id,
+  d.domain_name,
+  d.deployment_id,
+  dep.github_commit
+FROM domains d
+JOIN preview_environments pe ON pe.id = d.preview_environment_id
+LEFT JOIN deployments dep ON dep.id = d.deployment_id AND dep.deleted_at IS NULL
+WHERE pe.project_id = $1
+  AND d.domain_kind = 'preview_immutable'
+ORDER BY d.created_at DESC;
+
+-- name: PreviewEnvironmentsDueForCleanup :many
+SELECT * FROM preview_environments
+WHERE expires_at IS NOT NULL AND expires_at <= NOW();
+
+-- name: PreviewEnvironmentDelete :exec
+DELETE FROM preview_environments WHERE id = $1;
+
+-- name: DeploymentsMarkStoppedByPreviewEnvironment :exec
+UPDATE deployments SET stopped_at = NOW(), updated_at = NOW()
+WHERE preview_environment_id = $1
+  AND deployment_kind = 'preview'
+  AND deleted_at IS NULL
+  AND failed_at IS NULL
+  AND stopped_at IS NULL;
+
+-- name: DeploymentsByPreviewEnvironmentID :many
+SELECT * FROM deployments
+WHERE preview_environment_id = $1 AND deleted_at IS NULL
+ORDER BY created_at DESC;
+
+-- name: DeploymentPreviewUpdateLastRequestAt :exec
+UPDATE deployments
+SET preview_last_request_at = NOW(), updated_at = NOW()
+WHERE id = $1 AND deployment_kind = 'preview';
+
+-- name: DeploymentPreviewClearScaledToZero :exec
+UPDATE deployments SET preview_scaled_to_zero = false, updated_at = NOW() WHERE id = $1;
+
+-- name: DeploymentPreviewMarkScaledToZero :exec
+UPDATE deployments
+SET preview_scaled_to_zero = true, updated_at = NOW()
+WHERE id = $1
+  AND deployment_kind = 'preview'
+  AND running_at IS NOT NULL
+  AND stopped_at IS NULL
+  AND failed_at IS NULL
+  AND deleted_at IS NULL
+  AND preview_scaled_to_zero = false;
+
+-- name: DeploymentsFindPreviewForIdleScaleDown :many
+SELECT * FROM deployments
+WHERE deployment_kind = 'preview'
+  AND running_at IS NOT NULL
+  AND stopped_at IS NULL
+  AND failed_at IS NULL
+  AND deleted_at IS NULL
+  AND preview_scaled_to_zero = false
+  AND preview_last_request_at IS NOT NULL
+  AND preview_last_request_at < NOW() - ($1::bigint * INTERVAL '1 second')
+ORDER BY deployments.preview_last_request_at ASC
+LIMIT 100;
 
 -- name: BuildLogsAfterCreatedAt :many
 SELECT * FROM build_logs
@@ -493,7 +605,26 @@ RETURNING *;
 SELECT verified_at FROM domains WHERE domain_name = $1;
 
 -- name: DomainUpdateDeploymentForProject :exec
-UPDATE domains SET deployment_id = $1, updated_at = NOW() WHERE project_id = $2;
+UPDATE domains SET deployment_id = $1, updated_at = NOW()
+WHERE project_id = $2 AND domain_kind = 'production';
+
+-- name: DomainUpdateDeploymentForDomainID :exec
+UPDATE domains SET deployment_id = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: DomainCreatePreview :one
+INSERT INTO domains (id, project_id, deployment_id, domain_name, verification_token, verified_at, domain_kind, preview_environment_id)
+VALUES ($1, $2, $3, $4, '', NOW(), $5, $6)
+RETURNING *;
+
+-- name: DomainFindByPreviewEnvironmentAndKind :one
+SELECT * FROM domains
+WHERE preview_environment_id = $1 AND domain_kind = $2
+LIMIT 1;
+
+-- name: DomainFindByDeploymentIDAndKind :one
+SELECT * FROM domains
+WHERE deployment_id = $1 AND domain_kind = $2
+LIMIT 1;
 
 -- name: DomainFindVerifiedByDeploymentID :many
 SELECT *
@@ -510,6 +641,7 @@ SELECT
     d.redirect_to,
     d.redirect_status_code,
     dep.wake_requested_at AS deployment_wake_requested_at,
+    dep.deployment_kind AS deployment_kind,
     (SELECT COUNT(*)::bigint FROM deployment_instances di
      INNER JOIN vms vm ON di.vm_id = vm.id AND vm.deleted_at IS NULL AND vm.status = 'running'
      WHERE di.deployment_id = d.deployment_id AND di.deleted_at IS NULL AND di.role = 'active' AND di.status = 'running') AS running_backend_count
@@ -523,6 +655,7 @@ SELECT d.domain_name,
        d.deployment_id,
        d.redirect_to,
        d.redirect_status_code,
+       COALESCE(dep.deployment_kind, 'production') AS deployment_kind,
        v.ip_address AS vm_ip,
        v.port AS vm_port,
        v.server_id,

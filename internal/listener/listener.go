@@ -118,7 +118,7 @@ func (l *Listener) setupPublication(ctx context.Context) error {
 	}
 
 	create := fmt.Sprintf(
-		"CREATE PUBLICATION %s FOR TABLE deployments, deployment_instances, projects, builds, vms, domains, servers",
+		"CREATE PUBLICATION %s FOR TABLE deployments, deployment_instances, projects, builds, vms, domains, servers, preview_environments",
 		l.cfg.PublicationName,
 	)
 	result = l.conn.Exec(ctx, create)

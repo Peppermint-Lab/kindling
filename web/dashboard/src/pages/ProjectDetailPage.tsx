@@ -4,6 +4,7 @@ import {
   api,
   type Project,
   type Deployment,
+  type PreviewEnvironment,
   type GitHubSetup,
   type GitHead,
   type ProjectDomain,
@@ -38,6 +39,7 @@ import {
   GlobeIcon,
   BarChart3Icon,
   ChevronRightIcon,
+  GitPullRequestIcon,
 } from "lucide-react"
 import { DeploymentReachability } from "@/components/deployment-reachability"
 import { phaseLabel, phaseVariant } from "@/lib/deploy-badge"
@@ -145,6 +147,23 @@ export function ProjectDetailPage() {
   const [usageLoading, setUsageLoading] = useState(false)
   const [usageWindow, setUsageWindow] = useState<"1h" | "24h" | "7d">("24h")
 
+  const [previews, setPreviews] = useState<PreviewEnvironment[]>([])
+  const [previewsLoading, setPreviewsLoading] = useState(false)
+
+  const loadPreviews = useCallback(async () => {
+    if (!id) return
+    setPreviewsLoading(true)
+    try {
+      const list = await api.listProjectPreviews(id)
+      setPreviews(list)
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not load PR previews")
+      setPreviews([])
+    } finally {
+      setPreviewsLoading(false)
+    }
+  }, [id])
+
   const loadUsage = useCallback(async () => {
     if (!id) return
     setUsageLoading(true)
@@ -168,6 +187,31 @@ export function ProjectDetailPage() {
     if (!id || mainTab !== "usage") return
     void loadUsage()
   }, [id, mainTab, loadUsage])
+
+  useEffect(() => {
+    if (!id || mainTab !== "previews") return
+    void loadPreviews()
+  }, [id, mainTab, loadPreviews])
+
+  useEffect(() => {
+    if (!id || mainTab !== "previews") return
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+    const scheduleReload = () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null
+        void loadPreviews()
+      }, 400)
+    }
+    const unsub = subscribeDashboardEvents({
+      topics: [dashboardEventTopics.project(id), dashboardEventTopics.projectDeployments(id)],
+      onInvalidate: scheduleReload,
+    })
+    return () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      unsub()
+    }
+  }, [id, mainTab, loadPreviews])
 
   const loadGitHubSetup = useCallback(async (projectId: string, hasRepo: boolean) => {
     if (!hasRepo) {
@@ -464,6 +508,10 @@ export function ProjectDetailPage() {
             <TabsTrigger value="deployments" className="shrink-0">
               <LayoutListIcon className="size-4" />
               Deployments
+            </TabsTrigger>
+            <TabsTrigger value="previews" className="shrink-0">
+              <GitPullRequestIcon className="size-4" />
+              Previews
             </TabsTrigger>
             <TabsTrigger value="usage" className="shrink-0">
               <BarChart3Icon className="size-4" />
@@ -844,6 +892,158 @@ export function ProjectDetailPage() {
                   ))}
                 </ul>
               </Surface>
+            )}
+          </TabsContent>
+
+          {/* ── PR previews ─────────────────────────────────── */}
+          <TabsContent value="previews" className="mt-5 space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-muted-foreground max-w-xl">
+                <span className="font-medium text-foreground">PR preview</span> URLs are created from GitHub{" "}
+                <code className="font-mono text-xs">pull_request</code> events when{" "}
+                <strong className="text-foreground">Preview base domain</strong> is set in{" "}
+                <Link to="/settings" className="text-primary underline-offset-4 hover:underline">
+                  Settings
+                </Link>
+                . Stable URL tracks the latest healthy deployment; immutable URLs stay on a specific revision until
+                cleanup.
+              </p>
+              <Button type="button" size="sm" variant="secondary" onClick={() => void loadPreviews()} disabled={previewsLoading}>
+                <RefreshCwIcon className={`mr-2 size-4 ${previewsLoading ? "animate-spin" : ""}`} /> Refresh
+              </Button>
+            </div>
+
+            {!project.github_repository?.trim() ? (
+              <Surface>
+                <EmptyState
+                  icon={<GitPullRequestIcon className="size-8" />}
+                  title="Link a GitHub repository"
+                  description="PR previews require a repository and the GitHub webhook (pull_request + push)."
+                  className="py-12"
+                />
+              </Surface>
+            ) : previewsLoading && previews.length === 0 ? (
+              <div className="space-y-3">
+                <Skeleton className="h-28 rounded-xl" />
+                <Skeleton className="h-28 rounded-xl" />
+              </div>
+            ) : previews.length === 0 ? (
+              <Surface>
+                <EmptyState
+                  icon={<GitPullRequestIcon className="size-8" />}
+                  title="No preview environments yet"
+                  description="Open or update a pull request on the linked repo, or confirm Settings → Preview base domain and wildcard DNS."
+                  className="py-12"
+                />
+              </Surface>
+            ) : (
+              <div className="space-y-4">
+                {previews.map((pv) => (
+                  <Surface key={pv.id}>
+                    <SurfaceHeader>
+                      <SurfaceTitle>
+                        PR #{pv.pr_number}{" "}
+                        <span className="text-muted-foreground font-normal text-sm font-mono">
+                          {pv.head_branch}:{pv.head_sha ? pv.head_sha.slice(0, 7) : "—"}
+                        </span>
+                      </SurfaceTitle>
+                      <SurfaceDescription className="flex flex-wrap gap-x-4 gap-y-1">
+                        {pv.closed_at != null && (
+                          <span>
+                            Closed:{" "}
+                            <span className="font-mono text-foreground">{new Date(pv.closed_at).toLocaleString()}</span>
+                          </span>
+                        )}
+                        {pv.expires_at != null && (
+                          <span>
+                            Cleanup:{" "}
+                            <span className="font-mono text-foreground">{new Date(pv.expires_at).toLocaleString()}</span>
+                          </span>
+                        )}
+                        {pv.latest_deployment_id != null && (
+                          <Link
+                            to={`/deployments/${pv.latest_deployment_id}`}
+                            className="text-primary underline-offset-4 hover:underline"
+                          >
+                            Latest deployment
+                          </Link>
+                        )}
+                      </SurfaceDescription>
+                    </SurfaceHeader>
+                    <SurfaceBody className="space-y-4 text-sm">
+                      {pv.stable_url != null && pv.stable_url !== "" && (
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-1">Stable URL</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <a
+                              href={pv.stable_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="font-mono text-primary break-all underline-offset-4 hover:underline"
+                            >
+                              {pv.stable_url}
+                            </a>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 shrink-0"
+                              aria-label="Copy stable URL"
+                              onClick={() => void copyText("stable", pv.stable_url ?? "")}
+                            >
+                              <CopyIcon className="size-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                      {pv.immutable_urls != null && pv.immutable_urls.length > 0 && (
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">
+                            Immutable URLs
+                          </p>
+                          <ul className="space-y-2">
+                            {pv.immutable_urls.map((row) => (
+                              <li key={`${row.url}-${row.deployment_id ?? ""}`} className="flex flex-wrap items-center gap-2 border rounded-md px-3 py-2 bg-muted/20">
+                                <a
+                                  href={row.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="font-mono text-primary break-all text-xs sm:text-sm underline-offset-4 hover:underline min-w-0 flex-1"
+                                >
+                                  {row.url}
+                                </a>
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-8 w-8 shrink-0"
+                                  aria-label="Copy URL"
+                                  onClick={() => void copyText("immutable", row.url)}
+                                >
+                                  <CopyIcon className="size-4" />
+                                </Button>
+                                {row.github_commit != null && row.github_commit !== "" && (
+                                  <span className="text-xs text-muted-foreground font-mono shrink-0">
+                                    {row.github_commit.slice(0, 7)}
+                                  </span>
+                                )}
+                                {row.deployment_id != null && (
+                                  <Link
+                                    to={`/deployments/${row.deployment_id}`}
+                                    className="text-xs text-primary underline-offset-4 hover:underline shrink-0"
+                                  >
+                                    Deployment
+                                  </Link>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </SurfaceBody>
+                  </Surface>
+                ))}
+              </div>
             )}
           </TabsContent>
 

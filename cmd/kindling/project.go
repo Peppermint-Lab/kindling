@@ -225,6 +225,7 @@ Private repositories need github_token stored encrypted in cluster_secrets (see 
 
 			q := queries.New(pool)
 			resolved := commit
+			usedRefName := ""
 			if strings.TrimSpace(resolved) == "" {
 				p, err := q.ProjectFirstByID(cmd.Context(), pgtype.UUID{Bytes: id, Valid: true})
 				if err != nil {
@@ -243,6 +244,7 @@ Private repositories need github_token stored encrypted in cluster_secrets (see 
 					return fmt.Errorf("resolve GitHub ref: %w", err)
 				}
 				resolved = sha
+				usedRefName = strings.TrimSpace(usedRef)
 				short := resolved
 				if len(short) > 7 {
 					short = short[:7]
@@ -250,10 +252,20 @@ Private repositories need github_token stored encrypted in cluster_secrets (see 
 				fmt.Fprintf(os.Stderr, "Resolved %s (%s) -> %s\n", githubapi.NormalizeRepo(repo), usedRef, short)
 			}
 
+			refName := strings.TrimSpace(ref)
+			if refName == "" {
+				refName = usedRefName
+			}
+			if refName == "" {
+				refName = "main"
+			}
 			dep, err := q.DeploymentCreate(cmd.Context(), queries.DeploymentCreateParams{
-				ID:           pgtype.UUID{Bytes: uuid.New(), Valid: true},
-				ProjectID:    pgtype.UUID{Bytes: id, Valid: true},
-				GithubCommit: resolved,
+				ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				ProjectID:            pgtype.UUID{Bytes: id, Valid: true},
+				GithubCommit:         resolved,
+				GithubBranch:         refName,
+				DeploymentKind:       "production",
+				PreviewEnvironmentID: pgtype.UUID{Valid: false},
 			})
 			if err != nil {
 				return fmt.Errorf("create deployment: %w", err)

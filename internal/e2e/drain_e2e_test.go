@@ -96,9 +96,12 @@ VALUES ($1, 'e2e-drain-a', '127.0.0.1', '10.100.0.0/20'::cidr, 'active', NOW()),
 	}
 
 	_, err = q.DeploymentCreate(ctx, queries.DeploymentCreateParams{
-		ID:           pgtype.UUID{Bytes: depID, Valid: true},
-		ProjectID:    pgtype.UUID{Bytes: projID, Valid: true},
-		GithubCommit: "deadbeef",
+		ID:                   pgtype.UUID{Bytes: depID, Valid: true},
+		ProjectID:            pgtype.UUID{Bytes: projID, Valid: true},
+		GithubCommit:         "deadbeef",
+		GithubBranch:         "main",
+		DeploymentKind:       "production",
+		PreviewEnvironmentID: pgtype.UUID{Valid: false},
 	})
 	if err != nil {
 		t.Fatalf("deployment: %v", err)

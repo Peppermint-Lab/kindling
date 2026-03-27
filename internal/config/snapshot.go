@@ -16,10 +16,12 @@ import (
 // DefaultSnapshot returns defaults used before the first successful Reload.
 func DefaultSnapshot() *Snapshot {
 	return &Snapshot{
-		RegistryURL:            "kindling",
-		EdgeHTTPAddr:           ":80",
-		ColdStartTimeout:       2 * time.Minute,
-		ScaleToZeroIdleSeconds: 300,
+		RegistryURL:                       "kindling",
+		EdgeHTTPAddr:                      ":80",
+		ColdStartTimeout:                  2 * time.Minute,
+		ScaleToZeroIdleSeconds:            300,
+		PreviewRetentionAfterCloseSeconds: 3600,
+		PreviewIdleSeconds:                300,
 	}
 }
 
@@ -35,8 +37,11 @@ type Snapshot struct {
 	ACMEEmail     string
 	ACMEStaging   bool
 
-	ColdStartTimeout       time.Duration
-	ScaleToZeroIdleSeconds int64
+	ColdStartTimeout                   time.Duration
+	ScaleToZeroIdleSeconds             int64
+	PreviewBaseDomain                 string
+	PreviewRetentionAfterCloseSeconds int64
+	PreviewIdleSeconds                int64
 
 	ServerRuntimeOverride             string
 	ServerAdvertiseHost               string
@@ -48,10 +53,12 @@ type Snapshot struct {
 // LoadSnapshot reads cluster_settings, server_settings, and cluster_secrets into a Snapshot.
 func LoadSnapshot(ctx context.Context, q *queries.Queries, serverID uuid.UUID, masterKey []byte) (*Snapshot, error) {
 	s := &Snapshot{
-		RegistryURL:            "kindling",
-		EdgeHTTPAddr:           ":80",
-		ColdStartTimeout:       2 * time.Minute,
-		ScaleToZeroIdleSeconds: 300,
+		RegistryURL:                       "kindling",
+		EdgeHTTPAddr:                      ":80",
+		ColdStartTimeout:                  2 * time.Minute,
+		ScaleToZeroIdleSeconds:            300,
+		PreviewRetentionAfterCloseSeconds: 3600,
+		PreviewIdleSeconds:                300,
 	}
 
 	rows, err := q.ClusterSettingsAll(ctx)
@@ -86,6 +93,17 @@ func LoadSnapshot(ctx context.Context, q *queries.Queries, serverID uuid.UUID, m
 	if v := strings.TrimSpace(settings[SettingScaleToZeroIdleSeconds]); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			s.ScaleToZeroIdleSeconds = n
+		}
+	}
+	s.PreviewBaseDomain = strings.TrimSpace(settings[SettingPreviewBaseDomain])
+	if v := strings.TrimSpace(settings[SettingPreviewRetentionAfterCloseSecs]); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
+			s.PreviewRetentionAfterCloseSeconds = n
+		}
+	}
+	if v := strings.TrimSpace(settings[SettingPreviewIdleSeconds]); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			s.PreviewIdleSeconds = n
 		}
 	}
 
