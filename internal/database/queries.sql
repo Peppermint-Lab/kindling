@@ -291,11 +291,28 @@ VALUES ($1, $2, $3, $4)
 ON CONFLICT (project_id, name) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
 RETURNING *;
 
+-- name: EnvironmentVariableFindAll :many
+SELECT * FROM environment_variables ORDER BY project_id, name;
+
 -- name: EnvironmentVariableFindByProjectID :many
 SELECT * FROM environment_variables WHERE project_id = $1 ORDER BY name;
 
--- name: EnvironmentVariableDelete :exec
-DELETE FROM environment_variables WHERE id = $1;
+-- name: EnvironmentVariableMetadataFindByProjectID :many
+SELECT id, project_id, name, created_at, updated_at
+FROM environment_variables
+WHERE project_id = $1
+ORDER BY name;
+
+-- name: EnvironmentVariableUpdateValue :one
+UPDATE environment_variables
+SET value = $2, updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: EnvironmentVariableDeleteByIDAndProjectID :one
+DELETE FROM environment_variables
+WHERE id = $1 AND project_id = $2
+RETURNING *;
 
 -- VMs --
 

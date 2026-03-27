@@ -8,6 +8,7 @@ import {
   type GitHubSetup,
   type GitHead,
   type ProjectDomain,
+  type ProjectSecret,
   type UsageCurrent,
   type UsageHistory,
   APIError,
@@ -40,9 +41,11 @@ import {
   BarChart3Icon,
   ChevronRightIcon,
   GitPullRequestIcon,
+  KeyRoundIcon,
 } from "lucide-react"
 import { DeploymentReachability } from "@/components/deployment-reachability"
 import { phaseLabel, phaseVariant } from "@/lib/deploy-badge"
+import { upsertProjectSecretInList } from "@/lib/project-secrets"
 import { selectLatestRunningDeployment } from "@/lib/deployment-reachability"
 import {
   PageContainer,
@@ -144,6 +147,12 @@ export function ProjectDetailPage() {
   const [newDomainName, setNewDomainName] = useState("")
   const [domainSaving, setDomainSaving] = useState(false)
   const [verifyingId, setVerifyingId] = useState<string | null>(null)
+  const [secrets, setSecrets] = useState<ProjectSecret[]>([])
+  const [secretsLoading, setSecretsLoading] = useState(false)
+  const [secretName, setSecretName] = useState("")
+  const [secretValue, setSecretValue] = useState("")
+  const [secretSaving, setSecretSaving] = useState(false)
+  const [deletingSecretId, setDeletingSecretId] = useState<string | null>(null)
 
   const [mainTab, setMainTab] = useState("overview")
   const [usageCurrent, setUsageCurrent] = useState<UsageCurrent | null>(null)
@@ -187,6 +196,19 @@ export function ProjectDetailPage() {
     }
   }, [id, usageWindow])
 
+  const loadSecrets = useCallback(async (projectId: string) => {
+    setSecretsLoading(true)
+    try {
+      const list = await api.listProjectSecrets(projectId)
+      setSecrets(list)
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not load secrets")
+      setSecrets([])
+    } finally {
+      setSecretsLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (!id || mainTab !== "usage") return
     void loadUsage()
@@ -196,6 +218,11 @@ export function ProjectDetailPage() {
     if (!id || mainTab !== "previews") return
     void loadPreviews()
   }, [id, mainTab, loadPreviews])
+
+  useEffect(() => {
+    if (!id || mainTab !== "secrets") return
+    void loadSecrets(id)
+  }, [id, mainTab, loadSecrets])
 
   useEffect(() => {
     if (!id || mainTab !== "previews") return
@@ -242,6 +269,26 @@ export function ProjectDetailPage() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!id || mainTab !== "secrets") return
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+    const scheduleReload = () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null
+        void loadSecrets(id)
+      }, 400)
+    }
+    const unsub = subscribeDashboardEvents({
+      topics: [dashboardEventTopics.project(id)],
+      onInvalidate: scheduleReload,
+    })
+    return () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      unsub()
+    }
+  }, [id, mainTab, loadSecrets])
+
   const loadProjectPage = useCallback(
     (opts?: { initial?: boolean }) => {
       if (!id) return Promise.resolve()
@@ -276,6 +323,9 @@ export function ProjectDetailPage() {
 
   useEffect(() => {
     setDeploymentsPage(1)
+    setSecrets([])
+    setSecretName("")
+    setSecretValue("")
   }, [id])
 
   useEffect(() => {
@@ -453,6 +503,38 @@ export function ProjectDetailPage() {
     }
   }
 
+  const handleSaveProjectSecret = async () => {
+    if (!id) return
+    const name = secretName.trim()
+    if (!name) return
+    setSecretSaving(true)
+    setError(null)
+    try {
+      const saved = await api.upsertProjectSecret(id, { name, value: secretValue })
+      setSecrets((current) => upsertProjectSecretInList(current, saved))
+      setSecretName("")
+      setSecretValue("")
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not save secret")
+    } finally {
+      setSecretSaving(false)
+    }
+  }
+
+  const handleDeleteProjectSecret = async (secretId: string) => {
+    if (!id) return
+    setDeletingSecretId(secretId)
+    setError(null)
+    try {
+      await api.deleteProjectSecret(id, secretId)
+      setSecrets((current) => current.filter((secret) => secret.id !== secretId))
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not delete secret")
+    } finally {
+      setDeletingSecretId(null)
+    }
+  }
+
   const handleRotateSecret = async () => {
     if (!id) return
     setRotating(true)
@@ -536,6 +618,10 @@ export function ProjectDetailPage() {
             <TabsTrigger value="github">
               <FolderGitIcon className="size-4" />
               GitHub
+            </TabsTrigger>
+            <TabsTrigger value="secrets">
+              <KeyRoundIcon className="size-4" />
+              Secrets
             </TabsTrigger>
             <TabsTrigger value="deployments">
               <LayoutListIcon className="size-4" />
@@ -913,6 +999,108 @@ export function ProjectDetailPage() {
                       </Button>
                     </div>
                   )}
+                </SurfaceBody>
+              </Surface>
+            )}
+          </TabsContent>
+
+          {/* ── Secrets ─────────────────────────────────────── */}
+          <TabsContent value="secrets" className="space-y-4 min-w-0">
+            <Surface>
+              <SurfaceHeader>
+                <SurfaceTitle>Encrypted project secrets</SurfaceTitle>
+                <SurfaceDescription>
+                  Secrets are stored encrypted at rest and injected into deployments as environment variables.
+                </SurfaceDescription>
+              </SurfaceHeader>
+              <SurfaceBody className="space-y-4">
+                <div className="grid gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.2fr)_auto] lg:items-end">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Name</Label>
+                    <Input
+                      value={secretName}
+                      onChange={(e) => setSecretName(e.target.value)}
+                      placeholder="API_KEY"
+                      className="font-mono text-sm h-9"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">New value</Label>
+                    <Input
+                      type="password"
+                      value={secretValue}
+                      onChange={(e) => setSecretValue(e.target.value)}
+                      placeholder="Enter a new value"
+                      className="font-mono text-sm h-9"
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="shrink-0"
+                    disabled={secretSaving || secretName.trim() === ""}
+                    onClick={() => void handleSaveProjectSecret()}
+                  >
+                    {secretSaving ? "Saving…" : "Save secret"}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Stored values are write-only. Replacing a secret requires entering a new value. Leaving the value blank
+                  stores an empty string.
+                </p>
+              </SurfaceBody>
+            </Surface>
+
+            {secretsLoading && secrets.length === 0 ? (
+              <div className="space-y-3">
+                <Skeleton className="h-20 rounded-xl" />
+                <Skeleton className="h-20 rounded-xl" />
+              </div>
+            ) : secrets.length === 0 ? (
+              <Surface>
+                <EmptyState
+                  icon={<KeyRoundIcon className="size-8" />}
+                  title="No secrets yet"
+                  description="Add project secrets here to inject encrypted environment variables into future deployments."
+                  className="py-12"
+                />
+              </Surface>
+            ) : (
+              <Surface>
+                <SurfaceHeader>
+                  <SurfaceTitle>Current secret names</SurfaceTitle>
+                  <SurfaceDescription>
+                    Names and timestamps are visible here, but stored values are never shown again.
+                  </SurfaceDescription>
+                </SurfaceHeader>
+                <SurfaceBody className="p-0">
+                  <ul className="divide-y">
+                    {secrets.map((secret) => (
+                      <li key={secret.id} className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="font-mono text-sm break-all">{secret.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            Updated{" "}
+                            {secret.updated_at != null && secret.updated_at !== ""
+                              ? new Date(secret.updated_at).toLocaleString()
+                              : secret.created_at != null && secret.created_at !== ""
+                                ? new Date(secret.created_at).toLocaleString()
+                                : "recently"}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="shrink-0 text-destructive border-destructive/30 hover:bg-destructive/10"
+                          disabled={deletingSecretId === secret.id}
+                          onClick={() => void handleDeleteProjectSecret(secret.id)}
+                        >
+                          {deletingSecretId === secret.id ? "Deleting…" : "Delete"}
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
                 </SurfaceBody>
               </Surface>
             )}

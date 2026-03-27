@@ -187,6 +187,13 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	if err != nil {
 		return fmt.Errorf("master key: %w", err)
 	}
+	backfilledSecrets, err := config.BackfillProjectSecrets(ctx, q, masterKey)
+	if err != nil {
+		return fmt.Errorf("backfill project secrets: %w", err)
+	}
+	if backfilledSecrets > 0 {
+		slog.Info("backfilled legacy project secrets", "count", backfilledSecrets)
+	}
 
 	cfgMgr := config.NewManager(db.Pool, serverID, masterKey)
 	if err := cfgMgr.Reload(ctx); err != nil {
@@ -291,7 +298,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 			}, nil
 		}, q, serverID, buildRunner)
 
-		deployer := deploy.New(q, db.Pool, serverID)
+		deployer := deploy.New(q, db.Pool, serverID, cfgMgr)
 		deployer.SetRuntime(rt)
 
 		deploymentReconciler = reconciler.New(reconciler.Config{

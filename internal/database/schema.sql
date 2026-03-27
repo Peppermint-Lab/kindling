@@ -195,7 +195,7 @@ CREATE TABLE IF NOT EXISTS preview_environments (
 CREATE INDEX IF NOT EXISTS idx_preview_environments_project_id ON preview_environments(project_id);
 CREATE INDEX IF NOT EXISTS idx_preview_environments_expires_at ON preview_environments(expires_at) WHERE expires_at IS NOT NULL;
 
--- Environment variables per project (values are encrypted)
+-- Environment variables per project (values stored as encrypted envelopes)
 CREATE TABLE IF NOT EXISTS environment_variables (
     id          UUID PRIMARY KEY,
     project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

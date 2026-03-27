@@ -69,6 +69,16 @@ func (m *Manager) DecryptBytes(ciphertext []byte) ([]byte, error) {
 	return DecryptClusterSecret(m.masterKey, ciphertext)
 }
 
+// EncryptProjectSecretValue encrypts a project secret into a versioned text envelope.
+func (m *Manager) EncryptProjectSecretValue(plaintext string) (string, error) {
+	return EncryptProjectSecretValue(m.masterKey, plaintext)
+}
+
+// DecryptProjectSecretValue decrypts a project secret envelope or returns legacy plaintext as-is.
+func (m *Manager) DecryptProjectSecretValue(stored string) (string, error) {
+	return DecryptProjectSecretValue(m.masterKey, stored)
+}
+
 // RunListen blocks, listening for pg_notify on kindling_config and calling Reload.
 // Use a dedicated context cancellation to stop.
 func (m *Manager) RunListen(ctx context.Context) error {

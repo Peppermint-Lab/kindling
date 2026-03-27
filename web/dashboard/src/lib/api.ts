@@ -57,6 +57,13 @@ export type Project = {
   updated_at: string
 }
 
+export type ProjectSecret = {
+  id: string
+  name: string
+  created_at?: string | null
+  updated_at?: string | null
+}
+
 export type AuthUser = {
   id: string
   email: string
@@ -435,6 +442,18 @@ export const api = {
 
   getGitHubSetup: (projectId: string) =>
     request<GitHubSetup>(`/api/projects/${projectId}/github-setup`),
+
+  listProjectSecrets: (projectId: string) =>
+    request<ProjectSecret[]>(`/api/projects/${projectId}/secrets`),
+
+  upsertProjectSecret: (projectId: string, data: { name: string; value: string }) =>
+    request<ProjectSecret>(`/api/projects/${projectId}/secrets`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  deleteProjectSecret: (projectId: string, secretId: string) =>
+    request<void>(`/api/projects/${projectId}/secrets/${secretId}`, { method: "DELETE" }),
 
   rotateWebhookSecret: (projectId: string) =>
     request<{ github_webhook_secret: string; webhook_url: string }>(

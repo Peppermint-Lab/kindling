@@ -29,15 +29,20 @@ type Deployer struct {
 	q                    *queries.Queries
 	pool                 *pgxpool.Pool
 	serverID             uuid.UUID
+	secretDecoder        projectSecretDecoder
 	deploymentReconciler *reconciler.Scheduler
 	serverScheduler      *reconciler.Scheduler
 	rt                   runtime.Runtime
 }
 
+type projectSecretDecoder interface {
+	DecryptProjectSecretValue(string) (string, error)
+}
+
 // New creates a new deployer. pool is used for transactional instance slot
 // allocation; it may be nil (best-effort single-node).
-func New(q *queries.Queries, pool *pgxpool.Pool, serverID uuid.UUID) *Deployer {
-	return &Deployer{q: q, pool: pool, serverID: serverID}
+func New(q *queries.Queries, pool *pgxpool.Pool, serverID uuid.UUID, secretDecoder projectSecretDecoder) *Deployer {
+	return &Deployer{q: q, pool: pool, serverID: serverID, secretDecoder: secretDecoder}
 }
 
 // SetRuntime sets the runtime for starting instances.
@@ -91,6 +96,24 @@ func effectiveReplicaCount(proj queries.Project, dep queries.Deployment) int32 {
 		return 0
 	}
 	return d
+}
+
+func buildRuntimeEnv(envVars []queries.EnvironmentVariable, decoder projectSecretDecoder) ([]string, error) {
+	env := make([]string, 0, len(envVars))
+	for _, ev := range envVars {
+		value := ev.Value
+		if decoder != nil {
+			plain, err := decoder.DecryptProjectSecretValue(ev.Value)
+			if err != nil {
+				return nil, fmt.Errorf("decrypt project secret %s: %w", ev.Name, err)
+			}
+			value = plain
+		} else if config.IsEncryptedProjectSecretValue(ev.Value) {
+			return nil, fmt.Errorf("decrypt project secret %s: no secret decoder configured", ev.Name)
+		}
+		env = append(env, fmt.Sprintf("%s=%s", ev.Name, value))
+	}
+	return env, nil
 }
 
 // ReconcileDeployment is the reconcile function for deployments.
@@ -184,9 +207,9 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 	if err != nil {
 		return fmt.Errorf("fetch env vars: %w", err)
 	}
-	var env []string
-	for _, ev := range envVars {
-		env = append(env, fmt.Sprintf("%s=%s", ev.Name, ev.Value))
+	env, err := buildRuntimeEnv(envVars, d.secretDecoder)
+	if err != nil {
+		return err
 	}
 
 	instList, err := d.q.DeploymentInstanceFindByDeploymentID(ctx, dep.ID)
