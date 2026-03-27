@@ -354,7 +354,7 @@ func (r *CloudHypervisorRuntime) Suspend(ctx context.Context, id uuid.UUID) erro
 	}
 	r.mu.Unlock()
 	if err := r.Stop(ctx, id); err != nil {
-		return err
+		return fmt.Errorf("stop instance for suspend: %w", err)
 	}
 	select {
 	case <-ai.stopped:
@@ -943,17 +943,17 @@ func (r *CloudHypervisorRuntime) pingVMM(ctx context.Context, apiSocket string) 
 func (r *CloudHypervisorRuntime) putVMM(ctx context.Context, apiSocket, path string, payload any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal VMM payload: %w", err)
 	}
 	client := cloudHypervisorAPIClient(apiSocket)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, "http://localhost/api/v1"+path, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return fmt.Errorf("create VMM request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("send VMM request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
@@ -973,11 +973,11 @@ func terminatePIDFromFile(path string) error {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("read PID file %s: %w", path, err)
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
 	if err != nil {
-		return err
+		return fmt.Errorf("parse PID from %s: %w", path, err)
 	}
 	return terminatePID(pid)
 }
@@ -1151,7 +1151,7 @@ func (r *CloudHypervisorRuntime) ensurePersistentVolumeDisk(ctx context.Context,
 func ensurePersistentVolumeSize(ctx context.Context, path string, sizeGB int) error {
 	currentSize, err := qcow2VirtualSize(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("read qcow2 size: %w", err)
 	}
 	targetSize := int64(sizeGB) * 1024 * 1024 * 1024
 	if currentSize >= targetSize {

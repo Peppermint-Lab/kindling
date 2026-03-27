@@ -259,7 +259,7 @@ func (d *Deployer) detachProjectVolumeIfAttached(ctx context.Context, projectID,
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
-		return err
+		return fmt.Errorf("find project volume: %w", err)
 	}
 	if !vol.AttachedVmID.Valid || vol.AttachedVmID != vmID {
 		return nil
@@ -269,10 +269,11 @@ func (d *Deployer) detachProjectVolumeIfAttached(ctx context.Context, projectID,
 		Status:    status,
 		LastError: lastError,
 	})
-	if err == nil {
-		d.publishProjectVolumeEvents(projectID)
+	if err != nil {
+		return fmt.Errorf("detach volume: %w", err)
 	}
-	return err
+	d.publishProjectVolumeEvents(projectID)
+	return nil
 }
 
 func (d *Deployer) detachProjectVolumeForInstance(ctx context.Context, inst queries.DeploymentInstance, status, lastError string) error {
@@ -281,7 +282,7 @@ func (d *Deployer) detachProjectVolumeForInstance(ctx context.Context, inst quer
 	}
 	dep, err := d.q.DeploymentFirstByID(ctx, inst.DeploymentID)
 	if err != nil {
-		return err
+		return fmt.Errorf("fetch deployment for volume detach: %w", err)
 	}
 	return d.detachProjectVolumeIfAttached(ctx, dep.ProjectID, inst.VmID, status, lastError)
 }

@@ -260,7 +260,7 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 	}
 	env, err := buildRuntimeEnv(envVars, d.secretDecoder)
 	if err != nil {
-		return err
+		return fmt.Errorf("build runtime env: %w", err)
 	}
 
 	instList, err := d.q.DeploymentInstanceFindByDeploymentID(ctx, dep.ID)
@@ -279,7 +279,7 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 	// so domains and routing metadata point at this revision.
 	if desired == 0 {
 		if err := d.scaleDownInstances(ctx, instList, 0, logger); err != nil {
-			return err
+			return fmt.Errorf("scale down instances: %w", err)
 		}
 		if !dep.RunningAt.Valid {
 			if err := d.q.DeploymentMarkRunning(ctx, dep.ID); err != nil {
@@ -312,11 +312,11 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 
 	instList, err = d.scaleDownExcess(ctx, dep.ID, instList, surgeTarget, statusMap, logger)
 	if err != nil {
-		return err
+		return fmt.Errorf("scale down excess: %w", err)
 	}
 
 	if err := d.ensureInstanceCountUp(ctx, dep.ID, int32(surgeTarget)); err != nil {
-		return err
+		return fmt.Errorf("ensure instance count: %w", err)
 	}
 
 	instList, err = d.q.DeploymentInstanceFindByDeploymentID(ctx, dep.ID)
@@ -349,7 +349,7 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 	if d.countReadyOffDrainingServers(ctx, instList, statusMap) >= int(desired) && onDraining > 0 {
 		instList, err = d.removeInstancesOnDrainingServers(ctx, dep.ID, instList, statusMap, desired, logger)
 		if err != nil {
-			return err
+			return fmt.Errorf("remove draining instances: %w", err)
 		}
 		statusMap, err = d.serverStatusByIDs(ctx, instList)
 		if err != nil {
@@ -360,7 +360,7 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 	if onDraining == 0 && d.countActiveInstances(instList) > int(desired) {
 		instList, err = d.scaleDownExcess(ctx, dep.ID, instList, int(desired), statusMap, logger)
 		if err != nil {
-			return err
+			return fmt.Errorf("scale down excess instances: %w", err)
 		}
 	}
 
@@ -608,7 +608,7 @@ func (d *Deployer) scaleDownInstances(ctx context.Context, instList []queries.De
 	}
 	refreshed, err := d.q.DeploymentInstanceFindByDeploymentID(ctx, instList[0].DeploymentID)
 	if err != nil {
-		return err
+		return fmt.Errorf("list instances after scale down: %w", err)
 	}
 	return d.pruneWarmPoolInstances(ctx, refreshed, d.retainedWarmPoolBudget())
 }
@@ -626,7 +626,7 @@ func (d *Deployer) ensureInstanceCountUp(ctx context.Context, deploymentID pgtyp
 		}
 		rows, err := qtx.DeploymentInstanceFindByDeploymentID(ctx, deploymentID)
 		if err != nil {
-			return err
+			return fmt.Errorf("list instances in tx: %w", err)
 		}
 		for d.countProvisionableInstances(rows) < int(desired) {
 			if _, err := qtx.DeploymentInstanceCreate(ctx, queries.DeploymentInstanceCreateParams{
@@ -637,14 +637,14 @@ func (d *Deployer) ensureInstanceCountUp(ctx context.Context, deploymentID pgtyp
 			}
 			rows, err = qtx.DeploymentInstanceFindByDeploymentID(ctx, deploymentID)
 			if err != nil {
-				return err
+				return fmt.Errorf("list instances after create in tx: %w", err)
 			}
 		}
 		return tx.Commit(ctx)
 	}
 	rows, err := d.q.DeploymentInstanceFindByDeploymentID(ctx, deploymentID)
 	if err != nil {
-		return err
+		return fmt.Errorf("list instances: %w", err)
 	}
 	for d.countProvisionableInstances(rows) < int(desired) {
 		if _, err := d.q.DeploymentInstanceCreate(ctx, queries.DeploymentInstanceCreateParams{
@@ -655,7 +655,7 @@ func (d *Deployer) ensureInstanceCountUp(ctx context.Context, deploymentID pgtyp
 		}
 		rows, err = d.q.DeploymentInstanceFindByDeploymentID(ctx, deploymentID)
 		if err != nil {
-			return err
+			return fmt.Errorf("list instances after create: %w", err)
 		}
 	}
 	return nil

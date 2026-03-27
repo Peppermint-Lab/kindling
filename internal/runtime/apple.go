@@ -332,7 +332,7 @@ func (r *AppleRuntime) Suspend(ctx context.Context, id uuid.UUID) error {
 	}
 	r.mu.Unlock()
 	if err := r.Stop(ctx, id); err != nil {
-		return err
+		return fmt.Errorf("stop instance for suspend: %w", err)
 	}
 	select {
 	case <-ai.stopped:
