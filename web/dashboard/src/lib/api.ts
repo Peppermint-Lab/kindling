@@ -52,6 +52,9 @@ export type Project = {
   dockerfile_path: string
   root_directory: string
   desired_instance_count?: number
+  min_instance_count?: number
+  max_instance_count?: number
+  scale_to_zero_enabled?: boolean
   build_only_on_root_changes?: boolean
   created_at: string
   updated_at: string
@@ -187,7 +190,12 @@ export type Deployment = {
   build_status?: string
   phase: string
   desired_instance_count?: number
+  min_instance_count?: number
+  max_instance_count?: number
   running_instance_count?: number
+  scaled_to_zero?: boolean
+  scale_to_zero_enabled?: boolean
+  wake_requested_at?: string | null
   blocked_reason?: string
   persistent_volume?: DeploymentPersistentVolume | null
   reachable?: DeploymentReachability | null
@@ -430,6 +438,8 @@ export type APIMeta = {
   preview_base_domain?: string
   preview_retention_after_close_seconds?: number
   preview_idle_scale_seconds?: number
+  scale_to_zero_idle_seconds?: number
+  cold_start_timeout_seconds?: number
 }
 
 export type PreviewImmutableURL = {
@@ -591,6 +601,8 @@ export const api = {
     preview_base_domain?: string
     preview_retention_after_close_seconds?: number
     preview_idle_scale_seconds?: number
+    scale_to_zero_idle_seconds?: number
+    cold_start_timeout_seconds?: number
   }) =>
     request<APIMeta>("/api/meta", {
       method: "PUT",
@@ -603,7 +615,9 @@ export const api = {
     github_repository?: string
     dockerfile_path?: string
     root_directory?: string
-    desired_instance_count?: number
+    min_instance_count?: number
+    max_instance_count?: number
+    scale_to_zero_enabled?: boolean
     build_only_on_root_changes?: boolean
   }) => request<Project>("/api/projects", { method: "POST", body: JSON.stringify(data) }),
 
@@ -626,7 +640,8 @@ export const api = {
   patchProject: (
     id: string,
     data: {
-      desired_instance_count?: number
+      min_instance_count?: number
+      max_instance_count?: number
       scale_to_zero_enabled?: boolean
       build_only_on_root_changes?: boolean
     },

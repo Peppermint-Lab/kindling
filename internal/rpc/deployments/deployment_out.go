@@ -18,29 +18,31 @@ import (
 
 // DeploymentOut is the JSON shape for deployment resources (API v0.2).
 type DeploymentOut struct {
-	ID                   string                    `json:"id"`
-	ProjectID            string                    `json:"project_id"`
-	BuildID              *string                   `json:"build_id,omitempty"`
-	ImageID              *string                   `json:"image_id,omitempty"`
-	VmID                 *string                   `json:"vm_id,omitempty"`
-	GithubCommit         string                    `json:"github_commit"`
-	RunningAt            *string                   `json:"running_at"`
-	StoppedAt            *string                   `json:"stopped_at"`
-	FailedAt             *string                   `json:"failed_at"`
-	CreatedAt            *string                   `json:"created_at"`
-	UpdatedAt            *string                   `json:"updated_at"`
-	BuildStatus          string                    `json:"build_status,omitempty"`
-	Phase                string                    `json:"phase"`
-	DesiredInstanceCount int                       `json:"desired_instance_count,omitempty"`
-	RunningInstanceCount int                       `json:"running_instance_count,omitempty"`
-	ScaledToZero         bool                      `json:"scaled_to_zero,omitempty"`
-	ScaleToZeroEnabled   bool                      `json:"scale_to_zero_enabled,omitempty"`
-	WakeRequestedAt      *string                   `json:"wake_requested_at,omitempty"`
-	DeploymentKind       string                    `json:"deployment_kind,omitempty"`
-	GithubBranch         string                    `json:"github_branch,omitempty"`
-	PreviewEnvironmentID *string                   `json:"preview_environment_id,omitempty"`
-	BlockedReason        string                    `json:"blocked_reason,omitempty"`
-	PersistentVolume     *DeploymentVolumeOut      `json:"persistent_volume,omitempty"`
+	ID                   string                     `json:"id"`
+	ProjectID            string                     `json:"project_id"`
+	BuildID              *string                    `json:"build_id,omitempty"`
+	ImageID              *string                    `json:"image_id,omitempty"`
+	VmID                 *string                    `json:"vm_id,omitempty"`
+	GithubCommit         string                     `json:"github_commit"`
+	RunningAt            *string                    `json:"running_at"`
+	StoppedAt            *string                    `json:"stopped_at"`
+	FailedAt             *string                    `json:"failed_at"`
+	CreatedAt            *string                    `json:"created_at"`
+	UpdatedAt            *string                    `json:"updated_at"`
+	BuildStatus          string                     `json:"build_status,omitempty"`
+	Phase                string                     `json:"phase"`
+	DesiredInstanceCount int                        `json:"desired_instance_count,omitempty"`
+	MinInstanceCount     int                        `json:"min_instance_count,omitempty"`
+	MaxInstanceCount     int                        `json:"max_instance_count,omitempty"`
+	RunningInstanceCount int                        `json:"running_instance_count,omitempty"`
+	ScaledToZero         bool                       `json:"scaled_to_zero,omitempty"`
+	ScaleToZeroEnabled   bool                       `json:"scale_to_zero_enabled,omitempty"`
+	WakeRequestedAt      *string                    `json:"wake_requested_at,omitempty"`
+	DeploymentKind       string                     `json:"deployment_kind,omitempty"`
+	GithubBranch         string                     `json:"github_branch,omitempty"`
+	PreviewEnvironmentID *string                    `json:"preview_environment_id,omitempty"`
+	BlockedReason        string                     `json:"blocked_reason,omitempty"`
+	PersistentVolume     *DeploymentVolumeOut       `json:"persistent_volume,omitempty"`
 	Reachable            *DeploymentReachabilityOut `json:"reachable,omitempty"`
 }
 
@@ -52,12 +54,12 @@ type DeploymentListItemOut struct {
 
 // DeploymentReachabilityOut contains reachability info for a deployment.
 type DeploymentReachabilityOut struct {
-	PublicURL           string                       `json:"public_url,omitempty"`
-	RuntimeURL          string                       `json:"runtime_url,omitempty"`
-	Domain              string                       `json:"domain,omitempty"`
-	VmIP                string                       `json:"vm_ip,omitempty"`
-	Port                *int                         `json:"port,omitempty"`
-	ProxiesToDeployment *bool                        `json:"proxies_to_deployment,omitempty"`
+	PublicURL           string                        `json:"public_url,omitempty"`
+	RuntimeURL          string                        `json:"runtime_url,omitempty"`
+	Domain              string                        `json:"domain,omitempty"`
+	VmIP                string                        `json:"vm_ip,omitempty"`
+	Port                *int                          `json:"port,omitempty"`
+	ProxiesToDeployment *bool                         `json:"proxies_to_deployment,omitempty"`
 	PublicEndpoints     []DeploymentPublicEndpointOut `json:"public_endpoints,omitempty"`
 }
 
@@ -169,6 +171,8 @@ func (h *Handler) ToOutCtx(ctx context.Context, dep queries.Deployment) Deployme
 	out.WakeRequestedAt = rpcutil.FormatTS(dep.WakeRequestedAt)
 	if proj, err := h.Q.ProjectFirstByID(ctx, dep.ProjectID); err == nil {
 		out.DesiredInstanceCount = int(proj.DesiredInstanceCount)
+		out.MinInstanceCount = int(proj.MinInstanceCount)
+		out.MaxInstanceCount = int(proj.MaxInstanceCount)
 		out.ScaledToZero = proj.ScaledToZero
 		out.ScaleToZeroEnabled = proj.ScaleToZeroEnabled
 	}
@@ -258,6 +262,8 @@ func (h *Handler) ListRowToOutCtx(ctx context.Context, row queries.DeploymentFin
 	out.WakeRequestedAt = rpcutil.FormatTS(dep.WakeRequestedAt)
 	if proj, err := h.Q.ProjectFirstByID(ctx, dep.ProjectID); err == nil {
 		out.DesiredInstanceCount = int(proj.DesiredInstanceCount)
+		out.MinInstanceCount = int(proj.MinInstanceCount)
+		out.MaxInstanceCount = int(proj.MaxInstanceCount)
 		out.ScaledToZero = proj.ScaledToZero
 		out.ScaleToZeroEnabled = proj.ScaleToZeroEnabled
 	}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/kindlingvm/kindling/internal/autoscale"
 	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/preview"
@@ -49,6 +50,19 @@ func runIdleScaleDownLoop(ctx context.Context, databaseURL string, q *queries.Qu
 				idleSeconds = cfgMgr.Snapshot().ScaleToZeroIdleSeconds
 			}
 			runIdleScaleDownOnce(ctx, databaseURL, q, deploymentReconciler, idleSeconds)
+		}
+	}
+}
+
+func runProjectAutoscaleLoop(ctx context.Context, databaseURL string, q *queries.Queries, deploymentReconciler *reconciler.Scheduler) {
+	ticker := time.NewTicker(periodicReconcileInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			autoscale.RunOnce(ctx, databaseURL, q, deploymentReconciler)
 		}
 	}
 }

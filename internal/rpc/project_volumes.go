@@ -289,8 +289,8 @@ func (a *API) putProjectVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	preDeleteBackupEnabled := req.PreDeleteBackupEnabled != nil && *req.PreDeleteBackupEnabled
-	if project.DesiredInstanceCount > 1 {
-		writeAPIError(w, http.StatusBadRequest, "validation_error", "persistent volumes require desired_instance_count <= 1")
+	if project.MaxInstanceCount > 1 {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", "persistent volumes require max_instance_count <= 1")
 		return
 	}
 	servers, err := a.q.ServerFindAll(r.Context())

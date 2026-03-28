@@ -12,7 +12,12 @@ import (
 
 func TestEffectiveReplicaCount(t *testing.T) {
 	wake := pgtype.Timestamptz{Valid: true, Time: time.Now()}
-	proj := queries.Project{DesiredInstanceCount: 3, ScaledToZero: false}
+	proj := queries.Project{
+		DesiredInstanceCount: 3,
+		MinInstanceCount:     1,
+		MaxInstanceCount:     5,
+		ScaledToZero:         false,
+	}
 	dep := queries.Deployment{}
 	if got := effectiveReplicaCount(proj, dep); got != 3 {
 		t.Fatalf("got %d want 3", got)
@@ -22,17 +27,22 @@ func TestEffectiveReplicaCount(t *testing.T) {
 		t.Fatalf("scaled_to_zero: got %d want 0", got)
 	}
 	dep.WakeRequestedAt = wake
-	if got := effectiveReplicaCount(proj, dep); got != 3 {
-		t.Fatalf("wake + scaled_to_zero: got %d want 3", got)
+	if got := effectiveReplicaCount(proj, dep); got != 1 {
+		t.Fatalf("wake + scaled_to_zero: got %d want 1", got)
 	}
 	proj.ScaledToZero = false
+	proj.MinInstanceCount = 2
 	proj.DesiredInstanceCount = 0
-	if got := effectiveReplicaCount(proj, dep); got != 1 {
-		t.Fatalf("wake + desired 0: got %d want 1", got)
+	if got := effectiveReplicaCount(proj, dep); got != 2 {
+		t.Fatalf("wake + desired 0: got %d want 2", got)
 	}
 	dep.WakeRequestedAt = pgtype.Timestamptz{}
+	if got := effectiveReplicaCount(proj, dep); got != 2 {
+		t.Fatalf("desired 0: got %d want 2", got)
+	}
+	proj.MaxInstanceCount = 0
 	if got := effectiveReplicaCount(proj, dep); got != 0 {
-		t.Fatalf("desired 0: got %d want 0", got)
+		t.Fatalf("max 0: got %d want 0", got)
 	}
 }
 

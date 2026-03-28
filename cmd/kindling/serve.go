@@ -23,11 +23,11 @@ import (
 // Serve command duration constants.
 const serverHeartbeatInterval = 10 * time.Second    // how often to write server heartbeat rows
 const componentHeartbeatInterval = 10 * time.Second // heartbeat interval for API/edge/worker components
-const usagePollerInterval = 15 * time.Second         // resource usage polling interval
-const walBackoffMax = 30 * time.Second               // max backoff for WAL listener reconnects
-const shutdownGracePeriod = 15 * time.Second         // graceful shutdown timeout for edge proxy
-const volumeRecoveryInterval = 1 * time.Minute       // volume operation recovery sweep interval
-const periodicReconcileInterval = 30 * time.Second   // interval for idle scale-down, preview cleanup, etc.
+const usagePollerInterval = 15 * time.Second        // resource usage polling interval
+const walBackoffMax = 30 * time.Second              // max backoff for WAL listener reconnects
+const shutdownGracePeriod = 15 * time.Second        // graceful shutdown timeout for edge proxy
+const volumeRecoveryInterval = 1 * time.Minute      // volume operation recovery sweep interval
+const periodicReconcileInterval = 30 * time.Second  // interval for idle scale-down, preview cleanup, etc.
 
 func serveCmd() *cobra.Command {
 	var (
@@ -237,6 +237,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 
 	// Worker background loops.
 	if components.worker {
+		go runProjectAutoscaleLoop(ctx, databaseURL, q, recs.deployment)
 		go runIdleScaleDownLoop(ctx, databaseURL, q, recs.deployment, cfgMgr)
 		go runPreviewCleanupLoop(ctx, databaseURL, q, recs.deployment)
 		go runPreviewIdleScaleDownLoop(ctx, databaseURL, q, recs.deployment, cfgMgr)

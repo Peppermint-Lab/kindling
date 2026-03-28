@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database/queries"
@@ -55,6 +56,8 @@ func (a *API) putMeta(w http.ResponseWriter, r *http.Request) {
 		PreviewBaseDomain                 *string `json:"preview_base_domain"`
 		PreviewRetentionAfterCloseSeconds *int64  `json:"preview_retention_after_close_seconds"`
 		PreviewIdleScaleSeconds           *int64  `json:"preview_idle_scale_seconds"`
+		ScaleToZeroIdleSeconds            *int64  `json:"scale_to_zero_idle_seconds"`
+		ColdStartTimeoutSeconds           *int64  `json:"cold_start_timeout_seconds"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
@@ -94,6 +97,24 @@ func (a *API) putMeta(w http.ResponseWriter, r *http.Request) {
 		if err := a.q.ClusterSettingUpsert(r.Context(), queries.ClusterSettingUpsertParams{
 			Key:   config.SettingPreviewIdleSeconds,
 			Value: strconv.FormatInt(*req.PreviewIdleScaleSeconds, 10),
+		}); err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
+			return
+		}
+	}
+	if req.ScaleToZeroIdleSeconds != nil {
+		if err := a.q.ClusterSettingUpsert(r.Context(), queries.ClusterSettingUpsertParams{
+			Key:   config.SettingScaleToZeroIdleSeconds,
+			Value: strconv.FormatInt(*req.ScaleToZeroIdleSeconds, 10),
+		}); err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
+			return
+		}
+	}
+	if req.ColdStartTimeoutSeconds != nil {
+		if err := a.q.ClusterSettingUpsert(r.Context(), queries.ClusterSettingUpsertParams{
+			Key:   config.SettingColdStartTimeout,
+			Value: (time.Duration(*req.ColdStartTimeoutSeconds) * time.Second).String(),
 		}); err != nil {
 			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
 			return
@@ -147,4 +168,26 @@ func mergePreviewMeta(ctx context.Context, q *queries.Queries, out map[string]an
 		}
 	}
 	out["preview_idle_scale_seconds"] = idle
+
+	productionIdle := int64(300)
+	if v, err := q.ClusterSettingGet(ctx, config.SettingScaleToZeroIdleSeconds); err == nil {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+				productionIdle = n
+			}
+		}
+	}
+	out["scale_to_zero_idle_seconds"] = productionIdle
+
+	coldStartSeconds := int64((2 * time.Minute) / time.Second)
+	if v, err := q.ClusterSettingGet(ctx, config.SettingColdStartTimeout); err == nil {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			if d, err := time.ParseDuration(v); err == nil && d > 0 {
+				coldStartSeconds = int64(d / time.Second)
+			}
+		}
+	}
+	out["cold_start_timeout_seconds"] = coldStartSeconds
 }

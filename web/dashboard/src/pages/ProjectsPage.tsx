@@ -38,7 +38,9 @@ export function ProjectsPage() {
     github_repository: "",
     dockerfile_path: "Dockerfile",
     root_directory: "/",
-    desired_instance_count: 1,
+    min_instance_count: 0,
+    max_instance_count: 3,
+    scale_to_zero_enabled: true,
   })
 
   const loadProjects = useCallback((opts?: { initial?: boolean }) => {
@@ -89,7 +91,9 @@ export function ProjectsPage() {
         github_repository: form.github_repository.trim() || undefined,
         dockerfile_path: form.dockerfile_path.trim() || "Dockerfile",
         root_directory: form.root_directory.trim() || "/",
-        desired_instance_count: Math.max(1, Math.floor(Number(form.desired_instance_count)) || 1),
+        min_instance_count: Math.max(0, Math.floor(Number(form.min_instance_count)) || 0),
+        max_instance_count: Math.max(0, Math.floor(Number(form.max_instance_count)) || 0),
+        scale_to_zero_enabled: form.scale_to_zero_enabled,
       })
       setDialogOpen(false)
       setForm({
@@ -97,7 +101,9 @@ export function ProjectsPage() {
         github_repository: "",
         dockerfile_path: "Dockerfile",
         root_directory: "/",
-        desired_instance_count: 1,
+        min_instance_count: 0,
+        max_instance_count: 3,
+        scale_to_zero_enabled: true,
       })
       navigate(`/projects/${project.id}`)
     } catch (e) {
@@ -228,20 +234,49 @@ export function ProjectsPage() {
                 />
               </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="instances">Desired instance count</Label>
-              <Input
-                id="instances"
-                type="number"
-                min={1}
-                className="font-mono text-sm max-w-[140px]"
-                value={form.desired_instance_count}
-                onChange={(e) =>
-                  setForm({ ...form, desired_instance_count: Number(e.target.value) || 1 })
-                }
-              />
-              <p className="text-xs text-muted-foreground">Replicas for each running deployment (default 1).</p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="min-instances">Minimum instances</Label>
+                <Input
+                  id="min-instances"
+                  type="number"
+                  min={0}
+                  className="font-mono text-sm max-w-[140px]"
+                  value={form.min_instance_count}
+                  onChange={(e) =>
+                    setForm({ ...form, min_instance_count: Math.max(0, Number(e.target.value) || 0) })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="max-instances">Maximum instances</Label>
+                <Input
+                  id="max-instances"
+                  type="number"
+                  min={0}
+                  className="font-mono text-sm max-w-[140px]"
+                  value={form.max_instance_count}
+                  onChange={(e) =>
+                    setForm({ ...form, max_instance_count: Math.max(0, Number(e.target.value) || 0) })
+                  }
+                />
+              </div>
             </div>
+            <label className="flex items-start gap-3 rounded-lg border p-3">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4"
+                checked={form.scale_to_zero_enabled}
+                onChange={(e) => setForm({ ...form, scale_to_zero_enabled: e.target.checked })}
+              />
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Allow scale to zero</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  New projects default to one warm replica after deploy, then can idle back to zero and cold-start on
+                  traffic.
+                </p>
+              </div>
+            </label>
           </div>
           <DialogFooter className="flex-col gap-2 sm:flex-row sm:gap-0">
             <Button variant="outline" onClick={() => setDialogOpen(false)}>

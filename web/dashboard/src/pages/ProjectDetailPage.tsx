@@ -164,7 +164,9 @@ export function ProjectDetailPage() {
   const [gitHeadRef, setGitHeadRef] = useState("")
   const [fetchingHeadForDialog, setFetchingHeadForDialog] = useState(false)
 
-  const [desiredInstances, setDesiredInstances] = useState(1)
+  const [minInstances, setMinInstances] = useState(0)
+  const [maxInstances, setMaxInstances] = useState(3)
+  const [scaleToZeroEnabled, setScaleToZeroEnabled] = useState(true)
   const [scalingSaving, setScalingSaving] = useState(false)
   const [buildRuleSaving, setBuildRuleSaving] = useState(false)
 
@@ -367,8 +369,9 @@ export function ProjectDetailPage() {
           setVolumeBackupRetentionCount(v?.backup_policy?.retention_count ?? 7)
           setVolumePreDeleteBackupEnabled(Boolean(v?.backup_policy?.pre_delete_backup_enabled))
           setVolumeTargetServerID(v?.server_id || "")
-          const di = p.desired_instance_count
-          setDesiredInstances(typeof di === "number" && di >= 1 ? di : 1)
+          setMinInstances(typeof p.min_instance_count === "number" && p.min_instance_count >= 0 ? p.min_instance_count : 0)
+          setMaxInstances(typeof p.max_instance_count === "number" && p.max_instance_count >= 0 ? p.max_instance_count : 3)
+          setScaleToZeroEnabled(p.scale_to_zero_enabled !== false)
           void loadGitHubSetup(id, Boolean(p.github_repository?.trim()))
           void loadDomains(id)
         })
@@ -389,6 +392,9 @@ export function ProjectDetailPage() {
 
   useEffect(() => {
     setDeploymentsPage(1)
+    setMinInstances(0)
+    setMaxInstances(3)
+    setScaleToZeroEnabled(true)
     setProjectVolume(null)
     setVolumeBackups([])
     setVolumeMountPath("/data")
@@ -536,17 +542,24 @@ export function ProjectDetailPage() {
 
   const handleSaveScaling = async () => {
     if (!id) return
-    const n = Math.max(1, Math.floor(Number(desiredInstances)) || 1)
+    const min = Math.max(0, Math.floor(Number(minInstances)) || 0)
+    const max = Math.max(0, Math.floor(Number(maxInstances)) || 0)
     setScalingSaving(true)
     setError(null)
     try {
-      const p = await api.patchProject(id, { desired_instance_count: n })
+      const p = await api.patchProject(id, {
+        min_instance_count: min,
+        max_instance_count: max,
+        scale_to_zero_enabled: scaleToZeroEnabled,
+      })
       setProject(p)
-      setDesiredInstances(p.desired_instance_count ?? n)
+      setMinInstances(p.min_instance_count ?? min)
+      setMaxInstances(p.max_instance_count ?? max)
+      setScaleToZeroEnabled(p.scale_to_zero_enabled !== false)
       const d = await api.listDeployments(id)
       setDeployments(d)
     } catch (e) {
-      setError(e instanceof APIError ? e.message : "Could not update instance count")
+      setError(e instanceof APIError ? e.message : "Could not update scaling")
     } finally {
       setScalingSaving(false)
     }
@@ -894,29 +907,68 @@ export function ProjectDetailPage() {
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Horizontal scaling</p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Desired replicas for the running deployment. Changes converge via the reconciler.
+                    Traffic autoscaling keeps the deployment between the configured minimum and maximum, with an
+                    optional idle path down to zero.
                   </p>
                 </div>
                 {latestRunningDeployment != null && (
-                  <p className="text-sm">
-                    Current:{" "}
-                    <span className="font-mono">
-                      {latestRunningDeployment.running_instance_count ?? 0} /{" "}
-                      {latestRunningDeployment.desired_instance_count ?? project.desired_instance_count ?? 1} running
-                    </span>
-                  </p>
+                  <div className="space-y-1 text-sm">
+                    <p>
+                      Current target:{" "}
+                      <span className="font-mono">
+                        {latestRunningDeployment.desired_instance_count ?? project.desired_instance_count ?? 1}
+                      </span>
+                    </p>
+                    <p>
+                      Running now:{" "}
+                      <span className="font-mono">{latestRunningDeployment.running_instance_count ?? 0}</span>
+                    </p>
+                  </div>
                 )}
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                  <div className="space-y-1 flex-1 min-w-0">
-                    <Label className="text-xs text-muted-foreground">Desired instance count</Label>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1 min-w-0">
+                    <Label className="text-xs text-muted-foreground">Minimum instances</Label>
                     <Input
                       type="number"
-                      min={1}
+                      min={0}
                       className="font-mono h-9 w-full sm:max-w-[120px]"
-                      value={desiredInstances}
-                      onChange={(e) => setDesiredInstances(Number(e.target.value))}
+                      value={minInstances}
+                      onChange={(e) => setMinInstances(Math.max(0, Number(e.target.value) || 0))}
                     />
                   </div>
+                  <div className="space-y-1 min-w-0">
+                    <Label className="text-xs text-muted-foreground">Maximum instances</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      className="font-mono h-9 w-full sm:max-w-[120px]"
+                      value={maxInstances}
+                      onChange={(e) => setMaxInstances(Math.max(0, Number(e.target.value) || 0))}
+                    />
+                  </div>
+                </div>
+                <label className="flex items-start gap-3 rounded-lg border p-3">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 size-4"
+                    checked={scaleToZeroEnabled}
+                    disabled={scalingSaving}
+                    onChange={(e) => setScaleToZeroEnabled(e.target.checked)}
+                  />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">Allow scale to zero</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      When enabled, idle production traffic can fully drain the project and the edge will wake it on
+                      the next request.
+                    </p>
+                  </div>
+                </label>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    Range: <span className="font-mono">{project.min_instance_count ?? minInstances}</span> to{" "}
+                    <span className="font-mono">{project.max_instance_count ?? maxInstances}</span>
+                    {scaleToZeroEnabled ? ", zero enabled" : ", zero disabled"}
+                  </p>
                   <Button
                     type="button"
                     size="sm"

@@ -271,8 +271,12 @@ SELECT * FROM images WHERE id = $1;
 -- Projects --
 
 -- name: ProjectCreate :one
-INSERT INTO projects (id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, build_only_on_root_changes)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO projects (
+    id, org_id, name, github_repository, github_installation_id, github_webhook_secret,
+    root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count,
+    scale_to_zero_enabled, build_only_on_root_changes
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 RETURNING *;
 
 -- name: ProjectFirstByID :one
@@ -302,10 +306,26 @@ SET desired_instance_count = $2, updated_at = NOW()
 WHERE id = $1 AND org_id = $3
 RETURNING *;
 
+-- name: ProjectSetDesiredInstanceCount :one
+UPDATE projects
+SET desired_instance_count = $2, updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
 -- name: ProjectUpdateScaleToZeroEnabled :one
 UPDATE projects
 SET scale_to_zero_enabled = $2, updated_at = NOW()
 WHERE id = $1 AND org_id = $3
+RETURNING *;
+
+-- name: ProjectUpdateScalingConfig :one
+UPDATE projects
+SET min_instance_count = $2,
+    max_instance_count = $3,
+    scale_to_zero_enabled = $4,
+    desired_instance_count = $5,
+    updated_at = NOW()
+WHERE id = $1 AND org_id = $6
 RETURNING *;
 
 -- name: ProjectUpdateBuildOnlyOnRootChanges :one
@@ -325,13 +345,16 @@ UPDATE projects
 SET scaled_to_zero = true, updated_at = NOW()
 WHERE id = $1
   AND scale_to_zero_enabled = true
-  AND desired_instance_count > 0
+  AND max_instance_count > 0
   AND scaled_to_zero = false;
+
+-- name: ProjectFindAll :many
+SELECT * FROM projects ORDER BY created_at DESC;
 
 -- name: ProjectsFindForIdleScaleDown :many
 SELECT * FROM projects
 WHERE scale_to_zero_enabled = true
-  AND desired_instance_count > 0
+  AND max_instance_count > 0
   AND scaled_to_zero = false
   AND last_request_at IS NOT NULL
   AND last_request_at < NOW() - ($1::bigint * INTERVAL '1 second')

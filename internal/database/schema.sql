@@ -176,6 +176,8 @@ CREATE TABLE IF NOT EXISTS projects (
     root_directory          TEXT NOT NULL DEFAULT '',
     dockerfile_path         TEXT NOT NULL DEFAULT 'Dockerfile',
     desired_instance_count  INT NOT NULL DEFAULT 1,
+    min_instance_count      INT NOT NULL DEFAULT 0,
+    max_instance_count      INT NOT NULL DEFAULT 3,
     last_request_at         TIMESTAMPTZ,
     scaled_to_zero          BOOLEAN NOT NULL DEFAULT false,
     scale_to_zero_enabled   BOOLEAN NOT NULL DEFAULT false,
@@ -194,9 +196,48 @@ DO $$ BEGIN
     END IF;
 END $$;
 
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'projects' AND column_name = 'min_instance_count'
+    ) THEN
+        ALTER TABLE projects ADD COLUMN min_instance_count INT;
+    END IF;
+END $$;
+
+UPDATE projects
+SET min_instance_count = desired_instance_count
+WHERE min_instance_count IS NULL;
+
+DO $$ BEGIN
+    ALTER TABLE projects ALTER COLUMN min_instance_count SET DEFAULT 0;
+    ALTER TABLE projects ALTER COLUMN min_instance_count SET NOT NULL;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'projects' AND column_name = 'max_instance_count'
+    ) THEN
+        ALTER TABLE projects ADD COLUMN max_instance_count INT;
+    END IF;
+END $$;
+
+UPDATE projects
+SET max_instance_count = GREATEST(desired_instance_count, 3)
+WHERE max_instance_count IS NULL;
+
+DO $$ BEGIN
+    ALTER TABLE projects ALTER COLUMN max_instance_count SET DEFAULT 3;
+    ALTER TABLE projects ALTER COLUMN max_instance_count SET NOT NULL;
+END $$;
+
 -- Allow scale-to-zero (0 replicas when idle-scaled)
 DO $$ BEGIN
     ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_desired_instance_count_check;
+    ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_min_instance_count_check;
+    ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_max_instance_count_check;
+    ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_instance_count_bounds_check;
 EXCEPTION WHEN undefined_object THEN NULL;
 END $$;
 
@@ -206,6 +247,33 @@ DO $$ BEGIN
     ) THEN
         ALTER TABLE projects ADD CONSTRAINT projects_desired_instance_count_check
             CHECK (desired_instance_count >= 0);
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'projects_min_instance_count_check'
+    ) THEN
+        ALTER TABLE projects ADD CONSTRAINT projects_min_instance_count_check
+            CHECK (min_instance_count >= 0);
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'projects_max_instance_count_check'
+    ) THEN
+        ALTER TABLE projects ADD CONSTRAINT projects_max_instance_count_check
+            CHECK (max_instance_count >= 0);
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'projects_instance_count_bounds_check'
+    ) THEN
+        ALTER TABLE projects ADD CONSTRAINT projects_instance_count_bounds_check
+            CHECK (min_instance_count <= max_instance_count);
     END IF;
 END $$;
 

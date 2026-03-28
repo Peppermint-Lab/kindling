@@ -3934,9 +3934,13 @@ func (q *Queries) ProjectClearScaledToZero(ctx context.Context, id pgtype.UUID) 
 
 const projectCreate = `-- name: ProjectCreate :one
 
-INSERT INTO projects (id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, build_only_on_root_changes)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at
+INSERT INTO projects (
+    id, org_id, name, github_repository, github_installation_id, github_webhook_secret,
+    root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count,
+    scale_to_zero_enabled, build_only_on_root_changes
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+RETURNING id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at
 `
 
 type ProjectCreateParams struct {
@@ -3949,6 +3953,9 @@ type ProjectCreateParams struct {
 	RootDirectory          string      `json:"root_directory"`
 	DockerfilePath         string      `json:"dockerfile_path"`
 	DesiredInstanceCount   int32       `json:"desired_instance_count"`
+	MinInstanceCount       int32       `json:"min_instance_count"`
+	MaxInstanceCount       int32       `json:"max_instance_count"`
+	ScaleToZeroEnabled     bool        `json:"scale_to_zero_enabled"`
 	BuildOnlyOnRootChanges bool        `json:"build_only_on_root_changes"`
 }
 
@@ -3964,6 +3971,9 @@ func (q *Queries) ProjectCreate(ctx context.Context, arg ProjectCreateParams) (P
 		arg.RootDirectory,
 		arg.DockerfilePath,
 		arg.DesiredInstanceCount,
+		arg.MinInstanceCount,
+		arg.MaxInstanceCount,
+		arg.ScaleToZeroEnabled,
 		arg.BuildOnlyOnRootChanges,
 	)
 	var i Project
@@ -3977,6 +3987,8 @@ func (q *Queries) ProjectCreate(ctx context.Context, arg ProjectCreateParams) (P
 		&i.RootDirectory,
 		&i.DockerfilePath,
 		&i.DesiredInstanceCount,
+		&i.MinInstanceCount,
+		&i.MaxInstanceCount,
 		&i.LastRequestAt,
 		&i.ScaledToZero,
 		&i.ScaleToZeroEnabled,
@@ -4001,8 +4013,50 @@ func (q *Queries) ProjectDeleteByIDAndOrg(ctx context.Context, arg ProjectDelete
 	return err
 }
 
+const projectFindAll = `-- name: ProjectFindAll :many
+SELECT id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at FROM projects ORDER BY created_at DESC
+`
+
+func (q *Queries) ProjectFindAll(ctx context.Context) ([]Project, error) {
+	rows, err := q.db.Query(ctx, projectFindAll)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Project{}
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Name,
+			&i.GithubRepository,
+			&i.GithubInstallationID,
+			&i.GithubWebhookSecret,
+			&i.RootDirectory,
+			&i.DockerfilePath,
+			&i.DesiredInstanceCount,
+			&i.MinInstanceCount,
+			&i.MaxInstanceCount,
+			&i.LastRequestAt,
+			&i.ScaledToZero,
+			&i.ScaleToZeroEnabled,
+			&i.BuildOnlyOnRootChanges,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const projectFindAllByOrgID = `-- name: ProjectFindAllByOrgID :many
-SELECT id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at FROM projects WHERE org_id = $1 ORDER BY created_at DESC
+SELECT id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at FROM projects WHERE org_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ProjectFindAllByOrgID(ctx context.Context, orgID pgtype.UUID) ([]Project, error) {
@@ -4024,6 +4078,8 @@ func (q *Queries) ProjectFindAllByOrgID(ctx context.Context, orgID pgtype.UUID) 
 			&i.RootDirectory,
 			&i.DockerfilePath,
 			&i.DesiredInstanceCount,
+			&i.MinInstanceCount,
+			&i.MaxInstanceCount,
 			&i.LastRequestAt,
 			&i.ScaledToZero,
 			&i.ScaleToZeroEnabled,
@@ -4042,7 +4098,7 @@ func (q *Queries) ProjectFindAllByOrgID(ctx context.Context, orgID pgtype.UUID) 
 }
 
 const projectFindByGitHubRepo = `-- name: ProjectFindByGitHubRepo :one
-SELECT id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at FROM projects WHERE github_repository = $1
+SELECT id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at FROM projects WHERE github_repository = $1
 `
 
 func (q *Queries) ProjectFindByGitHubRepo(ctx context.Context, githubRepository string) (Project, error) {
@@ -4058,6 +4114,8 @@ func (q *Queries) ProjectFindByGitHubRepo(ctx context.Context, githubRepository 
 		&i.RootDirectory,
 		&i.DockerfilePath,
 		&i.DesiredInstanceCount,
+		&i.MinInstanceCount,
+		&i.MaxInstanceCount,
 		&i.LastRequestAt,
 		&i.ScaledToZero,
 		&i.ScaleToZeroEnabled,
@@ -4069,7 +4127,7 @@ func (q *Queries) ProjectFindByGitHubRepo(ctx context.Context, githubRepository 
 }
 
 const projectFirstByID = `-- name: ProjectFirstByID :one
-SELECT id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at FROM projects WHERE id = $1
+SELECT id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at FROM projects WHERE id = $1
 `
 
 func (q *Queries) ProjectFirstByID(ctx context.Context, id pgtype.UUID) (Project, error) {
@@ -4085,6 +4143,8 @@ func (q *Queries) ProjectFirstByID(ctx context.Context, id pgtype.UUID) (Project
 		&i.RootDirectory,
 		&i.DockerfilePath,
 		&i.DesiredInstanceCount,
+		&i.MinInstanceCount,
+		&i.MaxInstanceCount,
 		&i.LastRequestAt,
 		&i.ScaledToZero,
 		&i.ScaleToZeroEnabled,
@@ -4096,7 +4156,7 @@ func (q *Queries) ProjectFirstByID(ctx context.Context, id pgtype.UUID) (Project
 }
 
 const projectFirstByIDAndOrg = `-- name: ProjectFirstByIDAndOrg :one
-SELECT id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at FROM projects WHERE id = $1 AND org_id = $2
+SELECT id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at FROM projects WHERE id = $1 AND org_id = $2
 `
 
 type ProjectFirstByIDAndOrgParams struct {
@@ -4117,6 +4177,8 @@ func (q *Queries) ProjectFirstByIDAndOrg(ctx context.Context, arg ProjectFirstBy
 		&i.RootDirectory,
 		&i.DockerfilePath,
 		&i.DesiredInstanceCount,
+		&i.MinInstanceCount,
+		&i.MaxInstanceCount,
 		&i.LastRequestAt,
 		&i.ScaledToZero,
 		&i.ScaleToZeroEnabled,
@@ -4241,7 +4303,7 @@ UPDATE projects
 SET scaled_to_zero = true, updated_at = NOW()
 WHERE id = $1
   AND scale_to_zero_enabled = true
-  AND desired_instance_count > 0
+  AND max_instance_count > 0
   AND scaled_to_zero = false
 `
 
@@ -4250,11 +4312,48 @@ func (q *Queries) ProjectMarkScaledToZero(ctx context.Context, id pgtype.UUID) e
 	return err
 }
 
+const projectSetDesiredInstanceCount = `-- name: ProjectSetDesiredInstanceCount :one
+UPDATE projects
+SET desired_instance_count = $2, updated_at = NOW()
+WHERE id = $1
+RETURNING id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at
+`
+
+type ProjectSetDesiredInstanceCountParams struct {
+	ID                   pgtype.UUID `json:"id"`
+	DesiredInstanceCount int32       `json:"desired_instance_count"`
+}
+
+func (q *Queries) ProjectSetDesiredInstanceCount(ctx context.Context, arg ProjectSetDesiredInstanceCountParams) (Project, error) {
+	row := q.db.QueryRow(ctx, projectSetDesiredInstanceCount, arg.ID, arg.DesiredInstanceCount)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.GithubRepository,
+		&i.GithubInstallationID,
+		&i.GithubWebhookSecret,
+		&i.RootDirectory,
+		&i.DockerfilePath,
+		&i.DesiredInstanceCount,
+		&i.MinInstanceCount,
+		&i.MaxInstanceCount,
+		&i.LastRequestAt,
+		&i.ScaledToZero,
+		&i.ScaleToZeroEnabled,
+		&i.BuildOnlyOnRootChanges,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const projectUpdateBuildOnlyOnRootChanges = `-- name: ProjectUpdateBuildOnlyOnRootChanges :one
 UPDATE projects
 SET build_only_on_root_changes = $2, updated_at = NOW()
 WHERE id = $1 AND org_id = $3
-RETURNING id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at
+RETURNING id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at
 `
 
 type ProjectUpdateBuildOnlyOnRootChangesParams struct {
@@ -4276,6 +4375,8 @@ func (q *Queries) ProjectUpdateBuildOnlyOnRootChanges(ctx context.Context, arg P
 		&i.RootDirectory,
 		&i.DockerfilePath,
 		&i.DesiredInstanceCount,
+		&i.MinInstanceCount,
+		&i.MaxInstanceCount,
 		&i.LastRequestAt,
 		&i.ScaledToZero,
 		&i.ScaleToZeroEnabled,
@@ -4290,7 +4391,7 @@ const projectUpdateDesiredInstanceCount = `-- name: ProjectUpdateDesiredInstance
 UPDATE projects
 SET desired_instance_count = $2, updated_at = NOW()
 WHERE id = $1 AND org_id = $3
-RETURNING id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at
+RETURNING id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at
 `
 
 type ProjectUpdateDesiredInstanceCountParams struct {
@@ -4312,6 +4413,8 @@ func (q *Queries) ProjectUpdateDesiredInstanceCount(ctx context.Context, arg Pro
 		&i.RootDirectory,
 		&i.DockerfilePath,
 		&i.DesiredInstanceCount,
+		&i.MinInstanceCount,
+		&i.MaxInstanceCount,
 		&i.LastRequestAt,
 		&i.ScaledToZero,
 		&i.ScaleToZeroEnabled,
@@ -4335,7 +4438,7 @@ const projectUpdateScaleToZeroEnabled = `-- name: ProjectUpdateScaleToZeroEnable
 UPDATE projects
 SET scale_to_zero_enabled = $2, updated_at = NOW()
 WHERE id = $1 AND org_id = $3
-RETURNING id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at
+RETURNING id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at
 `
 
 type ProjectUpdateScaleToZeroEnabledParams struct {
@@ -4357,6 +4460,60 @@ func (q *Queries) ProjectUpdateScaleToZeroEnabled(ctx context.Context, arg Proje
 		&i.RootDirectory,
 		&i.DockerfilePath,
 		&i.DesiredInstanceCount,
+		&i.MinInstanceCount,
+		&i.MaxInstanceCount,
+		&i.LastRequestAt,
+		&i.ScaledToZero,
+		&i.ScaleToZeroEnabled,
+		&i.BuildOnlyOnRootChanges,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const projectUpdateScalingConfig = `-- name: ProjectUpdateScalingConfig :one
+UPDATE projects
+SET min_instance_count = $2,
+    max_instance_count = $3,
+    scale_to_zero_enabled = $4,
+    desired_instance_count = $5,
+    updated_at = NOW()
+WHERE id = $1 AND org_id = $6
+RETURNING id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at
+`
+
+type ProjectUpdateScalingConfigParams struct {
+	ID                   pgtype.UUID `json:"id"`
+	MinInstanceCount     int32       `json:"min_instance_count"`
+	MaxInstanceCount     int32       `json:"max_instance_count"`
+	ScaleToZeroEnabled   bool        `json:"scale_to_zero_enabled"`
+	DesiredInstanceCount int32       `json:"desired_instance_count"`
+	OrgID                pgtype.UUID `json:"org_id"`
+}
+
+func (q *Queries) ProjectUpdateScalingConfig(ctx context.Context, arg ProjectUpdateScalingConfigParams) (Project, error) {
+	row := q.db.QueryRow(ctx, projectUpdateScalingConfig,
+		arg.ID,
+		arg.MinInstanceCount,
+		arg.MaxInstanceCount,
+		arg.ScaleToZeroEnabled,
+		arg.DesiredInstanceCount,
+		arg.OrgID,
+	)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.GithubRepository,
+		&i.GithubInstallationID,
+		&i.GithubWebhookSecret,
+		&i.RootDirectory,
+		&i.DockerfilePath,
+		&i.DesiredInstanceCount,
+		&i.MinInstanceCount,
+		&i.MaxInstanceCount,
 		&i.LastRequestAt,
 		&i.ScaledToZero,
 		&i.ScaleToZeroEnabled,
@@ -4371,7 +4528,7 @@ const projectUpdateWebhookSecret = `-- name: ProjectUpdateWebhookSecret :one
 UPDATE projects
 SET github_webhook_secret = $2, updated_at = NOW()
 WHERE id = $1 AND org_id = $3
-RETURNING id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at
+RETURNING id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at
 `
 
 type ProjectUpdateWebhookSecretParams struct {
@@ -4393,6 +4550,8 @@ func (q *Queries) ProjectUpdateWebhookSecret(ctx context.Context, arg ProjectUpd
 		&i.RootDirectory,
 		&i.DockerfilePath,
 		&i.DesiredInstanceCount,
+		&i.MinInstanceCount,
+		&i.MaxInstanceCount,
 		&i.LastRequestAt,
 		&i.ScaledToZero,
 		&i.ScaleToZeroEnabled,
@@ -5447,9 +5606,9 @@ func (q *Queries) ProjectVolumeUpdateStatusAndHealth(ctx context.Context, arg Pr
 }
 
 const projectsFindForIdleScaleDown = `-- name: ProjectsFindForIdleScaleDown :many
-SELECT id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at FROM projects
+SELECT id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at FROM projects
 WHERE scale_to_zero_enabled = true
-  AND desired_instance_count > 0
+  AND max_instance_count > 0
   AND scaled_to_zero = false
   AND last_request_at IS NOT NULL
   AND last_request_at < NOW() - ($1::bigint * INTERVAL '1 second')
@@ -5476,6 +5635,8 @@ func (q *Queries) ProjectsFindForIdleScaleDown(ctx context.Context, dollar_1 int
 			&i.RootDirectory,
 			&i.DockerfilePath,
 			&i.DesiredInstanceCount,
+			&i.MinInstanceCount,
+			&i.MaxInstanceCount,
 			&i.LastRequestAt,
 			&i.ScaledToZero,
 			&i.ScaleToZeroEnabled,

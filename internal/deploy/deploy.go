@@ -21,10 +21,10 @@ import (
 
 // Duration constants for the deployment reconciler.
 const buildPollRetryInterval = 10 * time.Second   // retry delay while a build is still in progress
-const reconcileRetryInterval = 5 * time.Second     // default retry for instance/volume/ready waits
-const healthCheckTimeout = 90 * time.Second        // max wait for workload health check after start/resume
-const healthCheckClientTimeout = 10 * time.Second  // per-probe HTTP client timeout
-const healthCheckPollInterval = 2 * time.Second    // sleep between successive health check probes
+const reconcileRetryInterval = 5 * time.Second    // default retry for instance/volume/ready waits
+const healthCheckTimeout = 90 * time.Second       // max wait for workload health check after start/resume
+const healthCheckClientTimeout = 10 * time.Second // per-probe HTTP client timeout
+const healthCheckPollInterval = 2 * time.Second   // sleep between successive health check probes
 
 // Deployer orchestrates deployments via reconciliation.
 type Deployer struct {
@@ -92,16 +92,36 @@ func effectiveReplicaCount(proj queries.Project, dep queries.Deployment) int32 {
 		return d
 	}
 	if dep.WakeRequestedAt.Valid {
-		d := proj.DesiredInstanceCount
-		if d < 1 {
-			return 1
-		}
-		return d
+		return nonZeroReplicaFloor(proj)
 	}
 	if proj.ScaledToZero {
 		return 0
 	}
+	return clampDesiredReplicaCount(proj)
+}
+
+func nonZeroReplicaFloor(proj queries.Project) int32 {
+	if proj.MaxInstanceCount <= 0 {
+		return 0
+	}
+	if proj.MinInstanceCount > 1 {
+		return proj.MinInstanceCount
+	}
+	return 1
+}
+
+func clampDesiredReplicaCount(proj queries.Project) int32 {
+	if proj.MaxInstanceCount <= 0 {
+		return 0
+	}
 	d := proj.DesiredInstanceCount
+	floor := nonZeroReplicaFloor(proj)
+	if d < floor {
+		d = floor
+	}
+	if d > proj.MaxInstanceCount {
+		d = proj.MaxInstanceCount
+	}
 	if d < 0 {
 		return 0
 	}
@@ -389,9 +409,6 @@ func (d *Deployer) promoteDeployment(ctx context.Context, rc *reconcileContext, 
 	}
 	return nil
 }
-
-
-
 
 func (d *Deployer) scheduleRetry(id uuid.UUID, delay time.Duration) {
 	if d.deploymentReconciler != nil {

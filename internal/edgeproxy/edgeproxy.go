@@ -27,11 +27,11 @@ import (
 )
 
 // Edge proxy duration constants.
-const defaultColdStartTimeout = 2 * time.Minute    // default cold start wait for first-request wake
-const defaultHTTPSWriteTimeout = 30 * time.Second   // HTTPS server write timeout baseline
-const coldStartMargin = 15 * time.Second             // extra margin added to HTTPS write timeout for cold starts
-const httpServerReadTimeout = 30 * time.Second       // HTTP server read timeout
-const httpServerWriteTimeout = 30 * time.Second      // HTTP server write timeout
+const defaultColdStartTimeout = 2 * time.Minute          // default cold start wait for first-request wake
+const defaultHTTPSWriteTimeout = 30 * time.Second        // HTTPS server write timeout baseline
+const coldStartMargin = 15 * time.Second                 // extra margin added to HTTPS write timeout for cold starts
+const httpServerReadTimeout = 30 * time.Second           // HTTP server read timeout
+const httpServerWriteTimeout = 30 * time.Second          // HTTP server write timeout
 const coldStartRoutePollInterval = 50 * time.Millisecond // poll interval waiting for route during cold start
 
 // edgeProxyRetryKey marks a request so we only reload-and-retry once per client request.
@@ -321,10 +321,10 @@ func (s *Service) loadRoutes(ctx context.Context) error {
 			continue
 		}
 		newRoutes[domain] = Route{
-			Backends:         bes,
-			ProjectID:        proxyProjectID[domain],
-			DeploymentID:     proxyDeploymentID[domain],
-			DeploymentKind:   proxyDeploymentKind[domain],
+			Backends:       bes,
+			ProjectID:      proxyProjectID[domain],
+			DeploymentID:   proxyDeploymentID[domain],
+			DeploymentKind: proxyDeploymentKind[domain],
 		}
 	}
 
@@ -563,9 +563,6 @@ func (s *Service) reverseProxy(w http.ResponseWriter, r *http.Request, host stri
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		statusCaptured = resp.StatusCode
 		resp.Header.Set("Server", "Kindling")
-		if resp.StatusCode >= 500 {
-			return nil
-		}
 		if strings.EqualFold(route.DeploymentKind, "preview") {
 			if depID.Valid {
 				if err := s.q.DeploymentPreviewUpdateLastRequestAt(resp.Request.Context(), depID); err != nil {

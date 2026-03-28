@@ -84,6 +84,9 @@ func projectCreateCmd() *cobra.Command {
 				RootDirectory:        rd,
 				DockerfilePath:       dfp,
 				DesiredInstanceCount: 1,
+				MinInstanceCount:     0,
+				MaxInstanceCount:     3,
+				ScaleToZeroEnabled:   true,
 			})
 			if err != nil {
 				return fmt.Errorf("create project: %w", err)

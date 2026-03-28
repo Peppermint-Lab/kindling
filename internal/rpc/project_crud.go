@@ -19,26 +19,74 @@ func projectStripSecret(p queries.Project) queries.Project {
 	return p
 }
 
-func validatePersistentVolumeReplicaCount(desired int32, volumeExists bool) error {
-	if volumeExists && desired > 1 {
-		return errors.New("persistent volumes require desired_instance_count <= 1")
+func validatePersistentVolumeScalingBounds(max int32, volumeExists bool) error {
+	if volumeExists && max > 1 {
+		return errors.New("persistent volumes require max_instance_count <= 1")
 	}
 	return nil
 }
 
-func (a *API) ensurePersistentVolumeReplicaCount(ctx context.Context, projectID pgtype.UUID, desired int32) error {
-	if desired <= 1 {
+func (a *API) ensurePersistentVolumeScalingBounds(ctx context.Context, projectID pgtype.UUID, max int32) error {
+	if max <= 1 {
 		return nil
 	}
 	_, err := a.q.ProjectVolumeFindByProjectID(ctx, projectID)
 	switch {
 	case err == nil:
-		return validatePersistentVolumeReplicaCount(desired, true)
+		return validatePersistentVolumeScalingBounds(max, true)
 	case errors.Is(err, pgx.ErrNoRows):
 		return nil
 	default:
 		return fmt.Errorf("find project volume: %w", err)
 	}
+}
+
+func validateProjectScalingBounds(min, max int32) error {
+	if min < 0 {
+		return errors.New("min_instance_count must be at least 0")
+	}
+	if max < 0 {
+		return errors.New("max_instance_count must be at least 0")
+	}
+	if min > max {
+		return errors.New("min_instance_count must be less than or equal to max_instance_count")
+	}
+	return nil
+}
+
+func nonZeroProjectReplicaFloor(min, max int32) int32 {
+	if max <= 0 {
+		return 0
+	}
+	if min > 1 {
+		return min
+	}
+	return 1
+}
+
+func initialDesiredReplicaTarget(min, max int32) int32 {
+	if max <= 0 {
+		return 0
+	}
+	target := nonZeroProjectReplicaFloor(min, max)
+	if target > max {
+		return max
+	}
+	return target
+}
+
+func clampDesiredReplicaTarget(desired, min, max int32) int32 {
+	if max <= 0 {
+		return 0
+	}
+	floor := nonZeroProjectReplicaFloor(min, max)
+	if desired < floor {
+		desired = floor
+	}
+	if desired > max {
+		desired = max
+	}
+	return desired
 }
 
 func (a *API) listProjects(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +120,8 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		DockerfilePath         string `json:"dockerfile_path"`
 		RootDirectory          string `json:"root_directory"`
 		DesiredInstanceCount   *int32 `json:"desired_instance_count"`
+		MinInstanceCount       *int32 `json:"min_instance_count"`
+		MaxInstanceCount       *int32 `json:"max_instance_count"`
 		ScaleToZeroEnabled     *bool  `json:"scale_to_zero_enabled"`
 		BuildOnlyOnRootChanges *bool  `json:"build_only_on_root_changes"`
 	}
@@ -105,13 +155,26 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		webhookSecret = s
 	}
 
-	desired := int32(1)
-	if req.DesiredInstanceCount != nil {
-		desired = *req.DesiredInstanceCount
+	minCount := int32(0)
+	if req.MinInstanceCount != nil {
+		minCount = *req.MinInstanceCount
+	} else if req.DesiredInstanceCount != nil {
+		minCount = *req.DesiredInstanceCount
 	}
-	if desired < 0 {
-		writeAPIError(w, http.StatusBadRequest, "validation_error", "desired_instance_count must be at least 0")
+	maxCount := int32(3)
+	if req.MaxInstanceCount != nil {
+		maxCount = *req.MaxInstanceCount
+	} else if minCount > maxCount {
+		maxCount = minCount
+	}
+	if err := validateProjectScalingBounds(minCount, maxCount); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
 		return
+	}
+	desiredTarget := initialDesiredReplicaTarget(minCount, maxCount)
+	scaleToZeroEnabled := true
+	if req.ScaleToZeroEnabled != nil {
+		scaleToZeroEnabled = *req.ScaleToZeroEnabled
 	}
 	params := queries.ProjectCreateParams{
 		ID:                     pgtype.UUID{Bytes: uuid.New(), Valid: true},
@@ -122,24 +185,16 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		GithubWebhookSecret:    webhookSecret,
 		RootDirectory:          req.RootDirectory,
 		DockerfilePath:         req.DockerfilePath,
-		DesiredInstanceCount:   desired,
+		DesiredInstanceCount:   desiredTarget,
+		MinInstanceCount:       minCount,
+		MaxInstanceCount:       maxCount,
+		ScaleToZeroEnabled:     scaleToZeroEnabled,
 		BuildOnlyOnRootChanges: req.BuildOnlyOnRootChanges != nil && *req.BuildOnlyOnRootChanges,
 	}
 	project, err := a.q.ProjectCreate(r.Context(), params)
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "create_project", err)
 		return
-	}
-	if req.ScaleToZeroEnabled != nil && *req.ScaleToZeroEnabled {
-		project, err = a.q.ProjectUpdateScaleToZeroEnabled(r.Context(), queries.ProjectUpdateScaleToZeroEnabledParams{
-			ID:                 project.ID,
-			ScaleToZeroEnabled: true,
-			OrgID:              p.OrganizationID,
-		})
-		if err != nil {
-			writeAPIErrorFromErr(w, http.StatusInternalServerError, "create_project", err)
-			return
-		}
 	}
 	writeJSON(w, http.StatusCreated, projectStripSecret(project))
 }
@@ -159,6 +214,8 @@ func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		DesiredInstanceCount   *int32 `json:"desired_instance_count"`
+		MinInstanceCount       *int32 `json:"min_instance_count"`
+		MaxInstanceCount       *int32 `json:"max_instance_count"`
 		ScaleToZeroEnabled     *bool  `json:"scale_to_zero_enabled"`
 		BuildOnlyOnRootChanges *bool  `json:"build_only_on_root_changes"`
 	}
@@ -166,66 +223,68 @@ func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
 		return
 	}
-	if req.DesiredInstanceCount == nil && req.ScaleToZeroEnabled == nil && req.BuildOnlyOnRootChanges == nil {
-		writeAPIError(w, http.StatusBadRequest, "validation_error", "provide desired_instance_count and/or scale_to_zero_enabled and/or build_only_on_root_changes")
+	if req.DesiredInstanceCount == nil && req.MinInstanceCount == nil && req.MaxInstanceCount == nil && req.ScaleToZeroEnabled == nil && req.BuildOnlyOnRootChanges == nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", "provide min_instance_count and/or max_instance_count and/or scale_to_zero_enabled and/or build_only_on_root_changes")
 		return
 	}
-	if _, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+	current, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
 		ID:    id,
 		OrgID: p.OrganizationID,
-	}); err != nil {
+	})
+	if err != nil {
 		writeAPIError(w, http.StatusNotFound, "not_found", "project not found")
 		return
 	}
 	var project queries.Project
-	if req.DesiredInstanceCount != nil {
-		if *req.DesiredInstanceCount < 0 {
-			writeAPIError(w, http.StatusBadRequest, "validation_error", "desired_instance_count must be at least 0")
-			return
-		}
-		if err := a.ensurePersistentVolumeReplicaCount(r.Context(), id, *req.DesiredInstanceCount); err != nil {
-			if err.Error() == "persistent volumes require desired_instance_count <= 1" {
-				writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
-				return
-			}
-			writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
-			return
-		}
-		project, err = a.q.ProjectUpdateDesiredInstanceCount(r.Context(), queries.ProjectUpdateDesiredInstanceCountParams{
-			ID:                   id,
-			DesiredInstanceCount: *req.DesiredInstanceCount,
-			OrgID:                p.OrganizationID,
-		})
-		if err != nil {
-			writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
-			return
-		}
-		if *req.DesiredInstanceCount > 0 {
-			_ = a.q.ProjectClearScaledToZero(r.Context(), id)
-		}
-	} else {
-		project, err = a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
-			ID:    id,
-			OrgID: p.OrganizationID,
-		})
-		if err != nil {
-			writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
-			return
-		}
+
+	minCount := current.MinInstanceCount
+	if req.MinInstanceCount != nil {
+		minCount = *req.MinInstanceCount
+	} else if req.DesiredInstanceCount != nil {
+		minCount = *req.DesiredInstanceCount
 	}
-	if req.ScaleToZeroEnabled != nil {
-		project, err = a.q.ProjectUpdateScaleToZeroEnabled(r.Context(), queries.ProjectUpdateScaleToZeroEnabledParams{
-			ID:                 id,
-			ScaleToZeroEnabled: *req.ScaleToZeroEnabled,
-			OrgID:              p.OrganizationID,
-		})
-		if err != nil {
-			writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
+	maxCount := current.MaxInstanceCount
+	if req.MaxInstanceCount != nil {
+		maxCount = *req.MaxInstanceCount
+	} else if req.DesiredInstanceCount != nil && maxCount < *req.DesiredInstanceCount {
+		maxCount = *req.DesiredInstanceCount
+	}
+	if err := validateProjectScalingBounds(minCount, maxCount); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+	if err := a.ensurePersistentVolumeScalingBounds(r.Context(), id, maxCount); err != nil {
+		if err.Error() == "persistent volumes require max_instance_count <= 1" {
+			writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
 			return
 		}
-		if !*req.ScaleToZeroEnabled {
-			_ = a.q.ProjectClearScaledToZero(r.Context(), id)
-		}
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
+		return
+	}
+
+	scaleToZeroEnabled := current.ScaleToZeroEnabled
+	if req.ScaleToZeroEnabled != nil {
+		scaleToZeroEnabled = *req.ScaleToZeroEnabled
+	}
+	desiredTarget := clampDesiredReplicaTarget(current.DesiredInstanceCount, minCount, maxCount)
+
+	project, err = a.q.ProjectUpdateScalingConfig(r.Context(), queries.ProjectUpdateScalingConfigParams{
+		ID:                   id,
+		MinInstanceCount:     minCount,
+		MaxInstanceCount:     maxCount,
+		ScaleToZeroEnabled:   scaleToZeroEnabled,
+		DesiredInstanceCount: desiredTarget,
+		OrgID:                p.OrganizationID,
+	})
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
+		return
+	}
+	if desiredTarget > 0 {
+		_ = a.q.ProjectClearScaledToZero(r.Context(), id)
+	}
+	if req.ScaleToZeroEnabled != nil && !*req.ScaleToZeroEnabled {
+		_ = a.q.ProjectClearScaledToZero(r.Context(), id)
 	}
 	if req.BuildOnlyOnRootChanges != nil {
 		project, err = a.q.ProjectUpdateBuildOnlyOnRootChanges(r.Context(), queries.ProjectUpdateBuildOnlyOnRootChangesParams{

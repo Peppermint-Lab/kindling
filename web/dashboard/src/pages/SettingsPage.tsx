@@ -110,6 +110,8 @@ export function SettingsPage() {
   const [previewBaseDomainInput, setPreviewBaseDomainInput] = useState("")
   const [previewRetentionInput, setPreviewRetentionInput] = useState("3600")
   const [previewIdleInput, setPreviewIdleInput] = useState("300")
+  const [scaleToZeroIdleInput, setScaleToZeroIdleInput] = useState("300")
+  const [coldStartTimeoutInput, setColdStartTimeoutInput] = useState("120")
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -150,6 +152,8 @@ export function SettingsPage() {
     setPreviewBaseDomainInput(m?.preview_base_domain || "")
     setPreviewRetentionInput(String(m?.preview_retention_after_close_seconds ?? 3600))
     setPreviewIdleInput(String(m?.preview_idle_scale_seconds ?? 300))
+    setScaleToZeroIdleInput(String(m?.scale_to_zero_idle_seconds ?? 300))
+    setColdStartTimeoutInput(String(m?.cold_start_timeout_seconds ?? 120))
     setProviders(p as ProviderRow[])
     setPublicAuthProviders(authEnabled)
     setIdentities(linkedIdentities)
@@ -210,6 +214,8 @@ export function SettingsPage() {
         preview_base_domain: previewBaseDomainInput.trim(),
         preview_retention_after_close_seconds: Number.parseInt(previewRetentionInput, 10) || 0,
         preview_idle_scale_seconds: Number.parseInt(previewIdleInput, 10) || 300,
+        scale_to_zero_idle_seconds: Number.parseInt(scaleToZeroIdleInput, 10) || 300,
+        cold_start_timeout_seconds: Number.parseInt(coldStartTimeoutInput, 10) || 120,
       })
       setMeta(m)
       setPublicUrlInput(m.public_base_url || "")
@@ -217,6 +223,8 @@ export function SettingsPage() {
       setPreviewBaseDomainInput(m.preview_base_domain || "")
       setPreviewRetentionInput(String(m.preview_retention_after_close_seconds ?? 3600))
       setPreviewIdleInput(String(m.preview_idle_scale_seconds ?? 300))
+      setScaleToZeroIdleInput(String(m.scale_to_zero_idle_seconds ?? 300))
+      setColdStartTimeoutInput(String(m.cold_start_timeout_seconds ?? 120))
     } catch (e) {
       setError(e instanceof APIError ? e.message : String(e))
     } finally {
@@ -359,6 +367,30 @@ export function SettingsPage() {
                         onChange={(e) => setPreviewIdleInput(e.target.value)}
                       />
                       <p className="text-[11px] text-muted-foreground">How long an active preview can sit idle before Kindling scales it to zero.</p>
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="prod-idle">Production idle scale-down (seconds)</Label>
+                      <Input
+                        id="prod-idle"
+                        type="number"
+                        min={1}
+                        className="font-mono text-sm"
+                        value={scaleToZeroIdleInput}
+                        onChange={(e) => setScaleToZeroIdleInput(e.target.value)}
+                      />
+                      <p className="text-[11px] text-muted-foreground">How long a production project may sit idle before the edge marks it eligible for scale-to-zero.</p>
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="cold-start-timeout">Cold start timeout (seconds)</Label>
+                      <Input
+                        id="cold-start-timeout"
+                        type="number"
+                        min={1}
+                        className="font-mono text-sm"
+                        value={coldStartTimeoutInput}
+                        onChange={(e) => setColdStartTimeoutInput(e.target.value)}
+                      />
+                      <p className="text-[11px] text-muted-foreground">How long the edge waits for a scaled-to-zero deployment to come back before returning service unavailable.</p>
                     </div>
                   </div>
                 </div>

@@ -222,6 +222,8 @@ type Project struct {
 	RootDirectory          string             `json:"root_directory"`
 	DockerfilePath         string             `json:"dockerfile_path"`
 	DesiredInstanceCount   int32              `json:"desired_instance_count"`
+	MinInstanceCount       int32              `json:"min_instance_count"`
+	MaxInstanceCount       int32              `json:"max_instance_count"`
 	LastRequestAt          pgtype.Timestamptz `json:"last_request_at"`
 	ScaledToZero           bool               `json:"scaled_to_zero"`
 	ScaleToZeroEnabled     bool               `json:"scale_to_zero_enabled"`
