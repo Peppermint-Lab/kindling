@@ -146,15 +146,23 @@ func rootDirectoryMatchesChangedFiles(rootDir string, files []string) bool {
 	return false
 }
 
-func shouldCreateDeploymentForPush(project queries.Project, push pushEvent) bool {
-	if !project.BuildOnlyOnRootChanges {
+func shouldCreateDeploymentForRoot(rootDirectory string, buildOnlyOnRootChanges bool, push pushEvent) bool {
+	if !buildOnlyOnRootChanges {
 		return true
 	}
 	changedFiles, ok := pushChangedFiles(push)
 	if !ok {
 		return true
 	}
-	return rootDirectoryMatchesChangedFiles(project.RootDirectory, changedFiles)
+	return rootDirectoryMatchesChangedFiles(rootDirectory, changedFiles)
+}
+
+func shouldCreateDeploymentForPush(project queries.Project, push pushEvent) bool {
+	return shouldCreateDeploymentForRoot(project.RootDirectory, project.BuildOnlyOnRootChanges, push)
+}
+
+func shouldCreateDeploymentForService(service queries.Service, push pushEvent) bool {
+	return shouldCreateDeploymentForRoot(service.RootDirectory, service.BuildOnlyOnRootChanges, push)
 }
 
 // ServeHTTP handles POST /webhooks/github.
@@ -221,56 +229,83 @@ func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request, body []byte
 		}
 	}
 
-	if !shouldCreateDeploymentForPush(project, push) {
-		slog.Info("deployment skipped from webhook: no root directory changes",
+	services, err := h.q.ServiceListByProjectID(r.Context(), project.ID)
+	if err != nil {
+		slog.Error("failed to load services for webhook push", "project", project.Name, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	type createdDeployment struct {
+		ServiceID    string `json:"service_id"`
+		ServiceName  string `json:"service_name"`
+		DeploymentID string `json:"deployment_id"`
+	}
+	type skippedService struct {
+		ServiceID     string `json:"service_id"`
+		ServiceName   string `json:"service_name"`
+		RootDirectory string `json:"root_directory"`
+	}
+	created := make([]createdDeployment, 0, len(services))
+	skipped := make([]skippedService, 0, len(services))
+	for _, service := range services {
+		if !shouldCreateDeploymentForService(service, push) {
+			slog.Info("service deployment skipped from webhook: no root directory changes",
+				"project", project.Name,
+				"service", service.Name,
+				"repo", repo,
+				"branch", branch,
+				"commit", commit,
+				"root_directory", service.RootDirectory,
+			)
+			skipped = append(skipped, skippedService{
+				ServiceID:     uuid.UUID(service.ID.Bytes).String(),
+				ServiceName:   service.Name,
+				RootDirectory: service.RootDirectory,
+			})
+			continue
+		}
+		dep, err := h.q.DeploymentCreate(r.Context(), queries.DeploymentCreateParams{
+			ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			ProjectID:            project.ID,
+			ServiceID:            service.ID,
+			GithubCommit:         commit,
+			GithubBranch:         branch,
+			DeploymentKind:       "production",
+			PreviewEnvironmentID: pgtype.UUID{Valid: false},
+		})
+		if err != nil {
+			slog.Error("failed to create service deployment from webhook", "project", project.Name, "service", service.Name, "error", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		slog.Info("service deployment created from webhook",
+			"deployment_id", dep.ID,
 			"project", project.Name,
-			"repo", repo,
-			"branch", branch,
+			"service", service.Name,
 			"commit", commit,
-			"root_directory", project.RootDirectory,
 		)
+		created = append(created, createdDeployment{
+			ServiceID:    uuid.UUID(service.ID.Bytes).String(),
+			ServiceName:  service.Name,
+			DeploymentID: uuid.UUID(dep.ID.Bytes).String(),
+		})
+	}
+	if len(created) == 0 {
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]any{
-			"project":        project.Name,
-			"commit":         commit,
-			"skipped":        true,
-			"root_directory": project.RootDirectory,
+			"project":          project.Name,
+			"commit":           commit,
+			"skipped":          true,
+			"skipped_services": skipped,
 		})
 		return
 	}
-	service, err := h.q.ServicePrimaryByProjectID(r.Context(), project.ID)
-	if err != nil {
-		slog.Error("failed to load primary service", "project", project.Name, "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	dep, err := h.q.DeploymentCreate(r.Context(), queries.DeploymentCreateParams{
-		ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
-		ProjectID:            project.ID,
-		ServiceID:            service.ID,
-		GithubCommit:         commit,
-		GithubBranch:         branch,
-		DeploymentKind:       "production",
-		PreviewEnvironmentID: pgtype.UUID{Valid: false},
-	})
-	if err != nil {
-		slog.Error("failed to create deployment", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	slog.Info("deployment created from webhook",
-		"deployment_id", dep.ID,
-		"project", project.Name,
-		"commit", commit,
-	)
-
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]any{
-		"deployment_id": dep.ID,
-		"project":       project.Name,
-		"commit":        commit,
+		"project":          project.Name,
+		"commit":           commit,
+		"deployments":      created,
+		"skipped_services": skipped,
 	})
 }
 
