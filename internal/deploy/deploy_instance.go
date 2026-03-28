@@ -317,16 +317,7 @@ func (d *Deployer) startNewInstance(
 		return err
 	}
 
-	if requiresExternalHealthCheck(d.rt.Name()) && !d.waitHealthCheckLocalForwarded(ip, healthCheckTimeout) {
-		_ = d.rt.Stop(ctx, instID)
-		_, _ = d.q.DeploymentInstanceUpdateStatus(ctx, queries.DeploymentInstanceUpdateStatusParams{
-			ID:     inst.ID,
-			Status: "failed",
-		})
-		return fmt.Errorf("health check failed")
-	}
-
-	vmID, err := d.persistInstanceVMMetadata(ctx, d.q, inst.ID, dep.ImageID, pguuid.FromPgtype(inst.ServerID), ip, 1, 512, env, meta)
+	vmID, err := d.persistInstanceVMMetadata(ctx, d.q, inst.ID, dep.ImageID, pguuid.FromPgtype(inst.ServerID), "starting", "starting", ip, 1, 512, env, meta)
 	if err != nil {
 		_ = d.rt.Stop(ctx, instID)
 		_, _ = d.q.DeploymentInstanceUpdateStatus(ctx, queries.DeploymentInstanceUpdateStatusParams{
@@ -334,6 +325,39 @@ func (d *Deployer) startNewInstance(
 			Status: "failed",
 		})
 		return fmt.Errorf("persist vm metadata: %w", err)
+	}
+	if requiresExternalHealthCheck(d.rt.Name()) && !d.waitHealthCheckLocalForwarded(ip, healthCheckTimeout) {
+		_ = d.rt.Stop(ctx, instID)
+		_ = d.q.VMSoftDelete(ctx, pguuid.ToPgtype(vmID))
+		_, _ = d.q.DeploymentInstanceUpdateStatus(ctx, queries.DeploymentInstanceUpdateStatusParams{
+			ID:     inst.ID,
+			Status: "failed",
+		})
+		return fmt.Errorf("health check failed")
+	}
+	if _, err := d.q.VMUpdateStatus(ctx, queries.VMUpdateStatusParams{
+		ID:     pguuid.ToPgtype(vmID),
+		Status: "running",
+	}); err != nil {
+		_ = d.rt.Stop(ctx, instID)
+		_ = d.q.VMSoftDelete(ctx, pguuid.ToPgtype(vmID))
+		_, _ = d.q.DeploymentInstanceUpdateStatus(ctx, queries.DeploymentInstanceUpdateStatusParams{
+			ID:     inst.ID,
+			Status: "failed",
+		})
+		return fmt.Errorf("mark vm running: %w", err)
+	}
+	if _, err := d.q.DeploymentInstanceUpdateStatus(ctx, queries.DeploymentInstanceUpdateStatusParams{
+		ID:     inst.ID,
+		Status: "running",
+	}); err != nil {
+		_ = d.rt.Stop(ctx, instID)
+		_ = d.q.VMSoftDelete(ctx, pguuid.ToPgtype(vmID))
+		_, _ = d.q.DeploymentInstanceUpdateStatus(ctx, queries.DeploymentInstanceUpdateStatusParams{
+			ID:     inst.ID,
+			Status: "failed",
+		})
+		return fmt.Errorf("mark deployment instance running: %w", err)
 	}
 	if persistentVolume != nil {
 		if _, err := d.q.ProjectVolumeAttachVM(ctx, queries.ProjectVolumeAttachVMParams{

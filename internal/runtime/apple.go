@@ -72,11 +72,12 @@ type appleTemplate struct {
 }
 
 type guestConfig struct {
-	Env      []string `json:"env"`
-	IPAddr   string   `json:"ip_addr"`
-	IPGW     string   `json:"ip_gw"`
-	Hostname string   `json:"hostname"`
-	Port     int      `json:"port"`
+	Env        []string `json:"env"`
+	IPAddr     string   `json:"ip_addr"`
+	IPGW       string   `json:"ip_gw"`
+	DNSServers []string `json:"dns_servers"`
+	Hostname   string   `json:"hostname"`
+	Port       int      `json:"port"`
 }
 
 // AppleRuntimeConfig holds configuration for the Apple runtime.

@@ -439,6 +439,29 @@ RETURNING s.*;
 -- name: ServiceEndpointListByServiceID :many
 SELECT * FROM service_endpoints WHERE service_id = $1 ORDER BY created_at ASC;
 
+-- name: ServiceEndpointDNSLookupCandidates :many
+SELECT
+    se.id AS endpoint_id,
+    se.name AS endpoint_name,
+    se.protocol AS endpoint_protocol,
+    se.target_port AS endpoint_target_port,
+    se.visibility AS endpoint_visibility,
+    se.private_ip AS endpoint_private_ip,
+    s.id AS service_id,
+    s.slug AS service_slug,
+    p.id AS project_id,
+    p.name AS project_name,
+    o.id AS organization_id,
+    o.slug AS organization_slug
+FROM service_endpoints se
+JOIN services s ON s.id = se.service_id
+JOIN projects p ON p.id = s.project_id
+JOIN organizations o ON o.id = p.org_id
+WHERE LOWER(se.name) = LOWER($1)
+  AND s.slug = $2
+  AND o.slug = $3
+ORDER BY p.created_at ASC, s.created_at ASC, se.created_at ASC;
+
 -- name: ServiceEndpointCreate :one
 WITH svc AS (
     SELECT s.id, p.org_id
@@ -926,6 +949,13 @@ RETURNING *;
 -- name: VMFirstByID :one
 SELECT * FROM vms WHERE id = $1;
 
+-- name: VMFindByIPAddress :one
+SELECT * FROM vms
+WHERE ip_address = $1
+  AND deleted_at IS NULL
+ORDER BY created_at DESC
+LIMIT 1;
+
 -- name: VMUpdateStatus :one
 UPDATE vms SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING *;
 
@@ -1089,6 +1119,30 @@ WHERE service_id = $1
 ORDER BY running_at DESC
 LIMIT 1;
 
+-- name: DeploymentLatestRunningPreviewByServiceAndPreviewEnvironmentID :one
+SELECT * FROM deployments
+WHERE service_id = $1
+  AND preview_environment_id = $2
+  AND deployment_kind = 'preview'
+  AND running_at IS NOT NULL
+  AND stopped_at IS NULL
+  AND failed_at IS NULL
+  AND deleted_at IS NULL
+ORDER BY running_at DESC
+LIMIT 1;
+
+-- name: DeploymentRunningBackendIPs :many
+SELECT DISTINCT vm.ip_address
+FROM deployment_instances di
+JOIN vms vm ON vm.id = di.vm_id
+WHERE di.deployment_id = $1
+  AND di.deleted_at IS NULL
+  AND di.role = 'active'
+  AND di.status = 'running'
+  AND vm.deleted_at IS NULL
+  AND vm.status = 'running'
+ORDER BY vm.ip_address;
+
 -- name: DeploymentFindRecentWithProject :many
 SELECT
     d.id,
@@ -1194,6 +1248,11 @@ RETURNING *;
 
 -- name: PreviewEnvironmentsByProjectID :many
 SELECT * FROM preview_environments WHERE project_id = $1 ORDER BY updated_at DESC;
+
+-- name: PreviewEnvironmentsByProjectAndPRNumber :many
+SELECT * FROM preview_environments
+WHERE project_id = $1 AND pr_number = $2
+ORDER BY updated_at DESC;
 
 -- name: PreviewImmutableDomainsByProjectID :many
 SELECT

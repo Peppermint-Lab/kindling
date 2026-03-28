@@ -64,6 +64,8 @@ func (d *Deployer) persistInstanceVMMetadata(
 	instanceID pgtype.UUID,
 	imageID pgtype.UUID,
 	serverID uuid.UUID,
+	vmStatus string,
+	instanceStatus string,
 	runtimeAddr string,
 	vcpus int,
 	memoryMB int,
@@ -96,7 +98,7 @@ func (d *Deployer) persistInstanceVMMetadata(
 		ID:              pguuid.ToPgtype(vmID),
 		ServerID:        pguuid.ToPgtype(serverID),
 		ImageID:         imageID,
-		Status:          "running",
+		Status:          vmStatus,
 		Runtime:         meta.Runtime,
 		SnapshotRef:     pgtype.Text{String: meta.SnapshotRef, Valid: strings.TrimSpace(meta.SnapshotRef) != ""},
 		SharedRootfsRef: meta.SharedRootfsRef,
@@ -113,7 +115,7 @@ func (d *Deployer) persistInstanceVMMetadata(
 	if _, err := store.DeploymentInstanceAttachVM(ctx, queries.DeploymentInstanceAttachVMParams{
 		ID:     instanceID,
 		VmID:   pguuid.ToPgtype(vmID),
-		Status: "running",
+		Status: instanceStatus,
 	}); err != nil {
 		_ = store.VMSoftDelete(ctx, pguuid.ToPgtype(vmID))
 		return uuid.Nil, fmt.Errorf("attach vm to deployment instance: %w", err)

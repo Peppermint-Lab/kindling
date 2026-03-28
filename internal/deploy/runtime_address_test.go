@@ -99,6 +99,8 @@ func TestPersistInstanceVMMetadata(t *testing.T) {
 		pguuid.ToPgtype(instanceID),
 		pguuid.ToPgtype(imageID),
 		serverID,
+		"starting",
+		"starting",
 		"127.0.0.1:32768",
 		1,
 		512,
@@ -127,8 +129,8 @@ func TestPersistInstanceVMMetadata(t *testing.T) {
 	if store.createArg.ImageID != pguuid.ToPgtype(imageID) {
 		t.Fatalf("image_id = %+v, want %+v", store.createArg.ImageID, pguuid.ToPgtype(imageID))
 	}
-	if store.createArg.Status != "running" {
-		t.Fatalf("status = %q, want running", store.createArg.Status)
+	if store.createArg.Status != "starting" {
+		t.Fatalf("status = %q, want starting", store.createArg.Status)
 	}
 	if store.createArg.Runtime != "cloud-hypervisor" {
 		t.Fatalf("runtime = %q, want cloud-hypervisor", store.createArg.Runtime)
@@ -139,8 +141,8 @@ func TestPersistInstanceVMMetadata(t *testing.T) {
 	if store.createArg.CloneSourceVmID.Valid {
 		t.Fatalf("clone_source_vm_id = %+v, want invalid", store.createArg.CloneSourceVmID)
 	}
-	if store.attachArg.Status != "running" {
-		t.Fatalf("attach status = %q, want running", store.attachArg.Status)
+	if store.attachArg.Status != "starting" {
+		t.Fatalf("attach status = %q, want starting", store.attachArg.Status)
 	}
 	if store.attachArg.ID != pguuid.ToPgtype(instanceID) {
 		t.Fatalf("attach instance id mismatch")
@@ -177,6 +179,8 @@ func TestPersistInstanceVMMetadataSoftDeletesVMWhenAttachFails(t *testing.T) {
 		pguuid.ToPgtype(instanceID),
 		pguuid.ToPgtype(imageID),
 		serverID,
+		"starting",
+		"starting",
 		"127.0.0.1:32768",
 		1,
 		512,
@@ -214,6 +218,8 @@ func TestPersistInstanceVMMetadataStoresCloneLineage(t *testing.T) {
 		pguuid.ToPgtype(instanceID),
 		pguuid.ToPgtype(imageID),
 		serverID,
+		"starting",
+		"starting",
 		"127.0.0.1:32768",
 		1,
 		512,

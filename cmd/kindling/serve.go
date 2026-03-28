@@ -169,6 +169,9 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 			return werr
 		}
 		rt, deployer, recs = w.rt, w.deployer, w.recs
+		if err := startWorkerInternalDNS(ctx, q, rt); err != nil {
+			return err
+		}
 		if shouldStopWorkloadsOnShutdown() {
 			defer rt.StopAll()
 		} else {

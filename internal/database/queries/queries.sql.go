@@ -1681,6 +1681,51 @@ func (q *Queries) DeploymentLatestRunningByServiceID(ctx context.Context, servic
 	return i, err
 }
 
+const deploymentLatestRunningPreviewByServiceAndPreviewEnvironmentID = `-- name: DeploymentLatestRunningPreviewByServiceAndPreviewEnvironmentID :one
+SELECT id, project_id, service_id, build_id, image_id, vm_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
+WHERE service_id = $1
+  AND preview_environment_id = $2
+  AND deployment_kind = 'preview'
+  AND running_at IS NOT NULL
+  AND stopped_at IS NULL
+  AND failed_at IS NULL
+  AND deleted_at IS NULL
+ORDER BY running_at DESC
+LIMIT 1
+`
+
+type DeploymentLatestRunningPreviewByServiceAndPreviewEnvironmentIDParams struct {
+	ServiceID            pgtype.UUID `json:"service_id"`
+	PreviewEnvironmentID pgtype.UUID `json:"preview_environment_id"`
+}
+
+func (q *Queries) DeploymentLatestRunningPreviewByServiceAndPreviewEnvironmentID(ctx context.Context, arg DeploymentLatestRunningPreviewByServiceAndPreviewEnvironmentIDParams) (Deployment, error) {
+	row := q.db.QueryRow(ctx, deploymentLatestRunningPreviewByServiceAndPreviewEnvironmentID, arg.ServiceID, arg.PreviewEnvironmentID)
+	var i Deployment
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServiceID,
+		&i.BuildID,
+		&i.ImageID,
+		&i.VmID,
+		&i.GithubCommit,
+		&i.GithubBranch,
+		&i.DeploymentKind,
+		&i.PreviewEnvironmentID,
+		&i.PreviewLastRequestAt,
+		&i.PreviewScaledToZero,
+		&i.RunningAt,
+		&i.StoppedAt,
+		&i.FailedAt,
+		&i.DeletedAt,
+		&i.WakeRequestedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const deploymentMarkRunning = `-- name: DeploymentMarkRunning :exec
 UPDATE deployments SET running_at = NOW(), updated_at = NOW() WHERE id = $1
 `
@@ -1768,6 +1813,39 @@ func (q *Queries) DeploymentRequestWake(ctx context.Context, id pgtype.UUID) (De
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const deploymentRunningBackendIPs = `-- name: DeploymentRunningBackendIPs :many
+SELECT DISTINCT vm.ip_address
+FROM deployment_instances di
+JOIN vms vm ON vm.id = di.vm_id
+WHERE di.deployment_id = $1
+  AND di.deleted_at IS NULL
+  AND di.role = 'active'
+  AND di.status = 'running'
+  AND vm.deleted_at IS NULL
+  AND vm.status = 'running'
+ORDER BY vm.ip_address
+`
+
+func (q *Queries) DeploymentRunningBackendIPs(ctx context.Context, deploymentID pgtype.UUID) ([]netip.Addr, error) {
+	rows, err := q.db.Query(ctx, deploymentRunningBackendIPs, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []netip.Addr{}
+	for rows.Next() {
+		var ip_address netip.Addr
+		if err := rows.Scan(&ip_address); err != nil {
+			return nil, err
+		}
+		items = append(items, ip_address)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const deploymentUpdateBuild = `-- name: DeploymentUpdateBuild :one
@@ -4314,6 +4392,51 @@ func (q *Queries) PreviewEnvironmentUpdateHead(ctx context.Context, arg PreviewE
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const previewEnvironmentsByProjectAndPRNumber = `-- name: PreviewEnvironmentsByProjectAndPRNumber :many
+SELECT id, project_id, service_id, provider, pr_number, head_branch, head_sha, latest_deployment_id, stable_domain_name, closed_at, expires_at, created_at, updated_at FROM preview_environments
+WHERE project_id = $1 AND pr_number = $2
+ORDER BY updated_at DESC
+`
+
+type PreviewEnvironmentsByProjectAndPRNumberParams struct {
+	ProjectID pgtype.UUID `json:"project_id"`
+	PrNumber  int32       `json:"pr_number"`
+}
+
+func (q *Queries) PreviewEnvironmentsByProjectAndPRNumber(ctx context.Context, arg PreviewEnvironmentsByProjectAndPRNumberParams) ([]PreviewEnvironment, error) {
+	rows, err := q.db.Query(ctx, previewEnvironmentsByProjectAndPRNumber, arg.ProjectID, arg.PrNumber)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PreviewEnvironment{}
+	for rows.Next() {
+		var i PreviewEnvironment
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.ServiceID,
+			&i.Provider,
+			&i.PrNumber,
+			&i.HeadBranch,
+			&i.HeadSha,
+			&i.LatestDeploymentID,
+			&i.StableDomainName,
+			&i.ClosedAt,
+			&i.ExpiresAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const previewEnvironmentsByProjectID = `-- name: PreviewEnvironmentsByProjectID :many
@@ -7031,6 +7154,84 @@ func (q *Queries) ServiceEndpointCreate(ctx context.Context, arg ServiceEndpoint
 	return i, err
 }
 
+const serviceEndpointDNSLookupCandidates = `-- name: ServiceEndpointDNSLookupCandidates :many
+SELECT
+    se.id AS endpoint_id,
+    se.name AS endpoint_name,
+    se.protocol AS endpoint_protocol,
+    se.target_port AS endpoint_target_port,
+    se.visibility AS endpoint_visibility,
+    se.private_ip AS endpoint_private_ip,
+    s.id AS service_id,
+    s.slug AS service_slug,
+    p.id AS project_id,
+    p.name AS project_name,
+    o.id AS organization_id,
+    o.slug AS organization_slug
+FROM service_endpoints se
+JOIN services s ON s.id = se.service_id
+JOIN projects p ON p.id = s.project_id
+JOIN organizations o ON o.id = p.org_id
+WHERE LOWER(se.name) = LOWER($1)
+  AND s.slug = $2
+  AND o.slug = $3
+ORDER BY p.created_at ASC, s.created_at ASC, se.created_at ASC
+`
+
+type ServiceEndpointDNSLookupCandidatesParams struct {
+	Lower  string `json:"lower"`
+	Slug   string `json:"slug"`
+	Slug_2 string `json:"slug_2"`
+}
+
+type ServiceEndpointDNSLookupCandidatesRow struct {
+	EndpointID         pgtype.UUID `json:"endpoint_id"`
+	EndpointName       string      `json:"endpoint_name"`
+	EndpointProtocol   string      `json:"endpoint_protocol"`
+	EndpointTargetPort int32       `json:"endpoint_target_port"`
+	EndpointVisibility string      `json:"endpoint_visibility"`
+	EndpointPrivateIp  netip.Addr  `json:"endpoint_private_ip"`
+	ServiceID          pgtype.UUID `json:"service_id"`
+	ServiceSlug        string      `json:"service_slug"`
+	ProjectID          pgtype.UUID `json:"project_id"`
+	ProjectName        string      `json:"project_name"`
+	OrganizationID     pgtype.UUID `json:"organization_id"`
+	OrganizationSlug   string      `json:"organization_slug"`
+}
+
+func (q *Queries) ServiceEndpointDNSLookupCandidates(ctx context.Context, arg ServiceEndpointDNSLookupCandidatesParams) ([]ServiceEndpointDNSLookupCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, serviceEndpointDNSLookupCandidates, arg.Lower, arg.Slug, arg.Slug_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ServiceEndpointDNSLookupCandidatesRow{}
+	for rows.Next() {
+		var i ServiceEndpointDNSLookupCandidatesRow
+		if err := rows.Scan(
+			&i.EndpointID,
+			&i.EndpointName,
+			&i.EndpointProtocol,
+			&i.EndpointTargetPort,
+			&i.EndpointVisibility,
+			&i.EndpointPrivateIp,
+			&i.ServiceID,
+			&i.ServiceSlug,
+			&i.ProjectID,
+			&i.ProjectName,
+			&i.OrganizationID,
+			&i.OrganizationSlug,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const serviceEndpointListByServiceID = `-- name: ServiceEndpointListByServiceID :many
 SELECT id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname, last_healthy_at, last_unhealthy_at, created_at, updated_at FROM service_endpoints WHERE service_id = $1 ORDER BY created_at ASC
 `
@@ -7835,6 +8036,38 @@ func (q *Queries) VMCreate(ctx context.Context, arg VMCreateParams) (Vm, error) 
 		arg.Port,
 		arg.EnvVariables,
 	)
+	var i Vm
+	err := row.Scan(
+		&i.ID,
+		&i.ServerID,
+		&i.ImageID,
+		&i.Status,
+		&i.Runtime,
+		&i.SnapshotRef,
+		&i.SharedRootfsRef,
+		&i.CloneSourceVmID,
+		&i.Vcpus,
+		&i.Memory,
+		&i.IpAddress,
+		&i.Port,
+		&i.EnvVariables,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const vMFindByIPAddress = `-- name: VMFindByIPAddress :one
+SELECT id, server_id, image_id, status, runtime, snapshot_ref, shared_rootfs_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at FROM vms
+WHERE ip_address = $1
+  AND deleted_at IS NULL
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) VMFindByIPAddress(ctx context.Context, ipAddress netip.Addr) (Vm, error) {
+	row := q.db.QueryRow(ctx, vMFindByIPAddress, ipAddress)
 	var i Vm
 	err := row.Scan(
 		&i.ID,

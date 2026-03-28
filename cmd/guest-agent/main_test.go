@@ -50,3 +50,15 @@ func TestNetworkCommandsBringUpLoopbackBeforeEth0(t *testing.T) {
 		t.Fatalf("unexpected command list:\nwant: %#v\ngot:  %#v", want, got)
 	}
 }
+
+func TestRenderResolvConfPrefersConfiguredDNSServers(t *testing.T) {
+	cfg := &ConfigResponse{
+		DNSServers: []string{"10.0.0.1", "1.1.1.1"},
+	}
+
+	got := renderResolvConf(cfg)
+	want := "nameserver 10.0.0.1\nnameserver 1.1.1.1\n"
+	if got != want {
+		t.Fatalf("unexpected resolv.conf contents:\nwant: %q\ngot:  %q", want, got)
+	}
+}

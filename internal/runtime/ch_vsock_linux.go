@@ -23,6 +23,7 @@ type guestConfig struct {
 	Env             []string `json:"env"`
 	IPAddr          string   `json:"ip_addr"`
 	IPGW            string   `json:"ip_gw"`
+	DNSServers      []string `json:"dns_servers"`
 	Hostname        string   `json:"hostname"`
 	Port            int      `json:"port"`
 	VolumeMountPath string   `json:"volume_mount_path,omitempty"`
@@ -39,11 +40,12 @@ func (r *CloudHypervisorRuntime) startGuestVsockServer(ctx context.Context, inst
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /config", func(w http.ResponseWriter, _ *http.Request) {
 		cfg := guestConfig{
-			Env:      envWithPort(inst.Env, port),
-			IPAddr:   guestCIDR,
-			IPGW:     hostIP,
-			Hostname: fmt.Sprintf("kindling-%s", inst.ID.String()[:8]),
-			Port:     port,
+			Env:        envWithPort(inst.Env, port),
+			IPAddr:     guestCIDR,
+			IPGW:       hostIP,
+			DNSServers: []string{hostIP, "1.1.1.1", "8.8.8.8"},
+			Hostname:   fmt.Sprintf("kindling-%s", inst.ID.String()[:8]),
+			Port:       port,
 		}
 		if inst.PersistentVolume != nil {
 			cfg.VolumeMountPath = inst.PersistentVolume.MountPath

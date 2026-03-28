@@ -44,6 +44,7 @@ type ConfigResponse struct {
 	Env             []string `json:"env"`
 	IPAddr          string   `json:"ip_addr"`
 	IPGW            string   `json:"ip_gw"`
+	DNSServers      []string `json:"dns_servers"`
 	Hostname        string   `json:"hostname"`
 	Port            int      `json:"port"`
 	VolumeMountPath string   `json:"volume_mount_path"`
@@ -197,7 +198,9 @@ func configureNetwork(cfg *ConfigResponse) error {
 	}
 
 	os.MkdirAll("/etc", 0o755)
-	os.WriteFile("/etc/resolv.conf", []byte("nameserver 8.8.8.8\nnameserver 1.1.1.1\n"), 0o644)
+	if err := os.WriteFile("/etc/resolv.conf", []byte(renderResolvConf(cfg)), 0o644); err != nil {
+		return fmt.Errorf("write resolv.conf: %w", err)
+	}
 
 	return nil
 }
@@ -218,6 +221,28 @@ func networkCommands(cfg *ConfigResponse) []commandSpec {
 	}
 
 	return cmds
+}
+
+func renderResolvConf(cfg *ConfigResponse) string {
+	servers := cfg.DNSServers
+	if len(servers) == 0 {
+		servers = []string{"8.8.8.8", "1.1.1.1"}
+	}
+	var b strings.Builder
+	for _, server := range servers {
+		server = strings.TrimSpace(server)
+		if server == "" {
+			continue
+		}
+		b.WriteString("nameserver ")
+		b.WriteString(server)
+		b.WriteByte('\n')
+	}
+	if b.Len() == 0 {
+		b.WriteString("nameserver 8.8.8.8\n")
+		b.WriteString("nameserver 1.1.1.1\n")
+	}
+	return b.String()
 }
 
 func startLogStream() io.Writer {
