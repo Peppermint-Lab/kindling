@@ -154,3 +154,34 @@ func TestShouldCreateDeploymentForPush(t *testing.T) {
 		t.Fatalf("expected deploy when changed files are ambiguous")
 	}
 }
+
+func TestShouldCreateDeploymentForService(t *testing.T) {
+	t.Parallel()
+
+	push := pushEvent{
+		Commits: []pushCommit{
+			{Modified: []string{"services/api/server.ts", "docs/notes.md"}},
+		},
+	}
+
+	if !shouldCreateDeploymentForService(queries.Service{
+		RootDirectory:          "/services/api",
+		BuildOnlyOnRootChanges: true,
+	}, push) {
+		t.Fatalf("expected service deploy when files changed under the service root")
+	}
+
+	if shouldCreateDeploymentForService(queries.Service{
+		RootDirectory:          "/services/worker",
+		BuildOnlyOnRootChanges: true,
+	}, push) {
+		t.Fatalf("expected service deploy to be skipped when files changed outside the service root")
+	}
+
+	if !shouldCreateDeploymentForService(queries.Service{
+		RootDirectory:          "/services/worker",
+		BuildOnlyOnRootChanges: false,
+	}, push) {
+		t.Fatalf("expected service deploy when smart-build is disabled")
+	}
+}

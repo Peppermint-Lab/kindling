@@ -60,6 +60,34 @@ func (a *API) listProjectVolumeBackups(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+func (a *API) listServiceVolumeBackups(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	ctx, vol, ok := a.serviceVolumeContextForRequest(w, r, p.OrganizationID)
+	if !ok {
+		return
+	}
+	if vol == nil {
+		writeAPIError(w, http.StatusNotFound, "not_found", "service volume not found")
+		return
+	}
+	backups, err := a.q.ProjectVolumeBackupFindByProjectID(r.Context(), ctx.Project.ID)
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "list_service_volume_backups", err)
+		return
+	}
+	out := make([]projectVolumeBackupOut, 0, len(backups))
+	for _, backup := range backups {
+		if backup.ProjectVolumeID != vol.ID {
+			continue
+		}
+		out = append(out, projectVolumeBackupToOut(backup))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (a *API) postProjectVolumeBackup(w http.ResponseWriter, r *http.Request) {
 	p, ok := mustPrincipal(w, r)
 	if !ok {
@@ -104,6 +132,49 @@ func (a *API) postProjectVolumeBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.publishProjectVolumeTopics(uuid.UUID(projectID.Bytes))
+	writeJSON(w, http.StatusAccepted, projectVolumeOperationToOut(op))
+}
+
+func (a *API) postServiceVolumeBackup(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !requireOrgAdmin(w, p) {
+		return
+	}
+	ctx, vol, currentOp, ok := a.serviceVolumeReadyForOperation(w, r, p.OrganizationID, "backup")
+	if !ok {
+		_ = currentOp
+		return
+	}
+	if !vol.ServerID.Valid {
+		writeAPIError(w, http.StatusConflict, "volume_unavailable", "volume is not pinned to a worker yet")
+		return
+	}
+	if err := a.ensureVolumeBackupStoreConfigured(); err != nil {
+		writeAPIError(w, http.StatusConflict, "backup_store_unavailable", err.Error())
+		return
+	}
+	backup, err := a.q.ProjectVolumeBackupCreate(r.Context(), queries.ProjectVolumeBackupCreateParams{
+		ID:              pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		ProjectVolumeID: vol.ID,
+		Kind:            "manual",
+		Metadata:        []byte(`{}`),
+	})
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "create_service_volume_backup", err)
+		return
+	}
+	op, err := a.enqueueProjectVolumeOperation(r.Context(), vol, vol.ServerID, "backup", projectVolumeOperationRequest{
+		BackupID:   pguuid.ToString(backup.ID),
+		BackupKind: "manual",
+	}, "backing_up")
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "create_service_volume_backup", err)
+		return
+	}
+	a.publishProjectVolumeTopics(uuid.UUID(ctx.Project.ID.Bytes))
 	writeJSON(w, http.StatusAccepted, projectVolumeOperationToOut(op))
 }
 
@@ -170,6 +241,65 @@ func (a *API) postProjectVolumeRestore(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, projectVolumeOperationToOut(op))
 }
 
+func (a *API) postServiceVolumeRestore(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !requireOrgAdmin(w, p) {
+		return
+	}
+	ctx, vol, _, ok := a.serviceVolumeReadyForOperation(w, r, p.OrganizationID, "restore")
+	if !ok {
+		return
+	}
+	if err := a.ensureVolumeBackupStoreConfigured(); err != nil {
+		writeAPIError(w, http.StatusConflict, "backup_store_unavailable", err.Error())
+		return
+	}
+	var req struct {
+		BackupID       string `json:"backup_id"`
+		TargetServerID string `json:"target_server_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
+		return
+	}
+	backupID, err := uuid.Parse(strings.TrimSpace(req.BackupID))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", "backup_id is required")
+		return
+	}
+	backup, err := a.q.ProjectVolumeBackupFindByID(r.Context(), pgtype.UUID{Bytes: backupID, Valid: true})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeAPIError(w, http.StatusNotFound, "not_found", "backup not found")
+			return
+		}
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "restore_service_volume", err)
+		return
+	}
+	if backup.ProjectVolumeID != vol.ID {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", "backup does not belong to this service volume")
+		return
+	}
+	targetServer, err := a.selectProjectVolumeTargetServer(r.Context(), strings.TrimSpace(req.TargetServerID), vol.ServerID, true)
+	if err != nil {
+		writeAPIError(w, http.StatusConflict, "volume_unavailable", err.Error())
+		return
+	}
+	op, err := a.enqueueProjectVolumeOperation(r.Context(), vol, targetServer.ID, "restore", projectVolumeOperationRequest{
+		BackupID:       backupID.String(),
+		TargetServerID: pguuid.ToString(targetServer.ID),
+	}, "restoring")
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "restore_service_volume", err)
+		return
+	}
+	a.publishProjectVolumeTopics(uuid.UUID(ctx.Project.ID.Bytes))
+	writeJSON(w, http.StatusAccepted, projectVolumeOperationToOut(op))
+}
+
 func (a *API) postProjectVolumeMove(w http.ResponseWriter, r *http.Request) {
 	p, ok := mustPrincipal(w, r)
 	if !ok {
@@ -223,6 +353,55 @@ func (a *API) postProjectVolumeMove(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, projectVolumeOperationToOut(op))
 }
 
+func (a *API) postServiceVolumeMove(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !requireOrgAdmin(w, p) {
+		return
+	}
+	ctx, vol, _, ok := a.serviceVolumeReadyForOperation(w, r, p.OrganizationID, "move")
+	if !ok {
+		return
+	}
+	if !vol.ServerID.Valid {
+		writeAPIError(w, http.StatusConflict, "volume_unavailable", "volume is not pinned to a worker yet")
+		return
+	}
+	if err := a.ensureVolumeBackupStoreConfigured(); err != nil {
+		writeAPIError(w, http.StatusConflict, "backup_store_unavailable", err.Error())
+		return
+	}
+	var req struct {
+		TargetServerID string `json:"target_server_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
+		return
+	}
+	targetServer, err := a.selectProjectVolumeTargetServer(r.Context(), strings.TrimSpace(req.TargetServerID), vol.ServerID, false)
+	if err != nil {
+		writeAPIError(w, http.StatusConflict, "volume_unavailable", err.Error())
+		return
+	}
+	if targetServer.ID == vol.ServerID {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", "volume is already pinned to that server")
+		return
+	}
+	op, err := a.enqueueProjectVolumeOperation(r.Context(), vol, vol.ServerID, "move", projectVolumeOperationRequest{
+		TargetServerID: pguuid.ToString(targetServer.ID),
+		SourceServerID: pguuid.ToString(vol.ServerID),
+		Stage:          "upload",
+	}, "restoring")
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "move_service_volume", err)
+		return
+	}
+	a.publishProjectVolumeTopics(uuid.UUID(ctx.Project.ID.Bytes))
+	writeJSON(w, http.StatusAccepted, projectVolumeOperationToOut(op))
+}
+
 func (a *API) postProjectVolumeRepair(w http.ResponseWriter, r *http.Request) {
 	p, ok := mustPrincipal(w, r)
 	if !ok {
@@ -252,6 +431,31 @@ func (a *API) postProjectVolumeRepair(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, projectVolumeOperationToOut(op))
 }
 
+func (a *API) postServiceVolumeRepair(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !requireOrgAdmin(w, p) {
+		return
+	}
+	ctx, vol, _, ok := a.serviceVolumeReadyForOperation(w, r, p.OrganizationID, "repair")
+	if !ok {
+		return
+	}
+	if !vol.ServerID.Valid {
+		writeAPIError(w, http.StatusConflict, "volume_unavailable", "volume is not pinned to a worker yet")
+		return
+	}
+	op, err := a.enqueueProjectVolumeOperation(r.Context(), vol, vol.ServerID, "repair", projectVolumeOperationRequest{}, "repairing")
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "repair_service_volume", err)
+		return
+	}
+	a.publishProjectVolumeTopics(uuid.UUID(ctx.Project.ID.Bytes))
+	writeJSON(w, http.StatusAccepted, projectVolumeOperationToOut(op))
+}
+
 func (a *API) projectVolumeReadyForOperation(w http.ResponseWriter, r *http.Request, projectID pgtype.UUID, action string) (queries.ProjectVolume, *queries.ProjectVolumeOperation, bool) {
 	vol, err := a.q.ProjectVolumeFindByProjectID(r.Context(), projectID)
 	if err != nil {
@@ -278,6 +482,33 @@ func (a *API) projectVolumeReadyForOperation(w http.ResponseWriter, r *http.Requ
 		return queries.ProjectVolume{}, nil, false
 	}
 	return vol, nil, true
+}
+
+func (a *API) serviceVolumeReadyForOperation(w http.ResponseWriter, r *http.Request, orgID pgtype.UUID, action string) (serviceRequestContext, queries.ProjectVolume, *queries.ProjectVolumeOperation, bool) {
+	ctx, vol, ok := a.serviceVolumeContextForRequest(w, r, orgID)
+	if !ok {
+		return serviceRequestContext{}, queries.ProjectVolume{}, nil, false
+	}
+	if vol == nil {
+		writeAPIError(w, http.StatusNotFound, "not_found", "service volume not found")
+		return serviceRequestContext{}, queries.ProjectVolume{}, nil, false
+	}
+	if vol.Status == "attached" || vol.AttachedVmID.Valid {
+		writeAPIError(w, http.StatusConflict, "volume_attached", "detach the volume before starting this operation")
+		return serviceRequestContext{}, queries.ProjectVolume{}, nil, false
+	}
+	if isProjectVolumeTransitionalStatus(vol.Status) {
+		writeAPIError(w, http.StatusConflict, "volume_busy", "another volume operation is already in progress")
+		return serviceRequestContext{}, queries.ProjectVolume{}, nil, false
+	}
+	if op, err := a.q.ProjectVolumeOperationFindCurrentByVolumeID(r.Context(), vol.ID); err == nil {
+		writeAPIError(w, http.StatusConflict, "volume_busy", "another volume operation is already in progress")
+		return serviceRequestContext{}, queries.ProjectVolume{}, &op, false
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, action+"_service_volume", err)
+		return serviceRequestContext{}, queries.ProjectVolume{}, nil, false
+	}
+	return ctx, *vol, nil, true
 }
 
 func (a *API) enqueueProjectVolumeOperation(ctx context.Context, vol queries.ProjectVolume, serverID pgtype.UUID, kind string, req projectVolumeOperationRequest, volumeStatus string) (queries.ProjectVolumeOperation, error) {

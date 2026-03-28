@@ -4,6 +4,7 @@ package deployments
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/rpc/rpcutil"
+	"github.com/kindlingvm/kindling/internal/shared/netnames"
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
@@ -20,6 +22,7 @@ import (
 type DeploymentOut struct {
 	ID                   string                     `json:"id"`
 	ProjectID            string                     `json:"project_id"`
+	ServiceID            *string                    `json:"service_id,omitempty"`
 	BuildID              *string                    `json:"build_id,omitempty"`
 	ImageID              *string                    `json:"image_id,omitempty"`
 	VmID                 *string                    `json:"vm_id,omitempty"`
@@ -42,6 +45,7 @@ type DeploymentOut struct {
 	GithubBranch         string                     `json:"github_branch,omitempty"`
 	PreviewEnvironmentID *string                    `json:"preview_environment_id,omitempty"`
 	BlockedReason        string                     `json:"blocked_reason,omitempty"`
+	ServiceName          string                     `json:"service_name,omitempty"`
 	PersistentVolume     *DeploymentVolumeOut       `json:"persistent_volume,omitempty"`
 	Reachable            *DeploymentReachabilityOut `json:"reachable,omitempty"`
 }
@@ -54,13 +58,14 @@ type DeploymentListItemOut struct {
 
 // DeploymentReachabilityOut contains reachability info for a deployment.
 type DeploymentReachabilityOut struct {
-	PublicURL           string                        `json:"public_url,omitempty"`
-	RuntimeURL          string                        `json:"runtime_url,omitempty"`
-	Domain              string                        `json:"domain,omitempty"`
-	VmIP                string                        `json:"vm_ip,omitempty"`
-	Port                *int                          `json:"port,omitempty"`
-	ProxiesToDeployment *bool                         `json:"proxies_to_deployment,omitempty"`
-	PublicEndpoints     []DeploymentPublicEndpointOut `json:"public_endpoints,omitempty"`
+	PublicURL           string                         `json:"public_url,omitempty"`
+	RuntimeURL          string                         `json:"runtime_url,omitempty"`
+	Domain              string                         `json:"domain,omitempty"`
+	VmIP                string                         `json:"vm_ip,omitempty"`
+	Port                *int                           `json:"port,omitempty"`
+	ProxiesToDeployment *bool                          `json:"proxies_to_deployment,omitempty"`
+	PublicEndpoints     []DeploymentPublicEndpointOut  `json:"public_endpoints,omitempty"`
+	PrivateEndpoints    []DeploymentPrivateEndpointOut `json:"private_endpoints,omitempty"`
 }
 
 // DeploymentVolumeOut contains volume info for a deployment.
@@ -84,6 +89,15 @@ type DeploymentPublicEndpointOut struct {
 	RedirectTo          string `json:"redirect_to,omitempty"`
 	RedirectStatusCode  *int   `json:"redirect_status_code,omitempty"`
 	ProxiesToDeployment *bool  `json:"proxies_to_deployment,omitempty"`
+}
+
+type DeploymentPrivateEndpointOut struct {
+	Name       string `json:"name"`
+	Protocol   string `json:"protocol"`
+	Port       int32  `json:"port"`
+	Visibility string `json:"visibility"`
+	PrivateIP  string `json:"private_ip"`
+	DNSName    string `json:"dns_name"`
 }
 
 func deploymentVolumeToOut(v queries.ProjectVolume) DeploymentVolumeOut {
@@ -124,6 +138,30 @@ func decorateDeploymentOutWithVolume(out *DeploymentOut, dep queries.Deployment,
 	}
 }
 
+func deploymentDesiredReplicaCount(proj queries.Project, service *queries.Service) int {
+	if service != nil && service.DesiredInstanceCount > 0 {
+		return int(service.DesiredInstanceCount)
+	}
+	return int(proj.DesiredInstanceCount)
+}
+
+func (h *Handler) deploymentVolume(ctx context.Context, dep queries.Deployment) (*queries.ProjectVolume, error) {
+	if dep.ServiceID.Valid {
+		vol, err := h.Q.ProjectVolumeFindByServiceID(ctx, dep.ServiceID)
+		if err == nil {
+			return &vol, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+	}
+	vol, err := h.Q.ProjectVolumeFindByProjectID(ctx, dep.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	return &vol, nil
+}
+
 // DeploymentToOut converts a deployment and optional build/reachability into the API output.
 func DeploymentToOut(dep queries.Deployment, build *queries.Build, reachable *DeploymentReachabilityOut) DeploymentOut {
 	var bs string
@@ -133,6 +171,7 @@ func DeploymentToOut(dep queries.Deployment, build *queries.Build, reachable *De
 	out := DeploymentOut{
 		ID:           pguuid.ToString(dep.ID),
 		ProjectID:    pguuid.ToString(dep.ProjectID),
+		ServiceID:    rpcutil.OptionalUUIDString(dep.ServiceID),
 		BuildID:      rpcutil.OptionalUUIDString(dep.BuildID),
 		ImageID:      rpcutil.OptionalUUIDString(dep.ImageID),
 		VmID:         rpcutil.OptionalUUIDString(dep.VmID),
@@ -169,15 +208,22 @@ func (h *Handler) ToOutCtx(ctx context.Context, dep queries.Deployment) Deployme
 	}
 	out := DeploymentToOut(dep, build, h.reachability(ctx, dep))
 	out.WakeRequestedAt = rpcutil.FormatTS(dep.WakeRequestedAt)
+	var service *queries.Service
 	if proj, err := h.Q.ProjectFirstByID(ctx, dep.ProjectID); err == nil {
-		out.DesiredInstanceCount = int(proj.DesiredInstanceCount)
 		out.MinInstanceCount = int(proj.MinInstanceCount)
 		out.MaxInstanceCount = int(proj.MaxInstanceCount)
 		out.ScaledToZero = proj.ScaledToZero
 		out.ScaleToZeroEnabled = proj.ScaleToZeroEnabled
+		if dep.ServiceID.Valid {
+			if svc, err := h.Q.ServiceFirstByID(ctx, dep.ServiceID); err == nil {
+				service = &svc
+				out.ServiceName = svc.Name
+			}
+		}
+		out.DesiredInstanceCount = deploymentDesiredReplicaCount(proj, service)
 	}
-	if vol, err := h.Q.ProjectVolumeFindByProjectID(ctx, dep.ProjectID); err == nil {
-		decorateDeploymentOutWithVolume(&out, dep, &vol)
+	if vol, err := h.deploymentVolume(ctx, dep); err == nil {
+		decorateDeploymentOutWithVolume(&out, dep, vol)
 	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		// Ignore volume lookup failures and preserve deployment response.
 	}
@@ -241,6 +287,7 @@ func (h *Handler) ListRowToOutCtx(ctx context.Context, row queries.DeploymentFin
 	dep := queries.Deployment{
 		ID:                   row.ID,
 		ProjectID:            row.ProjectID,
+		ServiceID:            row.ServiceID,
 		BuildID:              row.BuildID,
 		ImageID:              row.ImageID,
 		VmID:                 row.VmID,
@@ -260,19 +307,27 @@ func (h *Handler) ListRowToOutCtx(ctx context.Context, row queries.DeploymentFin
 	}
 	out := DeploymentToOut(dep, buildPtr, h.reachability(ctx, dep))
 	out.WakeRequestedAt = rpcutil.FormatTS(dep.WakeRequestedAt)
+	var service *queries.Service
 	if proj, err := h.Q.ProjectFirstByID(ctx, dep.ProjectID); err == nil {
-		out.DesiredInstanceCount = int(proj.DesiredInstanceCount)
 		out.MinInstanceCount = int(proj.MinInstanceCount)
 		out.MaxInstanceCount = int(proj.MaxInstanceCount)
 		out.ScaledToZero = proj.ScaledToZero
 		out.ScaleToZeroEnabled = proj.ScaleToZeroEnabled
+		if dep.ServiceID.Valid {
+			if svc, err := h.Q.ServiceFirstByID(ctx, dep.ServiceID); err == nil {
+				service = &svc
+				out.ServiceName = svc.Name
+			}
+		}
+		out.DesiredInstanceCount = deploymentDesiredReplicaCount(proj, service)
 	}
-	if vol, err := h.Q.ProjectVolumeFindByProjectID(ctx, dep.ProjectID); err == nil {
-		decorateDeploymentOutWithVolume(&out, dep, &vol)
+	if vol, err := h.deploymentVolume(ctx, dep); err == nil {
+		decorateDeploymentOutWithVolume(&out, dep, vol)
 	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		// Ignore volume lookup failures and preserve deployment response.
 	}
-	if insts, err := h.Q.DeploymentInstanceFindByDeploymentID(ctx, dep.ID); err == nil {
+	insts, err := h.Q.DeploymentInstanceFindByDeploymentID(ctx, dep.ID)
+	if err == nil {
 		rc := 0
 		for _, inst := range insts {
 			if inst.Status == "running" && inst.VmID.Valid {
@@ -317,12 +372,54 @@ func (h *Handler) reachability(ctx context.Context, dep queries.Deployment) *Dep
 	if err == nil {
 		doms = rows
 	}
-
-	return BuildDeploymentReachabilityFromVMs(vms, doms)
+	privateEndpoints := h.privateEndpointsForDeployment(ctx, dep)
+	return BuildDeploymentReachability(vms, doms, privateEndpoints)
 }
 
-// BuildDeploymentReachabilityFromVMs constructs reachability info from VMs and domains.
-func BuildDeploymentReachabilityFromVMs(vms []*queries.Vm, doms []queries.Domain) *DeploymentReachabilityOut {
+func (h *Handler) privateEndpointsForDeployment(ctx context.Context, dep queries.Deployment) []DeploymentPrivateEndpointOut {
+	if !dep.ServiceID.Valid {
+		return nil
+	}
+	service, err := h.Q.ServiceFirstByID(ctx, dep.ServiceID)
+	if err != nil {
+		return nil
+	}
+	project, err := h.Q.ProjectFirstByID(ctx, dep.ProjectID)
+	if err != nil {
+		return nil
+	}
+	org, err := h.Q.OrganizationByID(ctx, project.OrgID)
+	if err != nil {
+		return nil
+	}
+	envSlug := "prod"
+	if strings.EqualFold(dep.DeploymentKind, "preview") {
+		envSlug = "preview"
+		if dep.PreviewEnvironmentID.Valid {
+			if pe, err := h.Q.PreviewEnvironmentByID(ctx, dep.PreviewEnvironmentID); err == nil && pe.PrNumber > 0 {
+				envSlug = fmt.Sprintf("pr-%d", pe.PrNumber)
+			}
+		}
+	}
+	rows, err := h.Q.ServiceEndpointListByServiceID(ctx, dep.ServiceID)
+	if err != nil {
+		return nil
+	}
+	out := make([]DeploymentPrivateEndpointOut, 0, len(rows))
+	for _, endpoint := range rows {
+		out = append(out, DeploymentPrivateEndpointOut{
+			Name:       endpoint.Name,
+			Protocol:   endpoint.Protocol,
+			Port:       endpoint.TargetPort,
+			Visibility: endpoint.Visibility,
+			PrivateIP:  endpoint.PrivateIp.String(),
+			DNSName:    netnames.PrivateDNSName(endpoint.Name, service.Slug, project.Name, envSlug, org.Slug),
+		})
+	}
+	return out
+}
+
+func BuildDeploymentReachability(vms []*queries.Vm, doms []queries.Domain, privateEndpoints []DeploymentPrivateEndpointOut) *DeploymentReachabilityOut {
 	var out DeploymentReachabilityOut
 
 	if len(vms) > 0 {
@@ -365,10 +462,19 @@ func BuildDeploymentReachabilityFromVMs(vms []*queries.Vm, doms []queries.Domain
 		out.ProxiesToDeployment = primary.ProxiesToDeployment
 	}
 
-	if out.PublicURL == "" && out.RuntimeURL == "" && len(out.PublicEndpoints) == 0 {
+	if len(privateEndpoints) > 0 {
+		out.PrivateEndpoints = append([]DeploymentPrivateEndpointOut(nil), privateEndpoints...)
+	}
+
+	if out.PublicURL == "" && out.RuntimeURL == "" && len(out.PublicEndpoints) == 0 && len(out.PrivateEndpoints) == 0 {
 		return nil
 	}
 	return &out
+}
+
+// BuildDeploymentReachabilityFromVMs constructs reachability info from VMs and domains.
+func BuildDeploymentReachabilityFromVMs(vms []*queries.Vm, doms []queries.Domain) *DeploymentReachabilityOut {
+	return BuildDeploymentReachability(vms, doms, nil)
 }
 
 func formatRuntimeURL(addr netip.Addr, port int) string {

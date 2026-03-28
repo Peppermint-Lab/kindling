@@ -85,9 +85,17 @@ func (d *Deployer) prepareImageAndEnv(ctx context.Context, rc *reconcileContext)
 		return fmt.Errorf("fetch image: %w", err)
 	}
 	rc.imageRef = fmt.Sprintf("%s/%s:%s", image.Registry, image.Repository, image.Tag)
-	envVars, err := d.q.EnvironmentVariableFindByProjectID(ctx, rc.dep.ProjectID)
-	if err != nil {
-		return fmt.Errorf("fetch env vars: %w", err)
+	var envVars []queries.EnvironmentVariable
+	if rc.service != nil {
+		envVars, err = d.q.EnvironmentVariableFindEffectiveByServiceID(ctx, rc.service.ID)
+		if err != nil {
+			return fmt.Errorf("fetch service env vars: %w", err)
+		}
+	} else {
+		envVars, err = d.q.EnvironmentVariableFindByProjectID(ctx, rc.dep.ProjectID)
+		if err != nil {
+			return fmt.Errorf("fetch env vars: %w", err)
+		}
 	}
 	rc.env, err = buildRuntimeEnv(envVars, d.secretDecoder)
 	if err != nil {

@@ -726,6 +726,53 @@ func (q *Queries) DeploymentFindByProjectID(ctx context.Context, projectID pgtyp
 	return items, nil
 }
 
+const deploymentFindByServiceID = `-- name: DeploymentFindByServiceID :many
+SELECT id, project_id, service_id, build_id, image_id, vm_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
+WHERE service_id = $1
+  AND deleted_at IS NULL
+ORDER BY created_at DESC
+`
+
+func (q *Queries) DeploymentFindByServiceID(ctx context.Context, serviceID pgtype.UUID) ([]Deployment, error) {
+	rows, err := q.db.Query(ctx, deploymentFindByServiceID, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Deployment{}
+	for rows.Next() {
+		var i Deployment
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.ServiceID,
+			&i.BuildID,
+			&i.ImageID,
+			&i.VmID,
+			&i.GithubCommit,
+			&i.GithubBranch,
+			&i.DeploymentKind,
+			&i.PreviewEnvironmentID,
+			&i.PreviewLastRequestAt,
+			&i.PreviewScaledToZero,
+			&i.RunningAt,
+			&i.StoppedAt,
+			&i.FailedAt,
+			&i.DeletedAt,
+			&i.WakeRequestedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deploymentFindByVMID = `-- name: DeploymentFindByVMID :one
 SELECT d.id, d.project_id, d.service_id, d.build_id, d.image_id, d.vm_id, d.github_commit, d.github_branch, d.deployment_kind, d.preview_environment_id, d.preview_last_request_at, d.preview_scaled_to_zero, d.running_at, d.stopped_at, d.failed_at, d.deleted_at, d.wake_requested_at, d.created_at, d.updated_at FROM deployments d
 JOIN deployment_instances di ON di.deployment_id = d.id AND di.deleted_at IS NULL
@@ -763,6 +810,7 @@ const deploymentFindRecentWithProject = `-- name: DeploymentFindRecentWithProjec
 SELECT
     d.id,
     d.project_id,
+    d.service_id,
     d.build_id,
     d.image_id,
     d.vm_id,
@@ -792,6 +840,7 @@ LIMIT $1
 type DeploymentFindRecentWithProjectRow struct {
 	ID                   pgtype.UUID        `json:"id"`
 	ProjectID            pgtype.UUID        `json:"project_id"`
+	ServiceID            pgtype.UUID        `json:"service_id"`
 	BuildID              pgtype.UUID        `json:"build_id"`
 	ImageID              pgtype.UUID        `json:"image_id"`
 	VmID                 pgtype.UUID        `json:"vm_id"`
@@ -824,6 +873,7 @@ func (q *Queries) DeploymentFindRecentWithProject(ctx context.Context, limit int
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
+			&i.ServiceID,
 			&i.BuildID,
 			&i.ImageID,
 			&i.VmID,
@@ -857,6 +907,7 @@ const deploymentFindRecentWithProjectForOrg = `-- name: DeploymentFindRecentWith
 SELECT
     d.id,
     d.project_id,
+    d.service_id,
     d.build_id,
     d.image_id,
     d.vm_id,
@@ -892,6 +943,7 @@ type DeploymentFindRecentWithProjectForOrgParams struct {
 type DeploymentFindRecentWithProjectForOrgRow struct {
 	ID                   pgtype.UUID        `json:"id"`
 	ProjectID            pgtype.UUID        `json:"project_id"`
+	ServiceID            pgtype.UUID        `json:"service_id"`
 	BuildID              pgtype.UUID        `json:"build_id"`
 	ImageID              pgtype.UUID        `json:"image_id"`
 	VmID                 pgtype.UUID        `json:"vm_id"`
@@ -924,6 +976,7 @@ func (q *Queries) DeploymentFindRecentWithProjectForOrg(ctx context.Context, arg
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
+			&i.ServiceID,
 			&i.BuildID,
 			&i.ImageID,
 			&i.VmID,
@@ -1589,6 +1642,45 @@ func (q *Queries) DeploymentLatestRunningByProjectID(ctx context.Context, projec
 	return i, err
 }
 
+const deploymentLatestRunningByServiceID = `-- name: DeploymentLatestRunningByServiceID :one
+SELECT id, project_id, service_id, build_id, image_id, vm_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
+WHERE service_id = $1
+  AND deployment_kind = 'production'
+  AND running_at IS NOT NULL
+  AND stopped_at IS NULL
+  AND failed_at IS NULL
+  AND deleted_at IS NULL
+ORDER BY running_at DESC
+LIMIT 1
+`
+
+func (q *Queries) DeploymentLatestRunningByServiceID(ctx context.Context, serviceID pgtype.UUID) (Deployment, error) {
+	row := q.db.QueryRow(ctx, deploymentLatestRunningByServiceID, serviceID)
+	var i Deployment
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServiceID,
+		&i.BuildID,
+		&i.ImageID,
+		&i.VmID,
+		&i.GithubCommit,
+		&i.GithubBranch,
+		&i.DeploymentKind,
+		&i.PreviewEnvironmentID,
+		&i.PreviewLastRequestAt,
+		&i.PreviewScaledToZero,
+		&i.RunningAt,
+		&i.StoppedAt,
+		&i.FailedAt,
+		&i.DeletedAt,
+		&i.WakeRequestedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const deploymentMarkRunning = `-- name: DeploymentMarkRunning :exec
 UPDATE deployments SET running_at = NOW(), updated_at = NOW() WHERE id = $1
 `
@@ -2014,6 +2106,20 @@ func (q *Queries) DomainDelete(ctx context.Context, arg DomainDeleteParams) erro
 	return err
 }
 
+const domainDeleteByServiceID = `-- name: DomainDeleteByServiceID :exec
+DELETE FROM domains WHERE id = $1 AND service_id = $2
+`
+
+type DomainDeleteByServiceIDParams struct {
+	ID        pgtype.UUID `json:"id"`
+	ServiceID pgtype.UUID `json:"service_id"`
+}
+
+func (q *Queries) DomainDeleteByServiceID(ctx context.Context, arg DomainDeleteByServiceIDParams) error {
+	_, err := q.db.Exec(ctx, domainDeleteByServiceID, arg.ID, arg.ServiceID)
+	return err
+}
+
 const domainEdgeLookup = `-- name: DomainEdgeLookup :one
 SELECT
     d.id AS domain_id,
@@ -2201,12 +2307,80 @@ func (q *Queries) DomainFirstByIDAndProject(ctx context.Context, arg DomainFirst
 	return i, err
 }
 
+const domainFirstByIDAndService = `-- name: DomainFirstByIDAndService :one
+SELECT id, project_id, service_id, deployment_id, domain_name, verification_token, verified_at, redirect_to, redirect_status_code, domain_kind, preview_environment_id, created_at, updated_at FROM domains WHERE id = $1 AND service_id = $2
+`
+
+type DomainFirstByIDAndServiceParams struct {
+	ID        pgtype.UUID `json:"id"`
+	ServiceID pgtype.UUID `json:"service_id"`
+}
+
+func (q *Queries) DomainFirstByIDAndService(ctx context.Context, arg DomainFirstByIDAndServiceParams) (Domain, error) {
+	row := q.db.QueryRow(ctx, domainFirstByIDAndService, arg.ID, arg.ServiceID)
+	var i Domain
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServiceID,
+		&i.DeploymentID,
+		&i.DomainName,
+		&i.VerificationToken,
+		&i.VerifiedAt,
+		&i.RedirectTo,
+		&i.RedirectStatusCode,
+		&i.DomainKind,
+		&i.PreviewEnvironmentID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const domainListByProjectID = `-- name: DomainListByProjectID :many
 SELECT id, project_id, service_id, deployment_id, domain_name, verification_token, verified_at, redirect_to, redirect_status_code, domain_kind, preview_environment_id, created_at, updated_at FROM domains WHERE project_id = $1 ORDER BY domain_name ASC
 `
 
 func (q *Queries) DomainListByProjectID(ctx context.Context, projectID pgtype.UUID) ([]Domain, error) {
 	rows, err := q.db.Query(ctx, domainListByProjectID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Domain{}
+	for rows.Next() {
+		var i Domain
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.ServiceID,
+			&i.DeploymentID,
+			&i.DomainName,
+			&i.VerificationToken,
+			&i.VerifiedAt,
+			&i.RedirectTo,
+			&i.RedirectStatusCode,
+			&i.DomainKind,
+			&i.PreviewEnvironmentID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const domainListByServiceID = `-- name: DomainListByServiceID :many
+SELECT id, project_id, service_id, deployment_id, domain_name, verification_token, verified_at, redirect_to, redirect_status_code, domain_kind, preview_environment_id, created_at, updated_at FROM domains WHERE service_id = $1 ORDER BY domain_name ASC
+`
+
+func (q *Queries) DomainListByServiceID(ctx context.Context, serviceID pgtype.UUID) ([]Domain, error) {
+	rows, err := q.db.Query(ctx, domainListByServiceID, serviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -2283,6 +2457,39 @@ func (q *Queries) DomainSetVerified(ctx context.Context, arg DomainSetVerifiedPa
 	return i, err
 }
 
+const domainSetVerifiedByServiceID = `-- name: DomainSetVerifiedByServiceID :one
+UPDATE domains
+SET verified_at = NOW(), verification_token = '', updated_at = NOW()
+WHERE id = $1 AND service_id = $2
+RETURNING id, project_id, service_id, deployment_id, domain_name, verification_token, verified_at, redirect_to, redirect_status_code, domain_kind, preview_environment_id, created_at, updated_at
+`
+
+type DomainSetVerifiedByServiceIDParams struct {
+	ID        pgtype.UUID `json:"id"`
+	ServiceID pgtype.UUID `json:"service_id"`
+}
+
+func (q *Queries) DomainSetVerifiedByServiceID(ctx context.Context, arg DomainSetVerifiedByServiceIDParams) (Domain, error) {
+	row := q.db.QueryRow(ctx, domainSetVerifiedByServiceID, arg.ID, arg.ServiceID)
+	var i Domain
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServiceID,
+		&i.DeploymentID,
+		&i.DomainName,
+		&i.VerificationToken,
+		&i.VerifiedAt,
+		&i.RedirectTo,
+		&i.RedirectStatusCode,
+		&i.DomainKind,
+		&i.PreviewEnvironmentID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const domainUpdateDeploymentForDomainID = `-- name: DomainUpdateDeploymentForDomainID :exec
 UPDATE domains SET deployment_id = $2, updated_at = NOW() WHERE id = $1
 `
@@ -2323,44 +2530,6 @@ func (q *Queries) DomainVerified(ctx context.Context, domainName string) (pgtype
 	return verified_at, err
 }
 
-const environmentVariableCreate = `-- name: EnvironmentVariableCreate :one
-
-INSERT INTO environment_variables (id, project_id, service_id, name, value)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (project_id, name) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-RETURNING id, project_id, service_id, name, value, created_at, updated_at
-`
-
-type EnvironmentVariableCreateParams struct {
-	ID        pgtype.UUID `json:"id"`
-	ProjectID pgtype.UUID `json:"project_id"`
-	ServiceID pgtype.UUID `json:"service_id"`
-	Name      string      `json:"name"`
-	Value     string      `json:"value"`
-}
-
-// Environment Variables --
-func (q *Queries) EnvironmentVariableCreate(ctx context.Context, arg EnvironmentVariableCreateParams) (EnvironmentVariable, error) {
-	row := q.db.QueryRow(ctx, environmentVariableCreate,
-		arg.ID,
-		arg.ProjectID,
-		arg.ServiceID,
-		arg.Name,
-		arg.Value,
-	)
-	var i EnvironmentVariable
-	err := row.Scan(
-		&i.ID,
-		&i.ProjectID,
-		&i.ServiceID,
-		&i.Name,
-		&i.Value,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const environmentVariableDeleteByIDAndProjectID = `-- name: EnvironmentVariableDeleteByIDAndProjectID :one
 DELETE FROM environment_variables
 WHERE id = $1 AND project_id = $2
@@ -2374,6 +2543,61 @@ type EnvironmentVariableDeleteByIDAndProjectIDParams struct {
 
 func (q *Queries) EnvironmentVariableDeleteByIDAndProjectID(ctx context.Context, arg EnvironmentVariableDeleteByIDAndProjectIDParams) (EnvironmentVariable, error) {
 	row := q.db.QueryRow(ctx, environmentVariableDeleteByIDAndProjectID, arg.ID, arg.ProjectID)
+	var i EnvironmentVariable
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServiceID,
+		&i.Name,
+		&i.Value,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const environmentVariableDeleteByIDAndServiceID = `-- name: EnvironmentVariableDeleteByIDAndServiceID :one
+DELETE FROM environment_variables
+WHERE id = $1
+  AND service_id = $2
+RETURNING id, project_id, service_id, name, value, created_at, updated_at
+`
+
+type EnvironmentVariableDeleteByIDAndServiceIDParams struct {
+	ID        pgtype.UUID `json:"id"`
+	ServiceID pgtype.UUID `json:"service_id"`
+}
+
+func (q *Queries) EnvironmentVariableDeleteByIDAndServiceID(ctx context.Context, arg EnvironmentVariableDeleteByIDAndServiceIDParams) (EnvironmentVariable, error) {
+	row := q.db.QueryRow(ctx, environmentVariableDeleteByIDAndServiceID, arg.ID, arg.ServiceID)
+	var i EnvironmentVariable
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServiceID,
+		&i.Name,
+		&i.Value,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const environmentVariableDeleteProjectDefaultByIDAndProjectID = `-- name: EnvironmentVariableDeleteProjectDefaultByIDAndProjectID :one
+DELETE FROM environment_variables
+WHERE id = $1
+  AND project_id = $2
+  AND service_id IS NULL
+RETURNING id, project_id, service_id, name, value, created_at, updated_at
+`
+
+type EnvironmentVariableDeleteProjectDefaultByIDAndProjectIDParams struct {
+	ID        pgtype.UUID `json:"id"`
+	ProjectID pgtype.UUID `json:"project_id"`
+}
+
+func (q *Queries) EnvironmentVariableDeleteProjectDefaultByIDAndProjectID(ctx context.Context, arg EnvironmentVariableDeleteProjectDefaultByIDAndProjectIDParams) (EnvironmentVariable, error) {
+	row := q.db.QueryRow(ctx, environmentVariableDeleteProjectDefaultByIDAndProjectID, arg.ID, arg.ProjectID)
 	var i EnvironmentVariable
 	err := row.Scan(
 		&i.ID,
@@ -2451,33 +2675,128 @@ func (q *Queries) EnvironmentVariableFindByProjectID(ctx context.Context, projec
 	return items, nil
 }
 
-const environmentVariableMetadataFindByProjectID = `-- name: EnvironmentVariableMetadataFindByProjectID :many
-SELECT id, project_id, name, created_at, updated_at
-FROM environment_variables
-WHERE project_id = $1
-ORDER BY name
+const environmentVariableFindEffectiveByServiceID = `-- name: EnvironmentVariableFindEffectiveByServiceID :many
+SELECT DISTINCT ON (ev.name) ev.id, ev.project_id, ev.service_id, ev.name, ev.value, ev.created_at, ev.updated_at
+FROM environment_variables ev
+JOIN services s ON s.id = $1
+WHERE ev.project_id = s.project_id
+  AND (ev.service_id = s.id OR ev.service_id IS NULL)
+ORDER BY ev.name ASC,
+         CASE WHEN ev.service_id = s.id THEN 0 ELSE 1 END,
+         ev.updated_at DESC
 `
 
-type EnvironmentVariableMetadataFindByProjectIDRow struct {
+func (q *Queries) EnvironmentVariableFindEffectiveByServiceID(ctx context.Context, id pgtype.UUID) ([]EnvironmentVariable, error) {
+	rows, err := q.db.Query(ctx, environmentVariableFindEffectiveByServiceID, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EnvironmentVariable{}
+	for rows.Next() {
+		var i EnvironmentVariable
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.ServiceID,
+			&i.Name,
+			&i.Value,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const environmentVariableMetadataFindEffectiveByServiceID = `-- name: EnvironmentVariableMetadataFindEffectiveByServiceID :many
+SELECT DISTINCT ON (ev.name)
+    ev.id,
+    ev.project_id,
+    ev.service_id,
+    ev.name,
+    ev.created_at,
+    ev.updated_at
+FROM environment_variables ev
+JOIN services s ON s.id = $1
+WHERE ev.project_id = s.project_id
+  AND (ev.service_id = s.id OR ev.service_id IS NULL)
+ORDER BY ev.name ASC,
+         CASE WHEN ev.service_id = s.id THEN 0 ELSE 1 END,
+         ev.updated_at DESC
+`
+
+type EnvironmentVariableMetadataFindEffectiveByServiceIDRow struct {
 	ID        pgtype.UUID        `json:"id"`
 	ProjectID pgtype.UUID        `json:"project_id"`
+	ServiceID pgtype.UUID        `json:"service_id"`
 	Name      string             `json:"name"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
-func (q *Queries) EnvironmentVariableMetadataFindByProjectID(ctx context.Context, projectID pgtype.UUID) ([]EnvironmentVariableMetadataFindByProjectIDRow, error) {
-	rows, err := q.db.Query(ctx, environmentVariableMetadataFindByProjectID, projectID)
+func (q *Queries) EnvironmentVariableMetadataFindEffectiveByServiceID(ctx context.Context, id pgtype.UUID) ([]EnvironmentVariableMetadataFindEffectiveByServiceIDRow, error) {
+	rows, err := q.db.Query(ctx, environmentVariableMetadataFindEffectiveByServiceID, id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []EnvironmentVariableMetadataFindByProjectIDRow{}
+	items := []EnvironmentVariableMetadataFindEffectiveByServiceIDRow{}
 	for rows.Next() {
-		var i EnvironmentVariableMetadataFindByProjectIDRow
+		var i EnvironmentVariableMetadataFindEffectiveByServiceIDRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
+			&i.ServiceID,
+			&i.Name,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const environmentVariableMetadataFindProjectDefaultsByProjectID = `-- name: EnvironmentVariableMetadataFindProjectDefaultsByProjectID :many
+SELECT id, project_id, service_id, name, created_at, updated_at
+FROM environment_variables
+WHERE project_id = $1
+  AND service_id IS NULL
+ORDER BY name
+`
+
+type EnvironmentVariableMetadataFindProjectDefaultsByProjectIDRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProjectID pgtype.UUID        `json:"project_id"`
+	ServiceID pgtype.UUID        `json:"service_id"`
+	Name      string             `json:"name"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) EnvironmentVariableMetadataFindProjectDefaultsByProjectID(ctx context.Context, projectID pgtype.UUID) ([]EnvironmentVariableMetadataFindProjectDefaultsByProjectIDRow, error) {
+	rows, err := q.db.Query(ctx, environmentVariableMetadataFindProjectDefaultsByProjectID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EnvironmentVariableMetadataFindProjectDefaultsByProjectIDRow{}
+	for rows.Next() {
+		var i EnvironmentVariableMetadataFindProjectDefaultsByProjectIDRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.ServiceID,
 			&i.Name,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -2507,6 +2826,122 @@ type EnvironmentVariableUpdateValueParams struct {
 func (q *Queries) EnvironmentVariableUpdateValue(ctx context.Context, arg EnvironmentVariableUpdateValueParams) (EnvironmentVariable, error) {
 	row := q.db.QueryRow(ctx, environmentVariableUpdateValue, arg.ID, arg.Value)
 	var i EnvironmentVariable
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServiceID,
+		&i.Name,
+		&i.Value,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const environmentVariableUpsertForService = `-- name: EnvironmentVariableUpsertForService :one
+WITH updated AS (
+    UPDATE environment_variables ev
+    SET value = $4, updated_at = NOW()
+    WHERE ev.project_id = $1
+      AND ev.service_id = $2
+      AND ev.name = $3
+    RETURNING id, project_id, service_id, name, value, created_at, updated_at
+), inserted AS (
+    INSERT INTO environment_variables (id, project_id, service_id, name, value)
+    SELECT $5, $1, $2, $3, $4
+    WHERE NOT EXISTS (SELECT 1 FROM updated)
+    RETURNING id, project_id, service_id, name, value, created_at, updated_at
+)
+SELECT id, project_id, service_id, name, value, created_at, updated_at FROM updated
+UNION ALL
+SELECT id, project_id, service_id, name, value, created_at, updated_at FROM inserted
+`
+
+type EnvironmentVariableUpsertForServiceParams struct {
+	ProjectID pgtype.UUID `json:"project_id"`
+	ServiceID pgtype.UUID `json:"service_id"`
+	Name      string      `json:"name"`
+	Value     string      `json:"value"`
+	ID        pgtype.UUID `json:"id"`
+}
+
+type EnvironmentVariableUpsertForServiceRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProjectID pgtype.UUID        `json:"project_id"`
+	ServiceID pgtype.UUID        `json:"service_id"`
+	Name      string             `json:"name"`
+	Value     string             `json:"value"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) EnvironmentVariableUpsertForService(ctx context.Context, arg EnvironmentVariableUpsertForServiceParams) (EnvironmentVariableUpsertForServiceRow, error) {
+	row := q.db.QueryRow(ctx, environmentVariableUpsertForService,
+		arg.ProjectID,
+		arg.ServiceID,
+		arg.Name,
+		arg.Value,
+		arg.ID,
+	)
+	var i EnvironmentVariableUpsertForServiceRow
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServiceID,
+		&i.Name,
+		&i.Value,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const environmentVariableUpsertProjectDefault = `-- name: EnvironmentVariableUpsertProjectDefault :one
+
+WITH updated AS (
+    UPDATE environment_variables ev
+    SET value = $3, updated_at = NOW()
+    WHERE ev.project_id = $1
+      AND ev.service_id IS NULL
+      AND ev.name = $2
+    RETURNING id, project_id, service_id, name, value, created_at, updated_at
+), inserted AS (
+    INSERT INTO environment_variables (id, project_id, service_id, name, value)
+    SELECT $4, $1, NULL, $2, $3
+    WHERE NOT EXISTS (SELECT 1 FROM updated)
+    RETURNING id, project_id, service_id, name, value, created_at, updated_at
+)
+SELECT id, project_id, service_id, name, value, created_at, updated_at FROM updated
+UNION ALL
+SELECT id, project_id, service_id, name, value, created_at, updated_at FROM inserted
+`
+
+type EnvironmentVariableUpsertProjectDefaultParams struct {
+	ProjectID pgtype.UUID `json:"project_id"`
+	Name      string      `json:"name"`
+	Value     string      `json:"value"`
+	ID        pgtype.UUID `json:"id"`
+}
+
+type EnvironmentVariableUpsertProjectDefaultRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProjectID pgtype.UUID        `json:"project_id"`
+	ServiceID pgtype.UUID        `json:"service_id"`
+	Name      string             `json:"name"`
+	Value     string             `json:"value"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+// Environment Variables --
+func (q *Queries) EnvironmentVariableUpsertProjectDefault(ctx context.Context, arg EnvironmentVariableUpsertProjectDefaultParams) (EnvironmentVariableUpsertProjectDefaultRow, error) {
+	row := q.db.QueryRow(ctx, environmentVariableUpsertProjectDefault,
+		arg.ProjectID,
+		arg.Name,
+		arg.Value,
+		arg.ID,
+	)
+	var i EnvironmentVariableUpsertProjectDefaultRow
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
@@ -3204,6 +3639,22 @@ func (q *Queries) InstanceUsageSamplesByProjectWindow(ctx context.Context, arg I
 	return items, nil
 }
 
+const orgNetworkByOrganizationID = `-- name: OrgNetworkByOrganizationID :one
+SELECT organization_id, cidr, created_at, updated_at FROM org_networks WHERE organization_id = $1
+`
+
+func (q *Queries) OrgNetworkByOrganizationID(ctx context.Context, organizationID pgtype.UUID) (OrgNetwork, error) {
+	row := q.db.QueryRow(ctx, orgNetworkByOrganizationID, organizationID)
+	var i OrgNetwork
+	err := row.Scan(
+		&i.OrganizationID,
+		&i.Cidr,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const orgProviderConnectionByIDAndOrg = `-- name: OrgProviderConnectionByIDAndOrg :one
 SELECT id, organization_id, provider, external_slug, display_label, credentials_ciphertext, metadata, created_at, updated_at FROM org_provider_connections
 WHERE id = $1 AND organization_id = $2
@@ -3421,9 +3872,16 @@ func (q *Queries) OrganizationByID(ctx context.Context, id pgtype.UUID) (Organiz
 }
 
 const organizationCreate = `-- name: OrganizationCreate :one
-INSERT INTO organizations (id, name, slug)
-VALUES ($1, $2, $3)
-RETURNING id, name, slug, created_at, updated_at
+WITH inserted AS (
+    INSERT INTO organizations (id, name, slug)
+    VALUES ($1, $2, $3)
+    RETURNING id, name, slug, created_at, updated_at
+), network AS (
+    INSERT INTO org_networks (organization_id, cidr)
+    SELECT id, ((SELECT COALESCE(MAX(cidr), '172.19.255.0/24'::CIDR) FROM org_networks) + 1)::CIDR
+    FROM inserted
+)
+SELECT id, name, slug, created_at, updated_at FROM inserted
 `
 
 type OrganizationCreateParams struct {
@@ -3432,9 +3890,17 @@ type OrganizationCreateParams struct {
 	Slug string      `json:"slug"`
 }
 
-func (q *Queries) OrganizationCreate(ctx context.Context, arg OrganizationCreateParams) (Organization, error) {
+type OrganizationCreateRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	Name      string             `json:"name"`
+	Slug      string             `json:"slug"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) OrganizationCreate(ctx context.Context, arg OrganizationCreateParams) (OrganizationCreateRow, error) {
 	row := q.db.QueryRow(ctx, organizationCreate, arg.ID, arg.Name, arg.Slug)
-	var i Organization
+	var i OrganizationCreateRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
@@ -4000,6 +4466,27 @@ WITH inserted AS (
     SELECT gen_random_uuid(), id, name, 'app', root_directory, dockerfile_path,
            desired_instance_count, build_only_on_root_changes, false, true
     FROM inserted
+    RETURNING id, project_id, public_default
+), primary_endpoint AS (
+    INSERT INTO service_endpoints (
+        id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname
+    )
+    SELECT
+        gen_random_uuid(),
+        ps.id,
+        'web',
+        'http',
+        3000,
+        CASE WHEN ps.public_default THEN 'public' ELSE 'private' END,
+        (COALESCE(MAX(se.private_ip), (host(network(n.cidr))::INET + 9)::INET) + 1)::INET,
+        ''
+    FROM primary_service ps
+    JOIN projects p ON p.id = ps.project_id
+    JOIN org_networks n ON n.organization_id = p.org_id
+    LEFT JOIN projects p2 ON p2.org_id = p.org_id
+    LEFT JOIN services s2 ON s2.project_id = p2.id
+    LEFT JOIN service_endpoints se ON se.service_id = s2.id
+    GROUP BY ps.id, ps.public_default, n.cidr
 )
 SELECT id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at FROM inserted
 `
@@ -5068,6 +5555,37 @@ func (q *Queries) ProjectVolumeFindAnyByProjectID(ctx context.Context, projectID
 	return i, err
 }
 
+const projectVolumeFindAnyByServiceID = `-- name: ProjectVolumeFindAnyByServiceID :one
+SELECT id, project_id, service_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled, last_error, deleted_at, created_at, updated_at FROM project_volumes
+WHERE service_id = $1
+LIMIT 1
+`
+
+func (q *Queries) ProjectVolumeFindAnyByServiceID(ctx context.Context, serviceID pgtype.UUID) (ProjectVolume, error) {
+	row := q.db.QueryRow(ctx, projectVolumeFindAnyByServiceID, serviceID)
+	var i ProjectVolume
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServiceID,
+		&i.ServerID,
+		&i.AttachedVmID,
+		&i.MountPath,
+		&i.SizeGb,
+		&i.Filesystem,
+		&i.Status,
+		&i.Health,
+		&i.BackupSchedule,
+		&i.BackupRetentionCount,
+		&i.PreDeleteBackupEnabled,
+		&i.LastError,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const projectVolumeFindByID = `-- name: ProjectVolumeFindByID :one
 SELECT id, project_id, service_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled, last_error, deleted_at, created_at, updated_at FROM project_volumes
 WHERE id = $1
@@ -5173,6 +5691,36 @@ func (q *Queries) ProjectVolumeFindByServerID(ctx context.Context, serverID pgty
 		return nil, err
 	}
 	return items, nil
+}
+
+const projectVolumeFindByServiceID = `-- name: ProjectVolumeFindByServiceID :one
+SELECT id, project_id, service_id, server_id, attached_vm_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled, last_error, deleted_at, created_at, updated_at FROM project_volumes
+WHERE service_id = $1 AND deleted_at IS NULL
+`
+
+func (q *Queries) ProjectVolumeFindByServiceID(ctx context.Context, serviceID pgtype.UUID) (ProjectVolume, error) {
+	row := q.db.QueryRow(ctx, projectVolumeFindByServiceID, serviceID)
+	var i ProjectVolume
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServiceID,
+		&i.ServerID,
+		&i.AttachedVmID,
+		&i.MountPath,
+		&i.SizeGb,
+		&i.Filesystem,
+		&i.Status,
+		&i.Health,
+		&i.BackupSchedule,
+		&i.BackupRetentionCount,
+		&i.PreDeleteBackupEnabled,
+		&i.LastError,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const projectVolumeOperationCreate = `-- name: ProjectVolumeOperationCreate :one
@@ -6309,12 +6857,35 @@ func (q *Queries) ServerUpdateStatus(ctx context.Context, arg ServerUpdateStatus
 
 const serviceCreate = `-- name: ServiceCreate :one
 
-INSERT INTO services (
-    id, project_id, name, slug, root_directory, dockerfile_path,
-    desired_instance_count, build_only_on_root_changes, public_default, is_primary
+WITH inserted AS (
+    INSERT INTO services (
+        id, project_id, name, slug, root_directory, dockerfile_path,
+        desired_instance_count, build_only_on_root_changes, public_default, is_primary
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    RETURNING id, project_id, name, slug, root_directory, dockerfile_path, desired_instance_count, build_only_on_root_changes, public_default, is_primary, created_at, updated_at
+), endpoint AS (
+    INSERT INTO service_endpoints (
+        id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname
+    )
+    SELECT
+        gen_random_uuid(),
+        i.id,
+        'web',
+        'http',
+        3000,
+        CASE WHEN i.public_default THEN 'public' ELSE 'private' END,
+        (COALESCE(MAX(se.private_ip), (host(network(n.cidr))::INET + 9)::INET) + 1)::INET,
+        ''
+    FROM inserted i
+    JOIN projects p ON p.id = i.project_id
+    JOIN org_networks n ON n.organization_id = p.org_id
+    LEFT JOIN projects p2 ON p2.org_id = p.org_id
+    LEFT JOIN services s2 ON s2.project_id = p2.id
+    LEFT JOIN service_endpoints se ON se.service_id = s2.id
+    GROUP BY i.id, i.public_default, n.cidr
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, project_id, name, slug, root_directory, dockerfile_path, desired_instance_count, build_only_on_root_changes, public_default, is_primary, created_at, updated_at
+SELECT id, project_id, name, slug, root_directory, dockerfile_path, desired_instance_count, build_only_on_root_changes, public_default, is_primary, created_at, updated_at FROM inserted
 `
 
 type ServiceCreateParams struct {
@@ -6330,8 +6901,23 @@ type ServiceCreateParams struct {
 	IsPrimary              bool        `json:"is_primary"`
 }
 
+type ServiceCreateRow struct {
+	ID                     pgtype.UUID        `json:"id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	Name                   string             `json:"name"`
+	Slug                   string             `json:"slug"`
+	RootDirectory          string             `json:"root_directory"`
+	DockerfilePath         string             `json:"dockerfile_path"`
+	DesiredInstanceCount   int32              `json:"desired_instance_count"`
+	BuildOnlyOnRootChanges bool               `json:"build_only_on_root_changes"`
+	PublicDefault          bool               `json:"public_default"`
+	IsPrimary              bool               `json:"is_primary"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
 // Services --
-func (q *Queries) ServiceCreate(ctx context.Context, arg ServiceCreateParams) (Service, error) {
+func (q *Queries) ServiceCreate(ctx context.Context, arg ServiceCreateParams) (ServiceCreateRow, error) {
 	row := q.db.QueryRow(ctx, serviceCreate,
 		arg.ID,
 		arg.ProjectID,
@@ -6344,7 +6930,7 @@ func (q *Queries) ServiceCreate(ctx context.Context, arg ServiceCreateParams) (S
 		arg.PublicDefault,
 		arg.IsPrimary,
 	)
-	var i Service
+	var i ServiceCreateRow
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
@@ -6360,6 +6946,126 @@ func (q *Queries) ServiceCreate(ctx context.Context, arg ServiceCreateParams) (S
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const serviceEndpointCreate = `-- name: ServiceEndpointCreate :one
+WITH svc AS (
+    SELECT s.id, p.org_id
+    FROM services s
+    JOIN projects p ON p.id = s.project_id
+    WHERE s.id = $1
+), inserted AS (
+    INSERT INTO service_endpoints (
+        id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname
+    )
+    SELECT
+        $2,
+        svc.id,
+        $3,
+        $4,
+        $5,
+        $6,
+        (COALESCE(MAX(se.private_ip), (host(network(n.cidr))::INET + 9)::INET) + 1)::INET,
+        $7
+    FROM svc
+    JOIN org_networks n ON n.organization_id = svc.org_id
+    LEFT JOIN projects p2 ON p2.org_id = svc.org_id
+    LEFT JOIN services s2 ON s2.project_id = p2.id
+    LEFT JOIN service_endpoints se ON se.service_id = s2.id
+    GROUP BY svc.id, n.cidr
+    RETURNING id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname, last_healthy_at, last_unhealthy_at, created_at, updated_at
+)
+SELECT id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname, last_healthy_at, last_unhealthy_at, created_at, updated_at FROM inserted
+`
+
+type ServiceEndpointCreateParams struct {
+	ID             pgtype.UUID `json:"id"`
+	ID_2           pgtype.UUID `json:"id_2"`
+	Name           string      `json:"name"`
+	Protocol       string      `json:"protocol"`
+	TargetPort     int32       `json:"target_port"`
+	Visibility     string      `json:"visibility"`
+	PublicHostname string      `json:"public_hostname"`
+}
+
+type ServiceEndpointCreateRow struct {
+	ID              pgtype.UUID        `json:"id"`
+	ServiceID       pgtype.UUID        `json:"service_id"`
+	Name            string             `json:"name"`
+	Protocol        string             `json:"protocol"`
+	TargetPort      int32              `json:"target_port"`
+	Visibility      string             `json:"visibility"`
+	PrivateIp       netip.Addr         `json:"private_ip"`
+	PublicHostname  string             `json:"public_hostname"`
+	LastHealthyAt   pgtype.Timestamptz `json:"last_healthy_at"`
+	LastUnhealthyAt pgtype.Timestamptz `json:"last_unhealthy_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ServiceEndpointCreate(ctx context.Context, arg ServiceEndpointCreateParams) (ServiceEndpointCreateRow, error) {
+	row := q.db.QueryRow(ctx, serviceEndpointCreate,
+		arg.ID,
+		arg.ID_2,
+		arg.Name,
+		arg.Protocol,
+		arg.TargetPort,
+		arg.Visibility,
+		arg.PublicHostname,
+	)
+	var i ServiceEndpointCreateRow
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.Name,
+		&i.Protocol,
+		&i.TargetPort,
+		&i.Visibility,
+		&i.PrivateIp,
+		&i.PublicHostname,
+		&i.LastHealthyAt,
+		&i.LastUnhealthyAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const serviceEndpointListByServiceID = `-- name: ServiceEndpointListByServiceID :many
+SELECT id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname, last_healthy_at, last_unhealthy_at, created_at, updated_at FROM service_endpoints WHERE service_id = $1 ORDER BY created_at ASC
+`
+
+func (q *Queries) ServiceEndpointListByServiceID(ctx context.Context, serviceID pgtype.UUID) ([]ServiceEndpoint, error) {
+	rows, err := q.db.Query(ctx, serviceEndpointListByServiceID, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ServiceEndpoint{}
+	for rows.Next() {
+		var i ServiceEndpoint
+		if err := rows.Scan(
+			&i.ID,
+			&i.ServiceID,
+			&i.Name,
+			&i.Protocol,
+			&i.TargetPort,
+			&i.Visibility,
+			&i.PrivateIp,
+			&i.PublicHostname,
+			&i.LastHealthyAt,
+			&i.LastUnhealthyAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const serviceFirstByID = `-- name: ServiceFirstByID :one

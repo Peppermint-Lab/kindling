@@ -14,6 +14,16 @@ import (
 
 const disabledPasswordHash = "!"
 
+func organizationFromCreateRow(row queries.OrganizationCreateRow) queries.Organization {
+	return queries.Organization{
+		ID:        row.ID,
+		Name:      row.Name,
+		Slug:      row.Slug,
+		CreatedAt: row.CreatedAt,
+		UpdatedAt: row.UpdatedAt,
+	}
+}
+
 func (a *API) issueSessionForUser(ctx context.Context, user queries.User) ([]byte, queries.Organization, string, []queries.Organization, error) {
 	orgs, err := a.q.OrganizationsForUser(ctx, user.ID)
 	if err != nil {
@@ -103,7 +113,7 @@ func (a *API) createOwnedOrganizationForUser(ctx context.Context, user queries.U
 		}); err != nil {
 			return queries.Organization{}, err
 		}
-		return org, nil
+		return organizationFromCreateRow(org), nil
 	}
 	return queries.Organization{}, fmt.Errorf("could not allocate unique workspace slug")
 }

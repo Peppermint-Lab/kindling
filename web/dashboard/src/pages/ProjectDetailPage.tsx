@@ -931,12 +931,49 @@ export function ProjectDetailPage() {
                           <p>
                             Dockerfile: <span className="font-mono text-foreground">{service.dockerfile_path}</span>
                           </p>
+                          {service.org_network_cidr ? (
+                            <p>
+                              Org network: <span className="font-mono text-foreground">{service.org_network_cidr}</span>
+                            </p>
+                          ) : null}
                           <p>
                             Default exposure:{" "}
                             <span className="font-medium text-foreground">
                               {service.public_default ? "public" : "private"}
                             </span>
                           </p>
+                        </div>
+                        {service.endpoints && service.endpoints.length > 0 ? (
+                          <div className="space-y-2 pt-1">
+                            <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                              Endpoints
+                            </p>
+                            <div className="space-y-2">
+                              {service.endpoints.map((endpoint) => (
+                                <div key={endpoint.id} className="rounded-md bg-muted/40 p-2.5 space-y-1">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-mono text-xs">{endpoint.name}</span>
+                                    <Badge variant={endpoint.visibility === "public" ? "default" : "secondary"}>
+                                      {endpoint.visibility}
+                                    </Badge>
+                                  </div>
+                                  <p className="text-[11px] text-muted-foreground">
+                                    {endpoint.protocol.toUpperCase()}:{endpoint.target_port} on{" "}
+                                    <span className="font-mono text-foreground">{endpoint.private_ip}</span>
+                                  </p>
+                                  <p className="font-mono text-[11px] break-all">{endpoint.dns_name}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                        <div className="pt-1">
+                          <Link
+                            to={`/services/${service.id}`}
+                            className="inline-flex h-7 items-center rounded-[min(var(--radius-md),12px)] border border-border bg-background px-2.5 text-[0.8rem] font-medium hover:bg-muted"
+                          >
+                            Open service
+                          </Link>
                         </div>
                       </div>
                     ))}

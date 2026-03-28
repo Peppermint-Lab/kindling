@@ -32,9 +32,30 @@ CREATE TABLE IF NOT EXISTS organizations (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS org_networks (
+    organization_id UUID PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    cidr            CIDR NOT NULL UNIQUE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 INSERT INTO organizations (id, name, slug, created_at, updated_at)
 VALUES ('c0000000-0000-4000-a000-000000000001', 'Default', 'default', NOW(), NOW())
 ON CONFLICT (id) DO NOTHING;
+
+WITH missing AS (
+    SELECT o.id, ROW_NUMBER() OVER (ORDER BY o.created_at, o.id) AS rn
+    FROM organizations o
+    WHERE NOT EXISTS (
+        SELECT 1 FROM org_networks n WHERE n.organization_id = o.id
+    )
+), base AS (
+    SELECT COALESCE(MAX(cidr), '172.19.255.0/24'::CIDR) AS max_cidr
+    FROM org_networks
+)
+INSERT INTO org_networks (organization_id, cidr)
+SELECT m.id, ((SELECT max_cidr FROM base) + m.rn)::CIDR
+FROM missing m;
 
 CREATE TABLE IF NOT EXISTS users (
     id             UUID PRIMARY KEY,
@@ -206,6 +227,26 @@ CREATE TABLE IF NOT EXISTS services (
 CREATE INDEX IF NOT EXISTS idx_services_project_id ON services(project_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_services_primary_per_project ON services(project_id) WHERE is_primary = true;
 
+CREATE TABLE IF NOT EXISTS service_endpoints (
+    id               UUID PRIMARY KEY,
+    service_id       UUID NOT NULL REFERENCES services(id) ON DELETE CASCADE,
+    name             TEXT NOT NULL,
+    protocol         TEXT NOT NULL DEFAULT 'http'
+        CHECK (protocol IN ('http', 'tcp')),
+    target_port      INT NOT NULL DEFAULT 3000 CHECK (target_port > 0 AND target_port <= 65535),
+    visibility       TEXT NOT NULL DEFAULT 'private'
+        CHECK (visibility IN ('private', 'public')),
+    private_ip       INET NOT NULL UNIQUE,
+    public_hostname  TEXT NOT NULL DEFAULT '',
+    last_healthy_at  TIMESTAMPTZ,
+    last_unhealthy_at TIMESTAMPTZ,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (service_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_service_endpoints_service_id ON service_endpoints(service_id, created_at ASC);
+
 -- Backfill one primary service per existing project.
 INSERT INTO services (
     id, project_id, name, slug, root_directory, dockerfile_path,
@@ -226,6 +267,42 @@ FROM projects p
 WHERE NOT EXISTS (
     SELECT 1 FROM services s WHERE s.project_id = p.id
 );
+
+WITH ranked_missing AS (
+    SELECT
+        s.id AS service_id,
+        p.org_id,
+        ROW_NUMBER() OVER (PARTITION BY p.org_id ORDER BY s.created_at, s.id) AS rn,
+        CASE WHEN s.public_default THEN 'public' ELSE 'private' END AS visibility
+    FROM services s
+    JOIN projects p ON p.id = s.project_id
+    WHERE NOT EXISTS (
+        SELECT 1 FROM service_endpoints se WHERE se.service_id = s.id
+    )
+), existing_max AS (
+    SELECT
+        n.organization_id,
+        COALESCE(MAX(se.private_ip), (host(network(n.cidr))::INET + 9)::INET) AS max_private_ip
+    FROM org_networks n
+    LEFT JOIN projects p ON p.org_id = n.organization_id
+    LEFT JOIN services s ON s.project_id = p.id
+    LEFT JOIN service_endpoints se ON se.service_id = s.id
+    GROUP BY n.organization_id, n.cidr
+)
+INSERT INTO service_endpoints (
+    id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname
+)
+SELECT
+    gen_random_uuid(),
+    rm.service_id,
+    'web',
+    'http',
+    3000,
+    rm.visibility,
+    (em.max_private_ip + rm.rn)::INET,
+    ''
+FROM ranked_missing rm
+JOIN existing_max em ON em.organization_id = rm.org_id;
 
 -- Migrate existing DBs created before desired_instance_count existed
 DO $$ BEGIN
@@ -400,8 +477,7 @@ CREATE TABLE IF NOT EXISTS environment_variables (
     name        TEXT NOT NULL,
     value       TEXT NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (project_id, name)
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 DO $$ BEGIN
@@ -419,6 +495,26 @@ FROM services s
 WHERE ev.service_id IS NULL
   AND s.project_id = ev.project_id
   AND s.is_primary = true;
+
+UPDATE environment_variables ev
+SET service_id = NULL
+FROM services s
+WHERE ev.service_id = s.id
+  AND s.project_id = ev.project_id
+  AND s.is_primary = true;
+
+DO $$ BEGIN
+    ALTER TABLE environment_variables DROP CONSTRAINT IF EXISTS environment_variables_project_id_name_key;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_environment_variables_project_default_name
+    ON environment_variables(project_id, name)
+    WHERE service_id IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_environment_variables_service_name
+    ON environment_variables(service_id, name)
+    WHERE service_id IS NOT NULL;
 
 -- Builds: a single build attempt for a commit
 CREATE TABLE IF NOT EXISTS builds (

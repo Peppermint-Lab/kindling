@@ -35,6 +35,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/projects/{id}/domains", h.createProjectDomain)
 	mux.HandleFunc("DELETE /api/projects/{id}/domains/{domain_id}", h.deleteProjectDomain)
 	mux.HandleFunc("POST /api/projects/{id}/domains/{domain_id}/verify", h.verifyProjectDomain)
+	mux.HandleFunc("GET /api/services/{id}/domains", h.listServiceDomains)
+	mux.HandleFunc("POST /api/services/{id}/domains", h.createServiceDomain)
+	mux.HandleFunc("DELETE /api/services/{id}/domains/{domain_id}", h.deleteServiceDomain)
+	mux.HandleFunc("POST /api/services/{id}/domains/{domain_id}/verify", h.verifyServiceDomain)
 }
 
 type dnsChallengeOut struct {
@@ -144,6 +148,21 @@ func IsPgUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+func (h *Handler) serviceAndProjectByIDAndOrg(ctx context.Context, serviceID, orgID pgtype.UUID) (queries.Service, queries.Project, error) {
+	service, err := h.Q.ServiceFirstByIDAndOrg(ctx, queries.ServiceFirstByIDAndOrgParams{
+		ID:    serviceID,
+		OrgID: orgID,
+	})
+	if err != nil {
+		return queries.Service{}, queries.Project{}, err
+	}
+	project, err := h.Q.ProjectFirstByID(ctx, service.ProjectID)
+	if err != nil {
+		return queries.Service{}, queries.Project{}, err
+	}
+	return service, project, nil
+}
+
 func (h *Handler) listProjectDomains(w http.ResponseWriter, r *http.Request) {
 	p, ok := rpcutil.MustPrincipal(w, r)
 	if !ok {
@@ -164,6 +183,32 @@ func (h *Handler) listProjectDomains(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.Q.DomainListByProjectID(r.Context(), projectID)
 	if err != nil {
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "list_domains", err)
+		return
+	}
+	out := make([]projectDomainOut, 0, len(rows))
+	for _, d := range rows {
+		out = append(out, domainToOut(d))
+	}
+	rpcutil.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) listServiceDomains(w http.ResponseWriter, r *http.Request) {
+	p, ok := rpcutil.MustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	serviceID, err := rpcutil.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_id", "invalid service id")
+		return
+	}
+	if _, _, err := h.serviceAndProjectByIDAndOrg(r.Context(), serviceID, p.OrganizationID); err != nil {
+		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "service not found")
+		return
+	}
+	rows, err := h.Q.DomainListByServiceID(r.Context(), serviceID)
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "list_service_domains", err)
 		return
 	}
 	out := make([]projectDomainOut, 0, len(rows))
@@ -233,6 +278,59 @@ func (h *Handler) createProjectDomain(w http.ResponseWriter, r *http.Request) {
 	rpcutil.WriteJSON(w, http.StatusCreated, domainToOut(d))
 }
 
+func (h *Handler) createServiceDomain(w http.ResponseWriter, r *http.Request) {
+	p, ok := rpcutil.MustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !rpcutil.RequireOrgAdmin(w, p) {
+		return
+	}
+	serviceID, err := rpcutil.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_id", "invalid service id")
+		return
+	}
+	service, _, err := h.serviceAndProjectByIDAndOrg(r.Context(), serviceID, p.OrganizationID)
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "service not found")
+		return
+	}
+	var req struct {
+		DomainName string `json:"domain_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
+		return
+	}
+	domainName, err := NormalizeDomainName(req.DomainName)
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_domain", err.Error())
+		return
+	}
+	token, err := newVerificationToken()
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "token_generation", err)
+		return
+	}
+	d, err := h.Q.DomainCreate(r.Context(), queries.DomainCreateParams{
+		ID:                pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		ProjectID:         service.ProjectID,
+		ServiceID:         service.ID,
+		DomainName:        domainName,
+		VerificationToken: token,
+	})
+	if err != nil {
+		if IsPgUniqueViolation(err) {
+			rpcutil.WriteAPIError(w, http.StatusConflict, "domain_taken", "that domain is already registered")
+			return
+		}
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "create_service_domain", err)
+		return
+	}
+	rpcutil.WriteJSON(w, http.StatusCreated, domainToOut(d))
+}
+
 func (h *Handler) deleteProjectDomain(w http.ResponseWriter, r *http.Request) {
 	p, ok := rpcutil.MustPrincipal(w, r)
 	if !ok {
@@ -274,6 +372,49 @@ func (h *Handler) deleteProjectDomain(w http.ResponseWriter, r *http.Request) {
 		ProjectID: projectID,
 	}); err != nil {
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "delete_domain", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) deleteServiceDomain(w http.ResponseWriter, r *http.Request) {
+	p, ok := rpcutil.MustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !rpcutil.RequireOrgAdmin(w, p) {
+		return
+	}
+	serviceID, err := rpcutil.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_id", "invalid service id")
+		return
+	}
+	if _, _, err := h.serviceAndProjectByIDAndOrg(r.Context(), serviceID, p.OrganizationID); err != nil {
+		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "service not found")
+		return
+	}
+	domainID, err := rpcutil.ParseUUID(r.PathValue("domain_id"))
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_domain_id", "invalid domain id")
+		return
+	}
+	if _, err := h.Q.DomainFirstByIDAndService(r.Context(), queries.DomainFirstByIDAndServiceParams{
+		ID:        domainID,
+		ServiceID: serviceID,
+	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "domain not found")
+			return
+		}
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "domain_lookup", err)
+		return
+	}
+	if err := h.Q.DomainDeleteByServiceID(r.Context(), queries.DomainDeleteByServiceIDParams{
+		ID:        domainID,
+		ServiceID: serviceID,
+	}); err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "delete_service_domain", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -355,6 +496,82 @@ func (h *Handler) verifyProjectDomain(w http.ResponseWriter, r *http.Request) {
 			}); err == nil {
 				d = dFresh
 			}
+		}
+	}
+	rpcutil.WriteJSON(w, http.StatusOK, domainToOut(d))
+}
+
+func (h *Handler) verifyServiceDomain(w http.ResponseWriter, r *http.Request) {
+	p, ok := rpcutil.MustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !rpcutil.RequireOrgAdmin(w, p) {
+		return
+	}
+	serviceID, err := rpcutil.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_id", "invalid service id")
+		return
+	}
+	service, _, err := h.serviceAndProjectByIDAndOrg(r.Context(), serviceID, p.OrganizationID)
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "service not found")
+		return
+	}
+	domainID, err := rpcutil.ParseUUID(r.PathValue("domain_id"))
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_domain_id", "invalid domain id")
+		return
+	}
+	d, err := h.Q.DomainFirstByIDAndService(r.Context(), queries.DomainFirstByIDAndServiceParams{
+		ID:        domainID,
+		ServiceID: serviceID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "domain not found")
+			return
+		}
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "domain_lookup", err)
+		return
+	}
+	if d.VerifiedAt.Valid {
+		rpcutil.WriteJSON(w, http.StatusOK, domainToOut(d))
+		return
+	}
+	if d.VerificationToken == "" {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "not_pending", "domain has no pending verification")
+		return
+	}
+	recordName := domainChallengeRecordName(d.DomainName)
+	txtOk, err := challengeTXTFound(r.Context(), recordName, d.VerificationToken)
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "dns_lookup_failed", "could not resolve DNS: "+err.Error())
+		return
+	}
+	if !txtOk {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "verification_failed", "TXT record "+recordName+" not found or value does not match")
+		return
+	}
+	d, err = h.Q.DomainSetVerifiedByServiceID(r.Context(), queries.DomainSetVerifiedByServiceIDParams{
+		ID:        domainID,
+		ServiceID: serviceID,
+	})
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "verify_service_domain", err)
+		return
+	}
+	if dep, err := h.Q.DeploymentLatestRunningByServiceID(r.Context(), service.ID); err == nil && dep.RunningAt.Valid {
+		_ = h.Q.DomainUpdateDeploymentForDomainID(r.Context(), queries.DomainUpdateDeploymentForDomainIDParams{
+			ID:           domainID,
+			DeploymentID: dep.ID,
+		})
+		if dFresh, err := h.Q.DomainFirstByIDAndService(r.Context(), queries.DomainFirstByIDAndServiceParams{
+			ID:        domainID,
+			ServiceID: serviceID,
+		}); err == nil {
+			d = dFresh
 		}
 	}
 	rpcutil.WriteJSON(w, http.StatusOK, domainToOut(d))

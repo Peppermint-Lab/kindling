@@ -77,7 +77,7 @@ func (d *Deployer) reconcileInstanceServerAssignment(
 	}
 
 	if persistentVolume != nil {
-		projectVolume, _, err := d.projectVolumeForProject(ctx, dep.ProjectID)
+		projectVolume, _, err := d.projectVolumeForDeployment(ctx, dep)
 		if err != nil {
 			return inst, fmt.Errorf("load project volume: %w", err)
 		}
@@ -253,7 +253,7 @@ func (d *Deployer) assignServerIfNeeded(
 		err error
 	)
 	if persistentVolume != nil {
-		projectVolume, _, volumeErr := d.projectVolumeForProject(ctx, dep.ProjectID)
+		projectVolume, _, volumeErr := d.projectVolumeForDeployment(ctx, dep)
 		if volumeErr != nil {
 			return inst, fmt.Errorf("load project volume: %w", volumeErr)
 		}
