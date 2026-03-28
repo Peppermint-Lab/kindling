@@ -48,6 +48,7 @@ type Snapshot struct {
 
 	ColdStartTimeout                  time.Duration
 	ScaleToZeroIdleSeconds            int64
+	ServiceBaseDomain                 string
 	PreviewBaseDomain                 string
 	PreviewRetentionAfterCloseSeconds int64
 	PreviewIdleSeconds                int64
@@ -108,6 +109,7 @@ func LoadSnapshot(ctx context.Context, q *queries.Queries, serverID uuid.UUID, m
 			s.ScaleToZeroIdleSeconds = n
 		}
 	}
+	s.ServiceBaseDomain = strings.TrimSpace(settings[SettingServiceBaseDomain])
 	s.PreviewBaseDomain = strings.TrimSpace(settings[SettingPreviewBaseDomain])
 	if v := strings.TrimSpace(settings[SettingPreviewRetentionAfterCloseSecs]); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {

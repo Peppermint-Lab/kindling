@@ -2125,6 +2125,49 @@ func (q *Queries) DomainCreate(ctx context.Context, arg DomainCreateParams) (Dom
 	return i, err
 }
 
+const domainCreateManaged = `-- name: DomainCreateManaged :one
+INSERT INTO domains (
+    id, project_id, service_id, deployment_id, domain_name, verification_token, verified_at, domain_kind
+)
+VALUES ($1, $2, $3, $4, $5, '', NOW(), 'service_managed')
+RETURNING id, project_id, service_id, deployment_id, domain_name, verification_token, verified_at, redirect_to, redirect_status_code, domain_kind, preview_environment_id, created_at, updated_at
+`
+
+type DomainCreateManagedParams struct {
+	ID           pgtype.UUID `json:"id"`
+	ProjectID    pgtype.UUID `json:"project_id"`
+	ServiceID    pgtype.UUID `json:"service_id"`
+	DeploymentID pgtype.UUID `json:"deployment_id"`
+	DomainName   string      `json:"domain_name"`
+}
+
+func (q *Queries) DomainCreateManaged(ctx context.Context, arg DomainCreateManagedParams) (Domain, error) {
+	row := q.db.QueryRow(ctx, domainCreateManaged,
+		arg.ID,
+		arg.ProjectID,
+		arg.ServiceID,
+		arg.DeploymentID,
+		arg.DomainName,
+	)
+	var i Domain
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServiceID,
+		&i.DeploymentID,
+		&i.DomainName,
+		&i.VerificationToken,
+		&i.VerifiedAt,
+		&i.RedirectTo,
+		&i.RedirectStatusCode,
+		&i.DomainKind,
+		&i.PreviewEnvironmentID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const domainCreatePreview = `-- name: DomainCreatePreview :one
 INSERT INTO domains (id, project_id, service_id, deployment_id, domain_name, verification_token, verified_at, domain_kind, preview_environment_id)
 VALUES ($1, $2, $3, $4, $5, '', NOW(), $6, $7)
@@ -2195,6 +2238,17 @@ type DomainDeleteByServiceIDParams struct {
 
 func (q *Queries) DomainDeleteByServiceID(ctx context.Context, arg DomainDeleteByServiceIDParams) error {
 	_, err := q.db.Exec(ctx, domainDeleteByServiceID, arg.ID, arg.ServiceID)
+	return err
+}
+
+const domainDeleteManagedByServiceID = `-- name: DomainDeleteManagedByServiceID :exec
+DELETE FROM domains
+WHERE service_id = $1
+  AND domain_kind = 'service_managed'
+`
+
+func (q *Queries) DomainDeleteManagedByServiceID(ctx context.Context, serviceID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, domainDeleteManagedByServiceID, serviceID)
 	return err
 }
 
@@ -2416,7 +2470,10 @@ func (q *Queries) DomainFirstByIDAndService(ctx context.Context, arg DomainFirst
 }
 
 const domainListByProjectID = `-- name: DomainListByProjectID :many
-SELECT id, project_id, service_id, deployment_id, domain_name, verification_token, verified_at, redirect_to, redirect_status_code, domain_kind, preview_environment_id, created_at, updated_at FROM domains WHERE project_id = $1 ORDER BY domain_name ASC
+SELECT id, project_id, service_id, deployment_id, domain_name, verification_token, verified_at, redirect_to, redirect_status_code, domain_kind, preview_environment_id, created_at, updated_at FROM domains
+WHERE project_id = $1
+  AND domain_kind = 'production'
+ORDER BY domain_name ASC
 `
 
 func (q *Queries) DomainListByProjectID(ctx context.Context, projectID pgtype.UUID) ([]Domain, error) {
@@ -2454,7 +2511,10 @@ func (q *Queries) DomainListByProjectID(ctx context.Context, projectID pgtype.UU
 }
 
 const domainListByServiceID = `-- name: DomainListByServiceID :many
-SELECT id, project_id, service_id, deployment_id, domain_name, verification_token, verified_at, redirect_to, redirect_status_code, domain_kind, preview_environment_id, created_at, updated_at FROM domains WHERE service_id = $1 ORDER BY domain_name ASC
+SELECT id, project_id, service_id, deployment_id, domain_name, verification_token, verified_at, redirect_to, redirect_status_code, domain_kind, preview_environment_id, created_at, updated_at FROM domains
+WHERE service_id = $1
+  AND domain_kind = 'production'
+ORDER BY domain_name ASC
 `
 
 func (q *Queries) DomainListByServiceID(ctx context.Context, serviceID pgtype.UUID) ([]Domain, error) {
@@ -2489,6 +2549,34 @@ func (q *Queries) DomainListByServiceID(ctx context.Context, serviceID pgtype.UU
 		return nil, err
 	}
 	return items, nil
+}
+
+const domainManagedByServiceID = `-- name: DomainManagedByServiceID :one
+SELECT id, project_id, service_id, deployment_id, domain_name, verification_token, verified_at, redirect_to, redirect_status_code, domain_kind, preview_environment_id, created_at, updated_at FROM domains
+WHERE service_id = $1
+  AND domain_kind = 'service_managed'
+LIMIT 1
+`
+
+func (q *Queries) DomainManagedByServiceID(ctx context.Context, serviceID pgtype.UUID) (Domain, error) {
+	row := q.db.QueryRow(ctx, domainManagedByServiceID, serviceID)
+	var i Domain
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServiceID,
+		&i.DeploymentID,
+		&i.DomainName,
+		&i.VerificationToken,
+		&i.VerifiedAt,
+		&i.RedirectTo,
+		&i.RedirectStatusCode,
+		&i.DomainKind,
+		&i.PreviewEnvironmentID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const domainProjectIDByDomainID = `-- name: DomainProjectIDByDomainID :one
@@ -2595,6 +2683,62 @@ type DomainUpdateDeploymentForProjectParams struct {
 func (q *Queries) DomainUpdateDeploymentForProject(ctx context.Context, arg DomainUpdateDeploymentForProjectParams) error {
 	_, err := q.db.Exec(ctx, domainUpdateDeploymentForProject, arg.DeploymentID, arg.ProjectID)
 	return err
+}
+
+const domainUpdateDeploymentForService = `-- name: DomainUpdateDeploymentForService :exec
+UPDATE domains
+SET deployment_id = $1, updated_at = NOW()
+WHERE service_id = $2
+  AND domain_kind IN ('production', 'service_managed')
+`
+
+type DomainUpdateDeploymentForServiceParams struct {
+	DeploymentID pgtype.UUID `json:"deployment_id"`
+	ServiceID    pgtype.UUID `json:"service_id"`
+}
+
+func (q *Queries) DomainUpdateDeploymentForService(ctx context.Context, arg DomainUpdateDeploymentForServiceParams) error {
+	_, err := q.db.Exec(ctx, domainUpdateDeploymentForService, arg.DeploymentID, arg.ServiceID)
+	return err
+}
+
+const domainUpdateManagedByServiceID = `-- name: DomainUpdateManagedByServiceID :one
+UPDATE domains
+SET domain_name = $2,
+    deployment_id = $3,
+    verification_token = '',
+    verified_at = NOW(),
+    updated_at = NOW()
+WHERE service_id = $1
+  AND domain_kind = 'service_managed'
+RETURNING id, project_id, service_id, deployment_id, domain_name, verification_token, verified_at, redirect_to, redirect_status_code, domain_kind, preview_environment_id, created_at, updated_at
+`
+
+type DomainUpdateManagedByServiceIDParams struct {
+	ServiceID    pgtype.UUID `json:"service_id"`
+	DomainName   string      `json:"domain_name"`
+	DeploymentID pgtype.UUID `json:"deployment_id"`
+}
+
+func (q *Queries) DomainUpdateManagedByServiceID(ctx context.Context, arg DomainUpdateManagedByServiceIDParams) (Domain, error) {
+	row := q.db.QueryRow(ctx, domainUpdateManagedByServiceID, arg.ServiceID, arg.DomainName, arg.DeploymentID)
+	var i Domain
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServiceID,
+		&i.DeploymentID,
+		&i.DomainName,
+		&i.VerificationToken,
+		&i.VerifiedAt,
+		&i.RedirectTo,
+		&i.RedirectStatusCode,
+		&i.DomainKind,
+		&i.PreviewEnvironmentID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const domainVerified = `-- name: DomainVerified :one
@@ -7232,6 +7376,51 @@ func (q *Queries) ServiceEndpointDNSLookupCandidates(ctx context.Context, arg Se
 	return items, nil
 }
 
+const serviceEndpointDeleteByIDAndServiceID = `-- name: ServiceEndpointDeleteByIDAndServiceID :exec
+DELETE FROM service_endpoints
+WHERE id = $1 AND service_id = $2
+`
+
+type ServiceEndpointDeleteByIDAndServiceIDParams struct {
+	ID        pgtype.UUID `json:"id"`
+	ServiceID pgtype.UUID `json:"service_id"`
+}
+
+func (q *Queries) ServiceEndpointDeleteByIDAndServiceID(ctx context.Context, arg ServiceEndpointDeleteByIDAndServiceIDParams) error {
+	_, err := q.db.Exec(ctx, serviceEndpointDeleteByIDAndServiceID, arg.ID, arg.ServiceID)
+	return err
+}
+
+const serviceEndpointFirstByIDAndServiceID = `-- name: ServiceEndpointFirstByIDAndServiceID :one
+SELECT id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname, last_healthy_at, last_unhealthy_at, created_at, updated_at FROM service_endpoints
+WHERE id = $1 AND service_id = $2
+`
+
+type ServiceEndpointFirstByIDAndServiceIDParams struct {
+	ID        pgtype.UUID `json:"id"`
+	ServiceID pgtype.UUID `json:"service_id"`
+}
+
+func (q *Queries) ServiceEndpointFirstByIDAndServiceID(ctx context.Context, arg ServiceEndpointFirstByIDAndServiceIDParams) (ServiceEndpoint, error) {
+	row := q.db.QueryRow(ctx, serviceEndpointFirstByIDAndServiceID, arg.ID, arg.ServiceID)
+	var i ServiceEndpoint
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.Name,
+		&i.Protocol,
+		&i.TargetPort,
+		&i.Visibility,
+		&i.PrivateIp,
+		&i.PublicHostname,
+		&i.LastHealthyAt,
+		&i.LastUnhealthyAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const serviceEndpointListByServiceID = `-- name: ServiceEndpointListByServiceID :many
 SELECT id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname, last_healthy_at, last_unhealthy_at, created_at, updated_at FROM service_endpoints WHERE service_id = $1 ORDER BY created_at ASC
 `
@@ -7267,6 +7456,53 @@ func (q *Queries) ServiceEndpointListByServiceID(ctx context.Context, serviceID 
 		return nil, err
 	}
 	return items, nil
+}
+
+const serviceEndpointUpdateByIDAndServiceID = `-- name: ServiceEndpointUpdateByIDAndServiceID :one
+UPDATE service_endpoints
+SET name = $3,
+    protocol = $4,
+    target_port = $5,
+    visibility = $6,
+    updated_at = NOW()
+WHERE id = $1 AND service_id = $2
+RETURNING id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname, last_healthy_at, last_unhealthy_at, created_at, updated_at
+`
+
+type ServiceEndpointUpdateByIDAndServiceIDParams struct {
+	ID         pgtype.UUID `json:"id"`
+	ServiceID  pgtype.UUID `json:"service_id"`
+	Name       string      `json:"name"`
+	Protocol   string      `json:"protocol"`
+	TargetPort int32       `json:"target_port"`
+	Visibility string      `json:"visibility"`
+}
+
+func (q *Queries) ServiceEndpointUpdateByIDAndServiceID(ctx context.Context, arg ServiceEndpointUpdateByIDAndServiceIDParams) (ServiceEndpoint, error) {
+	row := q.db.QueryRow(ctx, serviceEndpointUpdateByIDAndServiceID,
+		arg.ID,
+		arg.ServiceID,
+		arg.Name,
+		arg.Protocol,
+		arg.TargetPort,
+		arg.Visibility,
+	)
+	var i ServiceEndpoint
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.Name,
+		&i.Protocol,
+		&i.TargetPort,
+		&i.Visibility,
+		&i.PrivateIp,
+		&i.PublicHostname,
+		&i.LastHealthyAt,
+		&i.LastUnhealthyAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const serviceFirstByID = `-- name: ServiceFirstByID :one

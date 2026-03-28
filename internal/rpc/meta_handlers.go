@@ -53,6 +53,7 @@ func (a *API) putMeta(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		PublicBaseURL                     *string `json:"public_base_url"`
 		DashboardPublicHost               *string `json:"dashboard_public_host"`
+		ServiceBaseDomain                 *string `json:"service_base_domain"`
 		PreviewBaseDomain                 *string `json:"preview_base_domain"`
 		PreviewRetentionAfterCloseSeconds *int64  `json:"preview_retention_after_close_seconds"`
 		PreviewIdleScaleSeconds           *int64  `json:"preview_idle_scale_seconds"`
@@ -71,6 +72,15 @@ func (a *API) putMeta(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DashboardPublicHost != nil {
 		if err := a.clusterSettingUpsertDashboardPublicHost(r.Context(), *req.DashboardPublicHost); err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
+			return
+		}
+	}
+	if req.ServiceBaseDomain != nil {
+		if err := a.q.ClusterSettingUpsert(r.Context(), queries.ClusterSettingUpsertParams{
+			Key:   config.SettingServiceBaseDomain,
+			Value: strings.TrimSpace(*req.ServiceBaseDomain),
+		}); err != nil {
 			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
 			return
 		}
@@ -143,6 +153,12 @@ func (a *API) putMeta(w http.ResponseWriter, r *http.Request) {
 }
 
 func mergePreviewMeta(ctx context.Context, q *queries.Queries, out map[string]any) {
+	sb := ""
+	if v, err := q.ClusterSettingGet(ctx, config.SettingServiceBaseDomain); err == nil {
+		sb = strings.TrimSpace(v)
+	}
+	out["service_base_domain"] = sb
+
 	pb := ""
 	if v, err := q.ClusterSettingGet(ctx, config.SettingPreviewBaseDomain); err == nil {
 		pb = strings.TrimSpace(v)

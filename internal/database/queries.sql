@@ -439,6 +439,10 @@ RETURNING s.*;
 -- name: ServiceEndpointListByServiceID :many
 SELECT * FROM service_endpoints WHERE service_id = $1 ORDER BY created_at ASC;
 
+-- name: ServiceEndpointFirstByIDAndServiceID :one
+SELECT * FROM service_endpoints
+WHERE id = $1 AND service_id = $2;
+
 -- name: ServiceEndpointDNSLookupCandidates :many
 SELECT
     se.id AS endpoint_id,
@@ -490,6 +494,20 @@ WITH svc AS (
     RETURNING *
 )
 SELECT * FROM inserted;
+
+-- name: ServiceEndpointUpdateByIDAndServiceID :one
+UPDATE service_endpoints
+SET name = $3,
+    protocol = $4,
+    target_port = $5,
+    visibility = $6,
+    updated_at = NOW()
+WHERE id = $1 AND service_id = $2
+RETURNING *;
+
+-- name: ServiceEndpointDeleteByIDAndServiceID :exec
+DELETE FROM service_endpoints
+WHERE id = $1 AND service_id = $2;
 
 -- name: OrgNetworkByOrganizationID :one
 SELECT * FROM org_networks WHERE organization_id = $1;
@@ -1335,10 +1353,16 @@ VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: DomainListByProjectID :many
-SELECT * FROM domains WHERE project_id = $1 ORDER BY domain_name ASC;
+SELECT * FROM domains
+WHERE project_id = $1
+  AND domain_kind = 'production'
+ORDER BY domain_name ASC;
 
 -- name: DomainListByServiceID :many
-SELECT * FROM domains WHERE service_id = $1 ORDER BY domain_name ASC;
+SELECT * FROM domains
+WHERE service_id = $1
+  AND domain_kind = 'production'
+ORDER BY domain_name ASC;
 
 -- name: DomainFirstByIDAndProject :one
 SELECT * FROM domains WHERE id = $1 AND project_id = $2;
@@ -1374,8 +1398,43 @@ SELECT verified_at FROM domains WHERE domain_name = $1;
 UPDATE domains SET deployment_id = $1, updated_at = NOW()
 WHERE project_id = $2 AND domain_kind = 'production';
 
+-- name: DomainUpdateDeploymentForService :exec
+UPDATE domains
+SET deployment_id = $1, updated_at = NOW()
+WHERE service_id = $2
+  AND domain_kind IN ('production', 'service_managed');
+
 -- name: DomainUpdateDeploymentForDomainID :exec
 UPDATE domains SET deployment_id = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: DomainManagedByServiceID :one
+SELECT * FROM domains
+WHERE service_id = $1
+  AND domain_kind = 'service_managed'
+LIMIT 1;
+
+-- name: DomainCreateManaged :one
+INSERT INTO domains (
+    id, project_id, service_id, deployment_id, domain_name, verification_token, verified_at, domain_kind
+)
+VALUES ($1, $2, $3, $4, $5, '', NOW(), 'service_managed')
+RETURNING *;
+
+-- name: DomainUpdateManagedByServiceID :one
+UPDATE domains
+SET domain_name = $2,
+    deployment_id = $3,
+    verification_token = '',
+    verified_at = NOW(),
+    updated_at = NOW()
+WHERE service_id = $1
+  AND domain_kind = 'service_managed'
+RETURNING *;
+
+-- name: DomainDeleteManagedByServiceID :exec
+DELETE FROM domains
+WHERE service_id = $1
+  AND domain_kind = 'service_managed';
 
 -- name: DomainCreatePreview :one
 INSERT INTO domains (id, project_id, service_id, deployment_id, domain_name, verification_token, verified_at, domain_kind, preview_environment_id)

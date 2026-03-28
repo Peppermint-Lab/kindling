@@ -434,15 +434,15 @@ func (h *Handler) handlePullRequestSync(w http.ResponseWriter, ctx context.Conte
 	}
 
 	prNum := int32(payload.Number)
-	stableHost := preview.StableHostname(payload.Number, project.Name, baseDomain)
-	if stableHost == "" {
-		http.Error(w, "invalid preview base domain", http.StatusBadRequest)
-		return
-	}
 	service, err := h.q.ServicePrimaryByProjectID(ctx, project.ID)
 	if err != nil {
 		slog.Error("preview load primary service", "error", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	stableHost := preview.StableHostname(payload.Number, service.Slug, project.Name, baseDomain)
+	if stableHost == "" {
+		http.Error(w, "invalid preview base domain", http.StatusBadRequest)
 		return
 	}
 

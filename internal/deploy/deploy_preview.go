@@ -16,7 +16,7 @@ import (
 )
 
 func (d *Deployer) ensurePreviewRoutes(ctx context.Context, dep queries.Deployment, proj queries.Project, logger *slog.Logger) error {
-	if dep.DeploymentKind != "preview" || !dep.PreviewEnvironmentID.Valid {
+	if dep.DeploymentKind != "preview" || !dep.PreviewEnvironmentID.Valid || !dep.ServiceID.Valid {
 		return nil
 	}
 	base, err := d.q.ClusterSettingGet(ctx, config.SettingPreviewBaseDomain)
@@ -28,6 +28,10 @@ func (d *Deployer) ensurePreviewRoutes(ctx context.Context, dep queries.Deployme
 	pe, err := d.q.PreviewEnvironmentByID(ctx, dep.PreviewEnvironmentID)
 	if err != nil {
 		return fmt.Errorf("preview env: %w", err)
+	}
+	service, err := d.q.ServiceFirstByID(ctx, dep.ServiceID)
+	if err != nil {
+		return fmt.Errorf("preview service: %w", err)
 	}
 
 	stableDom, err := d.q.DomainFindByPreviewEnvironmentAndKind(ctx, queries.DomainFindByPreviewEnvironmentAndKindParams{
@@ -47,7 +51,7 @@ func (d *Deployer) ensurePreviewRoutes(ctx context.Context, dep queries.Deployme
 	if len(sha) > 7 {
 		sha = sha[:7]
 	}
-	immutableHost := preview.ImmutableHostname(sha, int(pe.PrNumber), proj.Name, base)
+	immutableHost := preview.ImmutableHostname(sha, int(pe.PrNumber), service.Slug, proj.Name, base)
 
 	_, err = d.q.DomainFindByDeploymentIDAndKind(ctx, queries.DomainFindByDeploymentIDAndKindParams{
 		DeploymentID: dep.ID,

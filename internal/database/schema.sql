@@ -1008,7 +1008,7 @@ CREATE TABLE IF NOT EXISTS domains (
     redirect_to         TEXT,
     redirect_status_code INT,
     domain_kind         TEXT NOT NULL DEFAULT 'production'
-        CHECK (domain_kind IN ('production', 'preview_stable', 'preview_immutable')),
+        CHECK (domain_kind IN ('production', 'service_managed', 'preview_stable', 'preview_immutable')),
     preview_environment_id UUID REFERENCES preview_environments(id) ON DELETE CASCADE,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -1050,7 +1050,7 @@ DO $$ BEGIN
         SELECT 1 FROM pg_constraint WHERE conname = 'domains_domain_kind_check'
     ) THEN
         ALTER TABLE domains ADD CONSTRAINT domains_domain_kind_check
-            CHECK (domain_kind IN ('production', 'preview_stable', 'preview_immutable'));
+            CHECK (domain_kind IN ('production', 'service_managed', 'preview_stable', 'preview_immutable'));
     END IF;
 END $$;
 

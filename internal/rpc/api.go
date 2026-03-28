@@ -72,6 +72,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/services/{id}", a.getService)
 	mux.HandleFunc("GET /api/services/{id}/endpoints", a.listServiceEndpoints)
 	mux.HandleFunc("POST /api/services/{id}/endpoints", a.createServiceEndpoint)
+	mux.HandleFunc("PATCH /api/services/{id}/endpoints/{endpoint_id}", a.updateServiceEndpoint)
+	mux.HandleFunc("DELETE /api/services/{id}/endpoints/{endpoint_id}", a.deleteServiceEndpoint)
 	mux.HandleFunc("GET /api/services/{id}/secrets", a.listServiceSecrets)
 	mux.HandleFunc("POST /api/services/{id}/secrets", a.upsertServiceSecret)
 	mux.HandleFunc("DELETE /api/services/{id}/secrets/{secret_id}", a.deleteServiceSecret)

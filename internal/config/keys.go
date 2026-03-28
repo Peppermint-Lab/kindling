@@ -14,6 +14,7 @@ const (
 	SettingVolumeBackupS3Region           = "volume_backup_s3_region"
 	SettingVolumeBackupS3Endpoint         = "volume_backup_s3_endpoint"
 	SettingVolumeBackupS3Prefix           = "volume_backup_s3_prefix"
+	SettingServiceBaseDomain              = "service_base_domain"
 	SettingPreviewBaseDomain              = "preview_base_domain"
 	SettingPreviewRetentionAfterCloseSecs = "preview_retention_after_close_seconds"
 	SettingPreviewIdleSeconds             = "preview_idle_scale_seconds"

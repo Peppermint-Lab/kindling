@@ -417,11 +417,8 @@ func (d *Deployer) promoteDeployment(ctx context.Context, rc *reconcileContext, 
 			return fmt.Errorf("preview routes: %w", err)
 		}
 	} else {
-		if err := d.q.DomainUpdateDeploymentForProject(ctx, queries.DomainUpdateDeploymentForProjectParams{
-			DeploymentID: rc.dep.ID,
-			ProjectID:    rc.dep.ProjectID,
-		}); err != nil {
-			return fmt.Errorf("update domain deployment: %w", err)
+		if err := d.ensureProductionRoutes(ctx, rc.dep, rc.proj, rc.service, rc.logger); err != nil {
+			return fmt.Errorf("production routes: %w", err)
 		}
 		d.drainOldDeployments(ctx, rc.dep)
 	}

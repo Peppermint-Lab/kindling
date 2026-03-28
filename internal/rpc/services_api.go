@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"unicode"
@@ -11,7 +12,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/preview"
 	"github.com/kindlingvm/kindling/internal/shared/netnames"
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
@@ -57,6 +60,7 @@ type serviceEndpointOut struct {
 type serviceOut struct {
 	ID                     string               `json:"id"`
 	ProjectID              string               `json:"project_id"`
+	ProjectName            string               `json:"project_name"`
 	Name                   string               `json:"name"`
 	Slug                   string               `json:"slug"`
 	RootDirectory          string               `json:"root_directory"`
@@ -106,6 +110,14 @@ func serviceEndpointFromCreateRow(row queries.ServiceEndpointCreateRow) queries.
 }
 
 func serviceEndpointToOut(ep queries.ServiceEndpoint, service queries.Service, project queries.Project, org queries.Organization) serviceEndpointOut {
+	return serviceEndpointToOutWithManagedHostname(ep, service, project, org, "")
+}
+
+func serviceEndpointToOutWithManagedHostname(ep queries.ServiceEndpoint, service queries.Service, project queries.Project, org queries.Organization, managedPublicHostname string) serviceEndpointOut {
+	publicHostname := strings.TrimSpace(ep.PublicHostname)
+	if ep.Protocol == "http" && ep.Visibility == "public" && strings.TrimSpace(managedPublicHostname) != "" {
+		publicHostname = strings.TrimSpace(managedPublicHostname)
+	}
 	return serviceEndpointOut{
 		ID:              pguuid.ToString(ep.ID),
 		Name:            ep.Name,
@@ -114,10 +126,21 @@ func serviceEndpointToOut(ep queries.ServiceEndpoint, service queries.Service, p
 		Visibility:      ep.Visibility,
 		PrivateIP:       ep.PrivateIp.String(),
 		DNSName:         netnames.PrivateDNSName(ep.Name, service.Slug, project.Name, "prod", org.Slug),
-		PublicHostname:  strings.TrimSpace(ep.PublicHostname),
+		PublicHostname:  publicHostname,
 		LastHealthyAt:   formatTS(ep.LastHealthyAt),
 		LastUnhealthyAt: formatTS(ep.LastUnhealthyAt),
 	}
+}
+
+func (a *API) managedPublicHostnameForService(ctx context.Context, serviceID pgtype.UUID) (string, error) {
+	domain, err := a.q.DomainManagedByServiceID(ctx, serviceID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(domain.DomainName), nil
 }
 
 func (a *API) serviceToOut(ctx context.Context, service queries.Service) (serviceOut, error) {
@@ -137,9 +160,14 @@ func (a *API) serviceToOut(ctx context.Context, service queries.Service) (servic
 	if err != nil {
 		return serviceOut{}, err
 	}
+	managedPublicHostname, err := a.managedPublicHostnameForService(ctx, service.ID)
+	if err != nil {
+		return serviceOut{}, err
+	}
 	out := serviceOut{
 		ID:                     pguuid.ToString(service.ID),
 		ProjectID:              pguuid.ToString(service.ProjectID),
+		ProjectName:            project.Name,
 		Name:                   service.Name,
 		Slug:                   service.Slug,
 		RootDirectory:          service.RootDirectory,
@@ -156,9 +184,160 @@ func (a *API) serviceToOut(ctx context.Context, service queries.Service) (servic
 	}
 	out.Endpoints = make([]serviceEndpointOut, 0, len(endpoints))
 	for _, endpoint := range endpoints {
-		out.Endpoints = append(out.Endpoints, serviceEndpointToOut(endpoint, service, project, org))
+		out.Endpoints = append(out.Endpoints, serviceEndpointToOutWithManagedHostname(endpoint, service, project, org, managedPublicHostname))
 	}
 	return out, nil
+}
+
+type serviceEndpointInput struct {
+	Name       string `json:"name"`
+	Protocol   string `json:"protocol"`
+	TargetPort *int32 `json:"target_port"`
+	Visibility string `json:"visibility"`
+}
+
+type normalizedServiceEndpointInput struct {
+	Name       string
+	Protocol   string
+	TargetPort int32
+	Visibility string
+}
+
+func normalizeServiceEndpointInput(req serviceEndpointInput) (normalizedServiceEndpointInput, error) {
+	name := normalizeServiceSlug(req.Name)
+	if name == "" {
+		return normalizedServiceEndpointInput{}, errors.New("name is required")
+	}
+	protocol := strings.TrimSpace(strings.ToLower(req.Protocol))
+	if protocol == "" {
+		protocol = "http"
+	}
+	if protocol != "http" && protocol != "tcp" {
+		return normalizedServiceEndpointInput{}, errors.New("protocol must be http or tcp")
+	}
+	targetPort := int32(3000)
+	if req.TargetPort != nil {
+		targetPort = *req.TargetPort
+	}
+	if targetPort <= 0 || targetPort > 65535 {
+		return normalizedServiceEndpointInput{}, errors.New("target_port must be between 1 and 65535")
+	}
+	visibility := strings.TrimSpace(strings.ToLower(req.Visibility))
+	if visibility == "" {
+		visibility = "private"
+	}
+	if visibility != "private" && visibility != "public" {
+		return normalizedServiceEndpointInput{}, errors.New("visibility must be private or public")
+	}
+	if visibility == "public" && protocol != "http" {
+		return normalizedServiceEndpointInput{}, errors.New("only http endpoints may be public")
+	}
+	return normalizedServiceEndpointInput{
+		Name:       name,
+		Protocol:   protocol,
+		TargetPort: targetPort,
+		Visibility: visibility,
+	}, nil
+}
+
+func (a *API) validateServiceEndpointVisibility(ctx context.Context, serviceID, ignoreEndpointID pgtype.UUID, endpoint normalizedServiceEndpointInput) error {
+	if endpoint.Visibility != "public" {
+		return nil
+	}
+	existing, err := a.q.ServiceEndpointListByServiceID(ctx, serviceID)
+	if err != nil {
+		return err
+	}
+	for _, candidate := range existing {
+		if ignoreEndpointID.Valid && candidate.ID == ignoreEndpointID {
+			continue
+		}
+		if candidate.Visibility == "public" && candidate.Protocol == "http" {
+			return errors.New("only one public http endpoint is allowed per service")
+		}
+	}
+	return nil
+}
+
+func (a *API) reconcileManagedServiceDomain(ctx context.Context, service queries.Service) error {
+	endpoints, err := a.q.ServiceEndpointListByServiceID(ctx, service.ID)
+	if err != nil {
+		return fmt.Errorf("list service endpoints: %w", err)
+	}
+
+	hasPublicHTTP := false
+	for _, endpoint := range endpoints {
+		if endpoint.Protocol == "http" && endpoint.Visibility == "public" {
+			hasPublicHTTP = true
+			break
+		}
+	}
+	if !hasPublicHTTP {
+		if err := a.q.DomainDeleteManagedByServiceID(ctx, service.ID); err != nil {
+			return fmt.Errorf("delete managed domain: %w", err)
+		}
+		return nil
+	}
+
+	baseDomain, err := a.q.ClusterSettingGet(ctx, config.SettingServiceBaseDomain)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("load service base domain: %w", err)
+	}
+	if strings.TrimSpace(baseDomain) == "" {
+		if err := a.q.DomainDeleteManagedByServiceID(ctx, service.ID); err != nil {
+			return fmt.Errorf("delete managed domain: %w", err)
+		}
+		return nil
+	}
+
+	deployment, err := a.q.DeploymentLatestRunningByServiceID(ctx, service.ID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			if err := a.q.DomainDeleteManagedByServiceID(ctx, service.ID); err != nil {
+				return fmt.Errorf("delete managed domain: %w", err)
+			}
+			return nil
+		}
+		return fmt.Errorf("load latest running deployment: %w", err)
+	}
+
+	project, err := a.q.ProjectFirstByID(ctx, service.ProjectID)
+	if err != nil {
+		return fmt.Errorf("load service project: %w", err)
+	}
+
+	host := preview.ProductionServiceHostname(service.Slug, project.Name, baseDomain)
+	if host == "" {
+		if err := a.q.DomainDeleteManagedByServiceID(ctx, service.ID); err != nil {
+			return fmt.Errorf("delete managed domain: %w", err)
+		}
+		return nil
+	}
+
+	_, err = a.q.DomainManagedByServiceID(ctx, service.ID)
+	switch {
+	case err == nil:
+		if _, err := a.q.DomainUpdateManagedByServiceID(ctx, queries.DomainUpdateManagedByServiceIDParams{
+			ServiceID:    service.ID,
+			DomainName:   host,
+			DeploymentID: deployment.ID,
+		}); err != nil {
+			return fmt.Errorf("update managed domain: %w", err)
+		}
+	case errors.Is(err, pgx.ErrNoRows):
+		if _, err := a.q.DomainCreateManaged(ctx, queries.DomainCreateManagedParams{
+			ID:           pguuid.ToPgtype(uuid.New()),
+			ProjectID:    service.ProjectID,
+			ServiceID:    service.ID,
+			DeploymentID: deployment.ID,
+			DomainName:   host,
+		}); err != nil {
+			return fmt.Errorf("create managed domain: %w", err)
+		}
+	default:
+		return fmt.Errorf("lookup managed domain: %w", err)
+	}
+	return nil
 }
 
 func (a *API) listProjectServices(w http.ResponseWriter, r *http.Request) {
@@ -332,9 +511,14 @@ func (a *API) listServiceEndpoints(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "list_service_endpoints", err)
 		return
 	}
+	managedPublicHostname, err := a.managedPublicHostnameForService(r.Context(), service.ID)
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "list_service_endpoints", err)
+		return
+	}
 	out := make([]serviceEndpointOut, 0, len(endpoints))
 	for _, endpoint := range endpoints {
-		out = append(out, serviceEndpointToOut(endpoint, service, project, org))
+		out = append(out, serviceEndpointToOutWithManagedHostname(endpoint, service, project, org, managedPublicHostname))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -360,60 +544,38 @@ func (a *API) createServiceEndpoint(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "not_found", "service not found")
 		return
 	}
-	var req struct {
-		Name           string `json:"name"`
-		Protocol       string `json:"protocol"`
-		TargetPort     *int32 `json:"target_port"`
-		Visibility     string `json:"visibility"`
-		PublicHostname string `json:"public_hostname"`
-	}
+	var req serviceEndpointInput
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
 		return
 	}
-	name := normalizeServiceSlug(req.Name)
-	if name == "" {
-		writeAPIError(w, http.StatusBadRequest, "validation_error", "name is required")
+	endpointReq, err := normalizeServiceEndpointInput(req)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
 		return
 	}
-	protocol := strings.TrimSpace(strings.ToLower(req.Protocol))
-	if protocol == "" {
-		protocol = "http"
-	}
-	if protocol != "http" && protocol != "tcp" {
-		writeAPIError(w, http.StatusBadRequest, "validation_error", "protocol must be http or tcp")
-		return
-	}
-	targetPort := int32(3000)
-	if req.TargetPort != nil {
-		targetPort = *req.TargetPort
-	}
-	if targetPort <= 0 || targetPort > 65535 {
-		writeAPIError(w, http.StatusBadRequest, "validation_error", "target_port must be between 1 and 65535")
-		return
-	}
-	visibility := strings.TrimSpace(strings.ToLower(req.Visibility))
-	if visibility == "" {
-		visibility = "private"
-	}
-	if visibility != "private" && visibility != "public" {
-		writeAPIError(w, http.StatusBadRequest, "validation_error", "visibility must be private or public")
+	if err := a.validateServiceEndpointVisibility(r.Context(), service.ID, pgtype.UUID{}, endpointReq); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
 		return
 	}
 	endpoint, err := a.q.ServiceEndpointCreate(r.Context(), queries.ServiceEndpointCreateParams{
 		ID:             service.ID,
 		ID_2:           pgtype.UUID{Bytes: uuid.New(), Valid: true},
-		Name:           name,
-		Protocol:       protocol,
-		TargetPort:     targetPort,
-		Visibility:     visibility,
-		PublicHostname: strings.TrimSpace(req.PublicHostname),
+		Name:           endpointReq.Name,
+		Protocol:       endpointReq.Protocol,
+		TargetPort:     endpointReq.TargetPort,
+		Visibility:     endpointReq.Visibility,
+		PublicHostname: "",
 	})
 	if err != nil {
 		if isPgUniqueViolation(err) {
 			writeAPIError(w, http.StatusConflict, "endpoint_name_taken", "that endpoint name is already in use for this service")
 			return
 		}
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "create_service_endpoint", err)
+		return
+	}
+	if err := a.reconcileManagedServiceDomain(r.Context(), service); err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "create_service_endpoint", err)
 		return
 	}
@@ -427,5 +589,120 @@ func (a *API) createServiceEndpoint(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "create_service_endpoint", err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, serviceEndpointToOut(serviceEndpointFromCreateRow(endpoint), service, project, org))
+	managedPublicHostname, err := a.managedPublicHostnameForService(r.Context(), service.ID)
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "create_service_endpoint", err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, serviceEndpointToOutWithManagedHostname(serviceEndpointFromCreateRow(endpoint), service, project, org, managedPublicHostname))
+}
+
+func (a *API) updateServiceEndpoint(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !requireOrgAdmin(w, p) {
+		return
+	}
+	serviceCtx, ok := a.serviceForRequest(w, r, p.OrganizationID)
+	if !ok {
+		return
+	}
+	endpointID, err := parseUUID(r.PathValue("endpoint_id"))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid endpoint id")
+		return
+	}
+	var req serviceEndpointInput
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
+		return
+	}
+	endpointReq, err := normalizeServiceEndpointInput(req)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+	if err := a.validateServiceEndpointVisibility(r.Context(), serviceCtx.ID, endpointID, endpointReq); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+	endpoint, err := a.q.ServiceEndpointUpdateByIDAndServiceID(r.Context(), queries.ServiceEndpointUpdateByIDAndServiceIDParams{
+		ID:         endpointID,
+		ServiceID:  serviceCtx.ID,
+		Name:       endpointReq.Name,
+		Protocol:   endpointReq.Protocol,
+		TargetPort: endpointReq.TargetPort,
+		Visibility: endpointReq.Visibility,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeAPIError(w, http.StatusNotFound, "not_found", "endpoint not found")
+			return
+		}
+		if isPgUniqueViolation(err) {
+			writeAPIError(w, http.StatusConflict, "endpoint_name_taken", "that endpoint name is already in use for this service")
+			return
+		}
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_service_endpoint", err)
+		return
+	}
+	if err := a.reconcileManagedServiceDomain(r.Context(), serviceCtx.Service); err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_service_endpoint", err)
+		return
+	}
+	org, err := a.q.OrganizationByID(r.Context(), serviceCtx.Project.OrgID)
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_service_endpoint", err)
+		return
+	}
+	managedPublicHostname, err := a.managedPublicHostnameForService(r.Context(), serviceCtx.Service.ID)
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_service_endpoint", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, serviceEndpointToOutWithManagedHostname(endpoint, serviceCtx.Service, serviceCtx.Project, org, managedPublicHostname))
+}
+
+func (a *API) deleteServiceEndpoint(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !requireOrgAdmin(w, p) {
+		return
+	}
+	serviceCtx, ok := a.serviceForRequest(w, r, p.OrganizationID)
+	if !ok {
+		return
+	}
+	endpointID, err := parseUUID(r.PathValue("endpoint_id"))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid endpoint id")
+		return
+	}
+	if _, err := a.q.ServiceEndpointFirstByIDAndServiceID(r.Context(), queries.ServiceEndpointFirstByIDAndServiceIDParams{
+		ID:        endpointID,
+		ServiceID: serviceCtx.ID,
+	}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeAPIError(w, http.StatusNotFound, "not_found", "endpoint not found")
+			return
+		}
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "delete_service_endpoint", err)
+		return
+	}
+	if err := a.q.ServiceEndpointDeleteByIDAndServiceID(r.Context(), queries.ServiceEndpointDeleteByIDAndServiceIDParams{
+		ID:        endpointID,
+		ServiceID: serviceCtx.ID,
+	}); err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "delete_service_endpoint", err)
+		return
+	}
+	if err := a.reconcileManagedServiceDomain(r.Context(), serviceCtx.Service); err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "delete_service_endpoint", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
