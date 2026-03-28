@@ -1,0 +1,98 @@
+{
+  "groupId": "structural-gates",
+  "milestone": "structural",
+  "testedAt": "2026-03-28T00:10:33Z",
+  "isolation": {
+    "surface": "shell",
+    "repoRoot": "/Users/jack/code/kindling",
+    "missionDir": "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5"
+  },
+  "toolsUsed": ["shell"],
+  "commands": [
+    {
+      "command": "go build ./...",
+      "workingDirectory": "/Users/jack/code/kindling",
+      "exitCode": 0,
+      "evidencePath": "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/structural/structural-gates/go-build.txt"
+    },
+    {
+      "command": "go vet ./...",
+      "workingDirectory": "/Users/jack/code/kindling",
+      "exitCode": 0,
+      "evidencePath": "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/structural/structural-gates/go-vet.txt"
+    },
+    {
+      "command": "go test ./...",
+      "workingDirectory": "/Users/jack/code/kindling",
+      "exitCode": 0,
+      "evidencePath": "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/structural/structural-gates/go-test.txt"
+    },
+    {
+      "command": "awk function-length scan across cmd/kindling, internal/deploy, internal/runtime, internal/rpc",
+      "workingDirectory": "/Users/jack/code/kindling",
+      "exitCode": 0,
+      "evidencePath": "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/structural/structural-gates/function-lines-over-300.txt"
+    }
+  ],
+  "assertionResults": [
+    {
+      "id": "VAL-STR-011",
+      "status": "pass",
+      "reason": "`go build ./...` completed successfully with `EXIT_CODE=0`.",
+      "evidencePaths": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/structural/structural-gates/go-build.txt"
+      ]
+    },
+    {
+      "id": "VAL-STR-012",
+      "status": "pass",
+      "reason": "`go vet ./...` completed successfully with `EXIT_CODE=0`.",
+      "evidencePaths": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/structural/structural-gates/go-vet.txt"
+      ]
+    },
+    {
+      "id": "VAL-STR-013",
+      "status": "pass",
+      "reason": "`go test ./...` completed successfully with `EXIT_CODE=0`.",
+      "evidencePaths": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/structural/structural-gates/go-test.txt"
+      ]
+    },
+    {
+      "id": "VAL-STR-014",
+      "status": "pass",
+      "reason": "Awk-based scan reported `OVER_300_COUNT=0`, so no function exceeded 300 lines in the scoped directories.",
+      "evidencePaths": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/structural/structural-gates/function-lines-over-300.txt"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-001",
+      "status": "pass",
+      "reason": "Full gate passed: build, vet, and test each returned `EXIT_CODE=0`.",
+      "evidencePaths": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/structural/structural-gates/go-build.txt",
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/structural/structural-gates/go-vet.txt",
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/structural/structural-gates/go-test.txt"
+      ]
+    },
+    {
+      "id": "VAL-CROSS-002",
+      "status": "pass",
+      "reason": "`go build ./...` succeeded (`EXIT_CODE=0`), indicating no import cycles across refactored packages.",
+      "evidencePaths": [
+        "/Users/jack/.factory/missions/64b71bdf-d587-422c-9f39-69e8f873f8f5/evidence/structural/structural-gates/go-build.txt"
+      ]
+    }
+  ],
+  "frictions": [
+    {
+      "description": "macOS linker warning `ignoring duplicate libraries: '-lobjc'` appeared during build/test.",
+      "resolved": true,
+      "resolution": "Treated as non-blocking per project guidance in AGENTS.md."
+    }
+  ],
+  "blockers": [],
+  "summary": "Validated 6 assigned assertions via shell: 6 passed, 0 failed, 0 blocked."
+}

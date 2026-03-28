@@ -28,3 +28,4 @@ This is a **refactoring mission** with no UI/API surface to test manually. All v
 - Write flow reports only to `.factory/validation/<milestone>/user-testing/flows/*.json`.
 - Save evidence artifacts only under `{missionDir}/evidence/<milestone>/<group-id>/`.
 - Avoid running `go build`, `go vet`, and `go test` concurrently with each other; run them serially in one validator group to reduce cache/contention noise.
+- On macOS, prefer `sed` + `grep` (or `python`) over complex `awk` parsing for function-range extraction to avoid BSD `awk` portability pitfalls.
