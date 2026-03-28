@@ -1,7 +1,7 @@
 {
   "milestone": "structural",
-  "round": 2,
-  "status": "fail",
+  "round": 3,
+  "status": "pass",
   "validatorsRun": {
     "test": {
       "passed": true,
@@ -25,29 +25,19 @@
     }
   },
   "reviewsSummary": {
-    "total": 2,
+    "total": 1,
     "passed": 1,
-    "failed": 1,
-    "failedFeatures": [
-      "fix-structural-blocking"
-    ]
+    "failed": 0,
+    "failedFeatures": []
   },
-  "blockingIssues": [
-    {
-      "featureId": "fix-structural-blocking",
-      "severity": "blocking",
-      "description": "internal/rpc/deployments/handlers.go still emits `logs` SSE payloads as single BuildLog objects (`writeEvent(\"logs\", l)`), while the dashboard consumer expects `logs` payloads as BuildLog[] (`web/dashboard/src/lib/api.ts` and `web/dashboard/src/pages/DeploymentDetailPage.tsx`), so live log streaming remains broken."
-    }
-  ],
+  "blockingIssues": [],
   "appliedUpdates": [],
-  "suggestedGuidanceUpdates": [
+  "suggestedGuidanceUpdates": [],
+  "rejectedObservations": [
     {
-      "target": "refactor-worker skill",
-      "suggestion": "For API/RPC refactors and follow-up fixes, require explicit payload-shape compatibility checks against known consumers (not only event names/routes/status codes).",
-      "evidence": "fix-structural-blocking restored SSE event names but still shipped an incompatible `logs` payload shape in internal/rpc/deployments/handlers.go:306,349 versus dashboard expectations in web/dashboard/src/lib/api.ts:804,821 and web/dashboard/src/pages/DeploymentDetailPage.tsx:48-54.",
-      "isSystemic": true
+      "observation": "The fix reviewer noted a mismatch between reported `skillFeedback.followedProcedure=true` and transcript evidence for pre-change baseline steps.",
+      "reason": "Rejected as non-systemic process-audit feedback for a single worker session; no durable AGENTS/skills/services/library update is warranted from this isolated case."
     }
   ],
-  "rejectedObservations": [],
-  "previousRound": ".factory/validation/structural/scrutiny/synthesis.round1.json"
+  "previousRound": ".factory/validation/structural/scrutiny/synthesis.round2.json"
 }

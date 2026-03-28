@@ -1,0 +1,21 @@
+{
+  "featureId": "fix-sse-logs-payload",
+  "reviewedAt": "2026-03-28T00:04:33Z",
+  "commitId": "07c4e24865edcd79efbfc0c2aeee735f8dfd14a2",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "This fix fully addresses the prior blocking failure from fix-structural-blocking: `logs` SSE events are now emitted as BuildLog[] arrays in both emission paths. In commit 90ae89c, handlers.go emitted one event per log object (`writeEvent(\"logs\", l)`), which was incompatible with dashboard consumers expecting arrays; commit 07c4e24 changes both initial and incremental paths to batch array payloads (`writeEvent(\"logs\", logs)` and `writeEvent(\"logs\", newLogs)`). This matches the dashboard contract (`web/dashboard/src/lib/api.ts:804,821`) and consumption flow (`web/dashboard/src/pages/DeploymentDetailPage.tsx:48,123`).",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The worker marked `skillFeedback.followedProcedure=true`, but the transcript skeleton does not show a full pre-change baseline per the refactor-worker skill (which requires both `go build ./...` and `go test ./...` before edits).",
+      "evidence": "Skill step 2 in `.factory/skills/refactor-worker/SKILL.md` requires pre-change `go build ./...` and `go test ./...`; transcript skeleton for worker session `5583d66c-525a-480f-b0d6-5ab7375e7f56` shows only baseline `go build ./...` before edits, with tests run after changes."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/structural/scrutiny/reviews/fix-structural-blocking.json",
+  "summary": "Pass: the fix commit 07c4e24 resolves the prior blocking SSE payload-contract issue by emitting `logs` events as BuildLog[] arrays in both initial and incremental stream paths, restoring compatibility with dashboard log-stream consumers."
+}
