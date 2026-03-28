@@ -71,8 +71,23 @@ export type Service = {
   build_only_on_root_changes: boolean
   public_default: boolean
   is_primary: boolean
+  org_network_cidr?: string
+  endpoints?: ServiceEndpoint[]
   created_at?: string | null
   updated_at?: string | null
+}
+
+export type ServiceEndpoint = {
+  id: string
+  name: string
+  protocol: "http" | "tcp"
+  target_port: number
+  visibility: "private" | "public"
+  private_ip: string
+  dns_name: string
+  public_hostname?: string
+  last_healthy_at?: string | null
+  last_unhealthy_at?: string | null
 }
 
 export type ProjectVolume = {
@@ -190,6 +205,7 @@ export type AuthIdentity = {
 export type Deployment = {
   id: string
   project_id: string
+  service_id?: string | null
   build_id?: string | null
   image_id?: string | null
   vm_id?: string | null
@@ -204,6 +220,7 @@ export type Deployment = {
   updated_at?: string | null
   build_status?: string
   phase: string
+  service_name?: string
   desired_instance_count?: number
   min_instance_count?: number
   max_instance_count?: number
@@ -245,6 +262,14 @@ export type DeploymentReachability = {
   port?: number
   proxies_to_deployment?: boolean
   public_endpoints?: DeploymentPublicEndpoint[]
+  private_endpoints?: Array<{
+    name: string
+    protocol: "http" | "tcp"
+    port: number
+    visibility: "private" | "public"
+    private_ip: string
+    dns_name: string
+  }>
 }
 
 export type DeploymentListItem = Deployment & {
@@ -651,6 +676,17 @@ export const api = {
     },
   ) => request<Service>(`/api/projects/${id}/services`, { method: "POST", body: JSON.stringify(data) }),
   getService: (id: string) => request<Service>(`/api/services/${id}`),
+  listServiceEndpoints: (id: string) => request<ServiceEndpoint[]>(`/api/services/${id}/endpoints`),
+  createServiceEndpoint: (
+    id: string,
+    data: {
+      name: string
+      protocol?: "http" | "tcp"
+      target_port?: number
+      visibility?: "private" | "public"
+      public_hostname?: string
+    },
+  ) => request<ServiceEndpoint>(`/api/services/${id}/endpoints`, { method: "POST", body: JSON.stringify(data) }),
 
   getProjectVolume: (id: string) => request<ProjectVolume>(`/api/projects/${id}/volume`),
   putProjectVolume: (id: string, data: { mount_path?: string; size_gb?: number; backup_schedule?: string; backup_retention_count?: number; pre_delete_backup_enabled?: boolean }) =>

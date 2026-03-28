@@ -70,6 +70,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/projects/{id}/services", a.listProjectServices)
 	mux.HandleFunc("POST /api/projects/{id}/services", a.createProjectService)
 	mux.HandleFunc("GET /api/services/{id}", a.getService)
+	mux.HandleFunc("GET /api/services/{id}/endpoints", a.listServiceEndpoints)
+	mux.HandleFunc("POST /api/services/{id}/endpoints", a.createServiceEndpoint)
 
 	// Volumes sub-package: volume CRUD and operations.
 	(&volumes.Handlers{

@@ -152,3 +152,25 @@ func TestBuildDeploymentReachabilityReturnsNilWhenEmpty(t *testing.T) {
 		t.Fatalf("expected nil, got %#v", got)
 	}
 }
+
+func TestBuildDeploymentReachabilityIncludesPrivateEndpoints(t *testing.T) {
+	t.Parallel()
+
+	got := BuildDeploymentReachability(nil, nil, []DeploymentPrivateEndpointOut{{
+		Name:       "web",
+		Protocol:   "http",
+		Port:       3000,
+		Visibility: "private",
+		PrivateIP:  "172.20.0.10",
+		DNSName:    "web.app.project.prod.default.kindling.internal",
+	}})
+	if got == nil {
+		t.Fatal("expected reachability")
+	}
+	if len(got.PrivateEndpoints) != 1 {
+		t.Fatalf("private_endpoints len = %d", len(got.PrivateEndpoints))
+	}
+	if got.PrivateEndpoints[0].DNSName != "web.app.project.prod.default.kindling.internal" {
+		t.Fatalf("dns_name = %q", got.PrivateEndpoints[0].DNSName)
+	}
+}

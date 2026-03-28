@@ -111,6 +111,26 @@ export function DeploymentReachability({
         </div>
       ) : null}
 
+      {reachable.private_endpoints && reachable.private_endpoints.length > 0 ? (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <RouteIcon className="size-4 text-muted-foreground" />
+            Private endpoints
+          </div>
+          <div className="space-y-3">
+            {reachable.private_endpoints.map((endpoint) => (
+              <ReachabilityRow
+                key={`${endpoint.name}-${endpoint.dns_name}`}
+                label={`${endpoint.name} (${endpoint.visibility})`}
+                value={endpoint.dns_name}
+                copyLabel={`private-${endpoint.name}`}
+                description={`${endpoint.protocol.toUpperCase()} on port ${endpoint.port} via ${endpoint.private_ip}`}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {showOperatorDetails && reachable.runtime_url ? (
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-sm font-medium">

@@ -763,6 +763,7 @@ const deploymentFindRecentWithProject = `-- name: DeploymentFindRecentWithProjec
 SELECT
     d.id,
     d.project_id,
+    d.service_id,
     d.build_id,
     d.image_id,
     d.vm_id,
@@ -792,6 +793,7 @@ LIMIT $1
 type DeploymentFindRecentWithProjectRow struct {
 	ID                   pgtype.UUID        `json:"id"`
 	ProjectID            pgtype.UUID        `json:"project_id"`
+	ServiceID            pgtype.UUID        `json:"service_id"`
 	BuildID              pgtype.UUID        `json:"build_id"`
 	ImageID              pgtype.UUID        `json:"image_id"`
 	VmID                 pgtype.UUID        `json:"vm_id"`
@@ -824,6 +826,7 @@ func (q *Queries) DeploymentFindRecentWithProject(ctx context.Context, limit int
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
+			&i.ServiceID,
 			&i.BuildID,
 			&i.ImageID,
 			&i.VmID,
@@ -857,6 +860,7 @@ const deploymentFindRecentWithProjectForOrg = `-- name: DeploymentFindRecentWith
 SELECT
     d.id,
     d.project_id,
+    d.service_id,
     d.build_id,
     d.image_id,
     d.vm_id,
@@ -892,6 +896,7 @@ type DeploymentFindRecentWithProjectForOrgParams struct {
 type DeploymentFindRecentWithProjectForOrgRow struct {
 	ID                   pgtype.UUID        `json:"id"`
 	ProjectID            pgtype.UUID        `json:"project_id"`
+	ServiceID            pgtype.UUID        `json:"service_id"`
 	BuildID              pgtype.UUID        `json:"build_id"`
 	ImageID              pgtype.UUID        `json:"image_id"`
 	VmID                 pgtype.UUID        `json:"vm_id"`
@@ -924,6 +929,7 @@ func (q *Queries) DeploymentFindRecentWithProjectForOrg(ctx context.Context, arg
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
+			&i.ServiceID,
 			&i.BuildID,
 			&i.ImageID,
 			&i.VmID,
@@ -3204,6 +3210,22 @@ func (q *Queries) InstanceUsageSamplesByProjectWindow(ctx context.Context, arg I
 	return items, nil
 }
 
+const orgNetworkByOrganizationID = `-- name: OrgNetworkByOrganizationID :one
+SELECT organization_id, cidr, created_at, updated_at FROM org_networks WHERE organization_id = $1
+`
+
+func (q *Queries) OrgNetworkByOrganizationID(ctx context.Context, organizationID pgtype.UUID) (OrgNetwork, error) {
+	row := q.db.QueryRow(ctx, orgNetworkByOrganizationID, organizationID)
+	var i OrgNetwork
+	err := row.Scan(
+		&i.OrganizationID,
+		&i.Cidr,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const orgProviderConnectionByIDAndOrg = `-- name: OrgProviderConnectionByIDAndOrg :one
 SELECT id, organization_id, provider, external_slug, display_label, credentials_ciphertext, metadata, created_at, updated_at FROM org_provider_connections
 WHERE id = $1 AND organization_id = $2
@@ -3421,9 +3443,16 @@ func (q *Queries) OrganizationByID(ctx context.Context, id pgtype.UUID) (Organiz
 }
 
 const organizationCreate = `-- name: OrganizationCreate :one
-INSERT INTO organizations (id, name, slug)
-VALUES ($1, $2, $3)
-RETURNING id, name, slug, created_at, updated_at
+WITH inserted AS (
+    INSERT INTO organizations (id, name, slug)
+    VALUES ($1, $2, $3)
+    RETURNING id, name, slug, created_at, updated_at
+), network AS (
+    INSERT INTO org_networks (organization_id, cidr)
+    SELECT id, ((SELECT COALESCE(MAX(cidr), '172.19.255.0/24'::CIDR) FROM org_networks) + 1)::CIDR
+    FROM inserted
+)
+SELECT id, name, slug, created_at, updated_at FROM inserted
 `
 
 type OrganizationCreateParams struct {
@@ -3432,9 +3461,17 @@ type OrganizationCreateParams struct {
 	Slug string      `json:"slug"`
 }
 
-func (q *Queries) OrganizationCreate(ctx context.Context, arg OrganizationCreateParams) (Organization, error) {
+type OrganizationCreateRow struct {
+	ID        pgtype.UUID        `json:"id"`
+	Name      string             `json:"name"`
+	Slug      string             `json:"slug"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) OrganizationCreate(ctx context.Context, arg OrganizationCreateParams) (OrganizationCreateRow, error) {
 	row := q.db.QueryRow(ctx, organizationCreate, arg.ID, arg.Name, arg.Slug)
-	var i Organization
+	var i OrganizationCreateRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
@@ -4000,6 +4037,27 @@ WITH inserted AS (
     SELECT gen_random_uuid(), id, name, 'app', root_directory, dockerfile_path,
            desired_instance_count, build_only_on_root_changes, false, true
     FROM inserted
+    RETURNING id, project_id, public_default
+), primary_endpoint AS (
+    INSERT INTO service_endpoints (
+        id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname
+    )
+    SELECT
+        gen_random_uuid(),
+        ps.id,
+        'web',
+        'http',
+        3000,
+        CASE WHEN ps.public_default THEN 'public' ELSE 'private' END,
+        (COALESCE(MAX(se.private_ip), (host(network(n.cidr))::INET + 9)::INET) + 1)::INET,
+        ''
+    FROM primary_service ps
+    JOIN projects p ON p.id = ps.project_id
+    JOIN org_networks n ON n.organization_id = p.org_id
+    LEFT JOIN projects p2 ON p2.org_id = p.org_id
+    LEFT JOIN services s2 ON s2.project_id = p2.id
+    LEFT JOIN service_endpoints se ON se.service_id = s2.id
+    GROUP BY ps.id, ps.public_default, n.cidr
 )
 SELECT id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at FROM inserted
 `
@@ -6309,12 +6367,35 @@ func (q *Queries) ServerUpdateStatus(ctx context.Context, arg ServerUpdateStatus
 
 const serviceCreate = `-- name: ServiceCreate :one
 
-INSERT INTO services (
-    id, project_id, name, slug, root_directory, dockerfile_path,
-    desired_instance_count, build_only_on_root_changes, public_default, is_primary
+WITH inserted AS (
+    INSERT INTO services (
+        id, project_id, name, slug, root_directory, dockerfile_path,
+        desired_instance_count, build_only_on_root_changes, public_default, is_primary
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    RETURNING id, project_id, name, slug, root_directory, dockerfile_path, desired_instance_count, build_only_on_root_changes, public_default, is_primary, created_at, updated_at
+), endpoint AS (
+    INSERT INTO service_endpoints (
+        id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname
+    )
+    SELECT
+        gen_random_uuid(),
+        i.id,
+        'web',
+        'http',
+        3000,
+        CASE WHEN i.public_default THEN 'public' ELSE 'private' END,
+        (COALESCE(MAX(se.private_ip), (host(network(n.cidr))::INET + 9)::INET) + 1)::INET,
+        ''
+    FROM inserted i
+    JOIN projects p ON p.id = i.project_id
+    JOIN org_networks n ON n.organization_id = p.org_id
+    LEFT JOIN projects p2 ON p2.org_id = p.org_id
+    LEFT JOIN services s2 ON s2.project_id = p2.id
+    LEFT JOIN service_endpoints se ON se.service_id = s2.id
+    GROUP BY i.id, i.public_default, n.cidr
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, project_id, name, slug, root_directory, dockerfile_path, desired_instance_count, build_only_on_root_changes, public_default, is_primary, created_at, updated_at
+SELECT id, project_id, name, slug, root_directory, dockerfile_path, desired_instance_count, build_only_on_root_changes, public_default, is_primary, created_at, updated_at FROM inserted
 `
 
 type ServiceCreateParams struct {
@@ -6330,8 +6411,23 @@ type ServiceCreateParams struct {
 	IsPrimary              bool        `json:"is_primary"`
 }
 
+type ServiceCreateRow struct {
+	ID                     pgtype.UUID        `json:"id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	Name                   string             `json:"name"`
+	Slug                   string             `json:"slug"`
+	RootDirectory          string             `json:"root_directory"`
+	DockerfilePath         string             `json:"dockerfile_path"`
+	DesiredInstanceCount   int32              `json:"desired_instance_count"`
+	BuildOnlyOnRootChanges bool               `json:"build_only_on_root_changes"`
+	PublicDefault          bool               `json:"public_default"`
+	IsPrimary              bool               `json:"is_primary"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
 // Services --
-func (q *Queries) ServiceCreate(ctx context.Context, arg ServiceCreateParams) (Service, error) {
+func (q *Queries) ServiceCreate(ctx context.Context, arg ServiceCreateParams) (ServiceCreateRow, error) {
 	row := q.db.QueryRow(ctx, serviceCreate,
 		arg.ID,
 		arg.ProjectID,
@@ -6344,7 +6440,7 @@ func (q *Queries) ServiceCreate(ctx context.Context, arg ServiceCreateParams) (S
 		arg.PublicDefault,
 		arg.IsPrimary,
 	)
-	var i Service
+	var i ServiceCreateRow
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
@@ -6360,6 +6456,126 @@ func (q *Queries) ServiceCreate(ctx context.Context, arg ServiceCreateParams) (S
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const serviceEndpointCreate = `-- name: ServiceEndpointCreate :one
+WITH svc AS (
+    SELECT s.id, p.org_id
+    FROM services s
+    JOIN projects p ON p.id = s.project_id
+    WHERE s.id = $1
+), inserted AS (
+    INSERT INTO service_endpoints (
+        id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname
+    )
+    SELECT
+        $2,
+        svc.id,
+        $3,
+        $4,
+        $5,
+        $6,
+        (COALESCE(MAX(se.private_ip), (host(network(n.cidr))::INET + 9)::INET) + 1)::INET,
+        $7
+    FROM svc
+    JOIN org_networks n ON n.organization_id = svc.org_id
+    LEFT JOIN projects p2 ON p2.org_id = svc.org_id
+    LEFT JOIN services s2 ON s2.project_id = p2.id
+    LEFT JOIN service_endpoints se ON se.service_id = s2.id
+    GROUP BY svc.id, n.cidr
+    RETURNING id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname, last_healthy_at, last_unhealthy_at, created_at, updated_at
+)
+SELECT id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname, last_healthy_at, last_unhealthy_at, created_at, updated_at FROM inserted
+`
+
+type ServiceEndpointCreateParams struct {
+	ID             pgtype.UUID `json:"id"`
+	ID_2           pgtype.UUID `json:"id_2"`
+	Name           string      `json:"name"`
+	Protocol       string      `json:"protocol"`
+	TargetPort     int32       `json:"target_port"`
+	Visibility     string      `json:"visibility"`
+	PublicHostname string      `json:"public_hostname"`
+}
+
+type ServiceEndpointCreateRow struct {
+	ID              pgtype.UUID        `json:"id"`
+	ServiceID       pgtype.UUID        `json:"service_id"`
+	Name            string             `json:"name"`
+	Protocol        string             `json:"protocol"`
+	TargetPort      int32              `json:"target_port"`
+	Visibility      string             `json:"visibility"`
+	PrivateIp       netip.Addr         `json:"private_ip"`
+	PublicHostname  string             `json:"public_hostname"`
+	LastHealthyAt   pgtype.Timestamptz `json:"last_healthy_at"`
+	LastUnhealthyAt pgtype.Timestamptz `json:"last_unhealthy_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ServiceEndpointCreate(ctx context.Context, arg ServiceEndpointCreateParams) (ServiceEndpointCreateRow, error) {
+	row := q.db.QueryRow(ctx, serviceEndpointCreate,
+		arg.ID,
+		arg.ID_2,
+		arg.Name,
+		arg.Protocol,
+		arg.TargetPort,
+		arg.Visibility,
+		arg.PublicHostname,
+	)
+	var i ServiceEndpointCreateRow
+	err := row.Scan(
+		&i.ID,
+		&i.ServiceID,
+		&i.Name,
+		&i.Protocol,
+		&i.TargetPort,
+		&i.Visibility,
+		&i.PrivateIp,
+		&i.PublicHostname,
+		&i.LastHealthyAt,
+		&i.LastUnhealthyAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const serviceEndpointListByServiceID = `-- name: ServiceEndpointListByServiceID :many
+SELECT id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname, last_healthy_at, last_unhealthy_at, created_at, updated_at FROM service_endpoints WHERE service_id = $1 ORDER BY created_at ASC
+`
+
+func (q *Queries) ServiceEndpointListByServiceID(ctx context.Context, serviceID pgtype.UUID) ([]ServiceEndpoint, error) {
+	rows, err := q.db.Query(ctx, serviceEndpointListByServiceID, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ServiceEndpoint{}
+	for rows.Next() {
+		var i ServiceEndpoint
+		if err := rows.Scan(
+			&i.ID,
+			&i.ServiceID,
+			&i.Name,
+			&i.Protocol,
+			&i.TargetPort,
+			&i.Visibility,
+			&i.PrivateIp,
+			&i.PublicHostname,
+			&i.LastHealthyAt,
+			&i.LastUnhealthyAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const serviceFirstByID = `-- name: ServiceFirstByID :one

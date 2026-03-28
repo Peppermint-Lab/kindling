@@ -173,6 +173,13 @@ type InstanceUsageSample struct {
 	Source               string             `json:"source"`
 }
 
+type OrgNetwork struct {
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	Cidr           netip.Prefix       `json:"cidr"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type OrgProviderConnection struct {
 	ID                    pgtype.UUID        `json:"id"`
 	OrganizationID        pgtype.UUID        `json:"organization_id"`
@@ -352,6 +359,21 @@ type Service struct {
 	IsPrimary              bool               `json:"is_primary"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ServiceEndpoint struct {
+	ID              pgtype.UUID        `json:"id"`
+	ServiceID       pgtype.UUID        `json:"service_id"`
+	Name            string             `json:"name"`
+	Protocol        string             `json:"protocol"`
+	TargetPort      int32              `json:"target_port"`
+	Visibility      string             `json:"visibility"`
+	PrivateIp       netip.Addr         `json:"private_ip"`
+	PublicHostname  string             `json:"public_hostname"`
+	LastHealthyAt   pgtype.Timestamptz `json:"last_healthy_at"`
+	LastUnhealthyAt pgtype.Timestamptz `json:"last_unhealthy_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Team struct {

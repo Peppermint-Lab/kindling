@@ -287,6 +287,27 @@ WITH inserted AS (
     SELECT gen_random_uuid(), id, name, 'app', root_directory, dockerfile_path,
            desired_instance_count, build_only_on_root_changes, false, true
     FROM inserted
+    RETURNING id, project_id, public_default
+), primary_endpoint AS (
+    INSERT INTO service_endpoints (
+        id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname
+    )
+    SELECT
+        gen_random_uuid(),
+        ps.id,
+        'web',
+        'http',
+        3000,
+        CASE WHEN ps.public_default THEN 'public' ELSE 'private' END,
+        (COALESCE(MAX(se.private_ip), (host(network(n.cidr))::INET + 9)::INET) + 1)::INET,
+        ''
+    FROM primary_service ps
+    JOIN projects p ON p.id = ps.project_id
+    JOIN org_networks n ON n.organization_id = p.org_id
+    LEFT JOIN projects p2 ON p2.org_id = p.org_id
+    LEFT JOIN services s2 ON s2.project_id = p2.id
+    LEFT JOIN service_endpoints se ON se.service_id = s2.id
+    GROUP BY ps.id, ps.public_default, n.cidr
 )
 SELECT * FROM inserted;
 
@@ -348,12 +369,35 @@ RETURNING *;
 -- Services --
 
 -- name: ServiceCreate :one
-INSERT INTO services (
-    id, project_id, name, slug, root_directory, dockerfile_path,
-    desired_instance_count, build_only_on_root_changes, public_default, is_primary
+WITH inserted AS (
+    INSERT INTO services (
+        id, project_id, name, slug, root_directory, dockerfile_path,
+        desired_instance_count, build_only_on_root_changes, public_default, is_primary
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    RETURNING *
+), endpoint AS (
+    INSERT INTO service_endpoints (
+        id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname
+    )
+    SELECT
+        gen_random_uuid(),
+        i.id,
+        'web',
+        'http',
+        3000,
+        CASE WHEN i.public_default THEN 'public' ELSE 'private' END,
+        (COALESCE(MAX(se.private_ip), (host(network(n.cidr))::INET + 9)::INET) + 1)::INET,
+        ''
+    FROM inserted i
+    JOIN projects p ON p.id = i.project_id
+    JOIN org_networks n ON n.organization_id = p.org_id
+    LEFT JOIN projects p2 ON p2.org_id = p.org_id
+    LEFT JOIN services s2 ON s2.project_id = p2.id
+    LEFT JOIN service_endpoints se ON se.service_id = s2.id
+    GROUP BY i.id, i.public_default, n.cidr
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING *;
+SELECT * FROM inserted;
 
 -- name: ServiceListByProjectID :many
 SELECT * FROM services WHERE project_id = $1 ORDER BY is_primary DESC, created_at ASC;
@@ -385,6 +429,41 @@ WHERE s.project_id = p.id
   AND s.project_id = $1
   AND s.is_primary = true
 RETURNING s.*;
+
+-- name: ServiceEndpointListByServiceID :many
+SELECT * FROM service_endpoints WHERE service_id = $1 ORDER BY created_at ASC;
+
+-- name: ServiceEndpointCreate :one
+WITH svc AS (
+    SELECT s.id, p.org_id
+    FROM services s
+    JOIN projects p ON p.id = s.project_id
+    WHERE s.id = $1
+), inserted AS (
+    INSERT INTO service_endpoints (
+        id, service_id, name, protocol, target_port, visibility, private_ip, public_hostname
+    )
+    SELECT
+        $2,
+        svc.id,
+        $3,
+        $4,
+        $5,
+        $6,
+        (COALESCE(MAX(se.private_ip), (host(network(n.cidr))::INET + 9)::INET) + 1)::INET,
+        $7
+    FROM svc
+    JOIN org_networks n ON n.organization_id = svc.org_id
+    LEFT JOIN projects p2 ON p2.org_id = svc.org_id
+    LEFT JOIN services s2 ON s2.project_id = p2.id
+    LEFT JOIN service_endpoints se ON se.service_id = s2.id
+    GROUP BY svc.id, n.cidr
+    RETURNING *
+)
+SELECT * FROM inserted;
+
+-- name: OrgNetworkByOrganizationID :one
+SELECT * FROM org_networks WHERE organization_id = $1;
 
 -- name: ProjectUpdateLastRequestAt :exec
 UPDATE projects SET last_request_at = NOW(), updated_at = NOW() WHERE id = $1;
@@ -918,6 +997,7 @@ LIMIT 1;
 SELECT
     d.id,
     d.project_id,
+    d.service_id,
     d.build_id,
     d.image_id,
     d.vm_id,
@@ -947,6 +1027,7 @@ LIMIT $1;
 SELECT
     d.id,
     d.project_id,
+    d.service_id,
     d.build_id,
     d.image_id,
     d.vm_id,
@@ -1238,9 +1319,16 @@ SELECT * FROM users WHERE id = $1;
 SELECT * FROM organizations WHERE id = $1;
 
 -- name: OrganizationCreate :one
-INSERT INTO organizations (id, name, slug)
-VALUES ($1, $2, $3)
-RETURNING *;
+WITH inserted AS (
+    INSERT INTO organizations (id, name, slug)
+    VALUES ($1, $2, $3)
+    RETURNING *
+), network AS (
+    INSERT INTO org_networks (organization_id, cidr)
+    SELECT id, ((SELECT COALESCE(MAX(cidr), '172.19.255.0/24'::CIDR) FROM org_networks) + 1)::CIDR
+    FROM inserted
+)
+SELECT * FROM inserted;
 
 -- name: OrganizationMembershipCreate :one
 INSERT INTO organization_memberships (id, organization_id, user_id, role)
