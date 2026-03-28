@@ -150,6 +150,16 @@ export type ProjectSecret = {
   updated_at?: string | null
 }
 
+export type ServiceSecret = {
+  id: string
+  name: string
+  scope: "service" | "project_default"
+  service_id?: string | null
+  service_name?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+}
+
 export type AuthUser = {
   id: string
   email: string
@@ -687,6 +697,40 @@ export const api = {
       public_hostname?: string
     },
   ) => request<ServiceEndpoint>(`/api/services/${id}/endpoints`, { method: "POST", body: JSON.stringify(data) }),
+  listServiceSecrets: (serviceId: string) => request<ServiceSecret[]>(`/api/services/${serviceId}/secrets`),
+  upsertServiceSecret: (serviceId: string, data: { name: string; value: string }) =>
+    request<ServiceSecret>(`/api/services/${serviceId}/secrets`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  deleteServiceSecret: (serviceId: string, secretId: string) =>
+    request<void>(`/api/services/${serviceId}/secrets/${secretId}`, { method: "DELETE" }),
+  listServiceDomains: (serviceId: string) => request<ProjectDomain[]>(`/api/services/${serviceId}/domains`),
+  createServiceDomain: (serviceId: string, domain_name: string) =>
+    request<ProjectDomain>(`/api/services/${serviceId}/domains`, {
+      method: "POST",
+      body: JSON.stringify({ domain_name }),
+    }),
+  verifyServiceDomain: (serviceId: string, domainId: string) =>
+    request<ProjectDomain>(`/api/services/${serviceId}/domains/${domainId}/verify`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  deleteServiceDomain: (serviceId: string, domainId: string) =>
+    request<void>(`/api/services/${serviceId}/domains/${domainId}`, { method: "DELETE" }),
+  getServiceVolume: (serviceId: string) => request<ProjectVolume>(`/api/services/${serviceId}/volume`),
+  putServiceVolume: (serviceId: string, data: { mount_path?: string; size_gb?: number; backup_schedule?: string; backup_retention_count?: number; pre_delete_backup_enabled?: boolean }) =>
+    request<ProjectVolume>(`/api/services/${serviceId}/volume`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteServiceVolume: (serviceId: string) => request<void | ProjectVolumeOperation>(`/api/services/${serviceId}/volume`, { method: "DELETE" }),
+  listServiceVolumeBackups: (serviceId: string) => request<ProjectVolumeBackup[]>(`/api/services/${serviceId}/volume/backups`),
+  createServiceVolumeBackup: (serviceId: string) =>
+    request<ProjectVolumeOperation>(`/api/services/${serviceId}/volume/backups`, { method: "POST", body: JSON.stringify({}) }),
+  restoreServiceVolume: (serviceId: string, data: { backup_id: string; target_server_id?: string }) =>
+    request<ProjectVolumeOperation>(`/api/services/${serviceId}/volume/restore`, { method: "POST", body: JSON.stringify(data) }),
+  moveServiceVolume: (serviceId: string, data: { target_server_id?: string }) =>
+    request<ProjectVolumeOperation>(`/api/services/${serviceId}/volume/move`, { method: "POST", body: JSON.stringify(data) }),
+  repairServiceVolume: (serviceId: string) =>
+    request<ProjectVolumeOperation>(`/api/services/${serviceId}/volume/repair`, { method: "POST", body: JSON.stringify({}) }),
 
   getProjectVolume: (id: string) => request<ProjectVolume>(`/api/projects/${id}/volume`),
   putProjectVolume: (id: string, data: { mount_path?: string; size_gb?: number; backup_schedule?: string; backup_retention_count?: number; pre_delete_backup_enabled?: boolean }) =>
@@ -742,6 +786,8 @@ export const api = {
 
   listDeployments: (projectId: string) =>
     request<Deployment[]>(`/api/projects/${projectId}/deployments`),
+  listServiceDeployments: (serviceId: string) =>
+    request<Deployment[]>(`/api/services/${serviceId}/deployments`),
 
   listProjectPreviews: (projectId: string) =>
     request<PreviewEnvironment[]>(`/api/projects/${projectId}/previews`),
@@ -789,6 +835,11 @@ export const api = {
 
   triggerDeploy: (projectId: string, commit: string) =>
     request<Deployment>(`/api/projects/${projectId}/deploy`, {
+      method: "POST",
+      body: JSON.stringify({ commit }),
+    }),
+  triggerServiceDeploy: (serviceId: string, commit: string) =>
+    request<Deployment>(`/api/services/${serviceId}/deploy`, {
       method: "POST",
       body: JSON.stringify({ commit }),
     }),

@@ -967,6 +967,14 @@ export function ProjectDetailPage() {
                             </div>
                           </div>
                         ) : null}
+                        <div className="pt-1">
+                          <Link
+                            to={`/services/${service.id}`}
+                            className="inline-flex h-7 items-center rounded-[min(var(--radius-md),12px)] border border-border bg-background px-2.5 text-[0.8rem] font-medium hover:bg-muted"
+                          >
+                            Open service
+                          </Link>
+                        </div>
                       </div>
                     ))}
                   </div>
