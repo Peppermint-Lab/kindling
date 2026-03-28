@@ -45,6 +45,17 @@ func TestCookieRequestHasTrustedOriginRejectsSiblingSubdomain(t *testing.T) {
 	}
 }
 
+func TestRequestHasTrustedOriginAllowsConfiguredDashboardOrigin(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodPost, "https://api.kindling.example.com/api/projects", nil)
+	req.Header.Set("Origin", "https://app.kindling.example.com")
+
+	if !RequestHasTrustedOrigin(req, []string{"https://app.kindling.example.com"}) {
+		t.Fatal("expected configured dashboard origin to be allowed")
+	}
+}
+
 func TestCookieRequestHasTrustedOriginAllowsMatchingReferer(t *testing.T) {
 	t.Parallel()
 
@@ -63,6 +74,17 @@ func TestCookieRequestHasTrustedOriginRejectsMissingHeadersOnWrite(t *testing.T)
 
 	if cookieRequestHasTrustedOrigin(req) {
 		t.Fatal("expected write without Origin/Referer to be rejected")
+	}
+}
+
+func TestRequestHasTrustedOriginAllowsLoopbackCrossPort(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8080/api/projects", nil)
+	req.Header.Set("Origin", "http://localhost:5173")
+
+	if !RequestHasTrustedOrigin(req, nil) {
+		t.Fatal("expected loopback cross-port origin to be allowed")
 	}
 }
 

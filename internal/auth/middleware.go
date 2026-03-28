@@ -69,23 +69,27 @@ func originMatchesTarget(raw, target string) bool {
 }
 
 func cookieRequestHasTrustedOrigin(r *http.Request) bool {
+	return requestHasTrustedOrigin(r, nil)
+}
+
+func requestHasTrustedOrigin(r *http.Request, allow []string) bool {
 	if !requiresTrustedOrigin(r.Method) {
 		return true
 	}
 	target := requestTargetOrigin(r)
 	if origin := r.Header.Get("Origin"); strings.TrimSpace(origin) != "" {
-		return originMatchesTarget(origin, target)
+		return originMatchesTarget(origin, target) || originMatchesAny(origin, allow) || loopbackOriginAllowed(r, origin)
 	}
 	if referer := r.Header.Get("Referer"); strings.TrimSpace(referer) != "" {
-		return originMatchesTarget(referer, target)
+		return originMatchesTarget(referer, target) || originMatchesAny(referer, allow) || loopbackOriginAllowed(r, referer)
 	}
 	return false
 }
 
 // RequestHasTrustedOrigin reports whether a request's Origin/Referer matches the
 // current request origin for state-changing browser requests.
-func RequestHasTrustedOrigin(r *http.Request) bool {
-	return cookieRequestHasTrustedOrigin(r)
+func RequestHasTrustedOrigin(r *http.Request, allow []string) bool {
+	return requestHasTrustedOrigin(r, allow)
 }
 
 // Middleware enforces session cookies or API keys (Bearer knd_...) on API routes except PublicRoute.
@@ -139,7 +143,7 @@ func Middleware(q *queries.Queries, next http.Handler) http.Handler {
 			writeUnauthorized(w)
 			return
 		}
-		if !RequestHasTrustedOrigin(r) {
+		if !RequestHasTrustedOrigin(r, TrustedOrigins(r.Context(), q)) {
 			httputil.WriteAPIError(w, http.StatusForbidden, "csrf_forbidden", "request origin is not allowed")
 			return
 		}

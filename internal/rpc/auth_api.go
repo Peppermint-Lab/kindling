@@ -366,7 +366,7 @@ func (a *API) authLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) authLogout(w http.ResponseWriter, r *http.Request) {
-	if !auth.RequestHasTrustedOrigin(r) {
+	if !auth.RequestHasTrustedOrigin(r, auth.TrustedOrigins(r.Context(), a.q)) {
 		writeAPIError(w, http.StatusForbidden, "csrf_forbidden", "request origin is not allowed")
 		return
 	}
