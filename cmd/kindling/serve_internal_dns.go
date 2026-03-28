@@ -13,17 +13,11 @@ import (
 )
 
 func startWorkerInternalDNS(ctx context.Context, q *queries.Queries, rt crunrt.Runtime) error {
-	if rt == nil || rt.Name() != "cloud-hypervisor" {
+	if rt == nil || !internalDNSEnabledForRuntime(rt.Name()) {
 		return nil
 	}
 
 	addr := strings.TrimSpace(os.Getenv("KINDLING_INTERNAL_DNS_ADDR"))
-	switch strings.ToLower(addr) {
-	case "off", "disabled", "false":
-		slog.Info("internal dns disabled", "runtime", rt.Name())
-		return nil
-	}
-
 	allowedPrefix, err := parseServerIPRange()
 	if err != nil {
 		return fmt.Errorf("parse internal dns client range: %w", err)
@@ -41,6 +35,32 @@ func startWorkerInternalDNS(ctx context.Context, q *queries.Queries, rt crunrt.R
 
 	slog.Info("internal dns started", "addr", effectiveInternalDNSAddr(addr), "allowed_prefix", allowedPrefix.String())
 	return nil
+}
+
+func internalDNSEnabledForRuntime(runtimeName string) bool {
+	if runtimeName != "cloud-hypervisor" {
+		return false
+	}
+	addr := strings.TrimSpace(os.Getenv("KINDLING_INTERNAL_DNS_ADDR"))
+	switch strings.ToLower(addr) {
+	case "off", "disabled", "false":
+		return false
+	default:
+		return true
+	}
+}
+
+func internalDNSRuntimeMetadata(runtimeName string) map[string]any {
+	if runtimeName != "cloud-hypervisor" {
+		return nil
+	}
+	meta := map[string]any{
+		"internal_dns_enabled": internalDNSEnabledForRuntime(runtimeName),
+	}
+	if meta["internal_dns_enabled"] == true {
+		meta["internal_dns_addr"] = effectiveInternalDNSAddr(strings.TrimSpace(os.Getenv("KINDLING_INTERNAL_DNS_ADDR")))
+	}
+	return meta
 }
 
 func splitCSV(raw string) []string {

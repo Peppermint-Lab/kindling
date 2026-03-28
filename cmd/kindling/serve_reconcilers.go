@@ -196,6 +196,9 @@ func startWorkerHeartbeats(ctx context.Context, q *queries.Queries, serverID uui
 			if v := strings.TrimSpace(os.Getenv("KINDLING_CH_SHARED_ROOTFS_DIR")); v != "" {
 				meta["shared_rootfs_dir"] = v
 			}
+			for key, value := range internalDNSRuntimeMetadata(rt.Name()) {
+				meta[key] = value
+			}
 		}
 		return meta
 	})
