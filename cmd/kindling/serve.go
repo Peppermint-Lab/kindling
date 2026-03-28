@@ -234,7 +234,11 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	}
 
 	// Edge proxy.
-	if err := startEdgeProxy(ctx, components, snap, db, routeChangeCh, q, listenAddr, serverID); err != nil {
+	if err := startEdgeProxy(ctx, components, snap, db, routeChangeCh, q, listenAddr, serverID, func(id uuid.UUID) {
+		if recs.deployment != nil {
+			recs.deployment.ScheduleNow(id)
+		}
+	}); err != nil {
 		return err
 	}
 

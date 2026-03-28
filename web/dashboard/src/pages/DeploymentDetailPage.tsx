@@ -15,7 +15,6 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Separator } from "@/components/ui/separator"
 import { DeploymentReachability } from "@/components/deployment-reachability"
-import { useAuth } from "@/contexts/AuthContext"
 import { ScrollTextIcon, LoaderIcon, XCircleIcon, RotateCwIcon, RadioIcon, InfoIcon } from "lucide-react"
 import { isTerminalDeployment, phaseLabel, phaseVariant } from "@/lib/deploy-badge"
 import {
@@ -62,7 +61,6 @@ function mergeLogs(prev: BuildLog[], chunk: BuildLog[]): BuildLog[] {
 export function DeploymentDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { session } = useAuth()
   const [deployment, setDeployment] = useState<Deployment | null>(null)
   const [logs, setLogs] = useState<BuildLog[]>([])
   const [activeTab, setActiveTab] = useState<"overview" | "logs">("overview")
@@ -194,9 +192,6 @@ export function DeploymentDetailPage() {
   }
 
   const terminal = isTerminalDeployment(deployment)
-  const canViewOperatorDetails =
-    session?.authenticated &&
-    (session.platform_admin || session.role === "owner" || session.role === "admin")
 
   return (
     <PageContainer>
@@ -302,10 +297,7 @@ export function DeploymentDetailPage() {
                 ) : null}
                 <div className="space-y-2">
                   <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Reachability</p>
-                  <DeploymentReachability
-                    reachable={deployment.reachable}
-                    showOperatorDetails={Boolean(canViewOperatorDetails)}
-                  />
+                  <DeploymentReachability reachable={deployment.reachable} />
                 </div>
                 <div className="flex flex-wrap gap-2 pt-1">
                   {!terminal && (

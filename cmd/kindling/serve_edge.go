@@ -106,6 +106,7 @@ func startEdgeProxy(
 	q *queries.Queries,
 	listenAddr string,
 	serverID uuid.UUID,
+	wakeDeployment func(uuid.UUID),
 ) error {
 	if !components.edge || snap.EdgeHTTPSAddr == "" {
 		return nil
@@ -129,6 +130,7 @@ func startEdgeProxy(
 		ACMEStaging:       snap.ACMEStaging,
 		Pool:              db.Pool,
 		RouteChangeNotify: routeChangeCh,
+		WakeDeployment:    wakeDeployment,
 		ColdStartTimeout:  coldStart,
 		ControlPlaneHosts: cpHosts,
 		APIBackend:        apiBackend,

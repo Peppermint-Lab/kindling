@@ -1353,7 +1353,7 @@ export function ProjectDetailPage() {
                   </SurfaceDescription>
                 </SurfaceHeader>
                 <SurfaceBody className="space-y-4">
-                  <DeploymentReachability reachable={latestRunningDeployment.reachable} compact />
+                  <DeploymentReachability reachable={latestRunningDeployment.reachable} />
                   <Link
                     to={`/deployments/${latestRunningDeployment.id}`}
                     className="inline-flex text-sm text-primary underline-offset-4 hover:underline"

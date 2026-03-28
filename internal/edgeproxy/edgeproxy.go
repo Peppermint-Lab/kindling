@@ -27,12 +27,12 @@ import (
 )
 
 // Edge proxy duration constants.
-const defaultColdStartTimeout = 2 * time.Minute          // default cold start wait for first-request wake
-const defaultHTTPSWriteTimeout = 30 * time.Second        // HTTPS server write timeout baseline
-const coldStartMargin = 15 * time.Second                 // extra margin added to HTTPS write timeout for cold starts
-const httpServerReadTimeout = 30 * time.Second           // HTTP server read timeout
-const httpServerWriteTimeout = 30 * time.Second          // HTTP server write timeout
-const coldStartRoutePollInterval = 50 * time.Millisecond // poll interval waiting for route during cold start
+const defaultColdStartTimeout = 2 * time.Minute   // default cold start wait for first-request wake
+const defaultHTTPSWriteTimeout = 30 * time.Second // HTTPS server write timeout baseline
+const coldStartMargin = 15 * time.Second          // extra margin added to HTTPS write timeout for cold starts
+const httpServerReadTimeout = 30 * time.Second    // HTTP server read timeout
+const httpServerWriteTimeout = 30 * time.Second   // HTTP server write timeout
+const coldStartLookupPollInterval = 200 * time.Millisecond
 
 // edgeProxyRetryKey marks a request so we only reload-and-retry once per client request.
 type edgeProxyRetryKey struct{}
@@ -56,6 +56,10 @@ type Config struct {
 
 	// RouteChangeNotify receives signals when routes may have changed.
 	RouteChangeNotify <-chan struct{}
+
+	// WakeDeployment optionally nudges the deployment reconciler immediately
+	// when the edge requests a cold start.
+	WakeDeployment func(uuid.UUID)
 
 	// ColdStartTimeout is how long the edge waits for backends after waking a
 	// scaled-to-zero deployment (default 2m). The HTTPS server write timeout is
@@ -461,24 +465,13 @@ func (s *Service) serveHTTPS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deadline := time.Now().Add(s.coldStartTimeout)
-	for time.Now().Before(deadline) {
-		if err := s.loadRoutes(r.Context()); err != nil {
-			slog.Warn("route reload during cold start", "error", err)
-		}
-		s.mu.RLock()
-		route, routeOK := s.routes[host]
-		s.mu.RUnlock()
-		if routeOK && len(route.Backends) > 0 {
-			s.reverseProxy(w, r, host, route)
-			return
-		}
-		select {
-		case <-r.Context().Done():
-			http.Error(w, "Request Timeout", http.StatusRequestTimeout)
-			return
-		case <-time.After(coldStartRoutePollInterval):
-		}
+	if route, routeOK := s.waitForBackend(r.Context(), host); routeOK {
+		s.reverseProxy(w, r, host, route)
+		return
+	}
+	if err := r.Context().Err(); err != nil {
+		http.Error(w, "Request Timeout", http.StatusRequestTimeout)
+		return
 	}
 	http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
 }
@@ -505,7 +498,49 @@ func (s *Service) requestColdStart(ctx context.Context, lookup queries.DomainEdg
 	if _, err := s.q.DeploymentRequestWake(ctx, lookup.DeploymentID); err != nil {
 		return fmt.Errorf("request wake: %w", err)
 	}
+	if s.cfg.WakeDeployment != nil {
+		s.cfg.WakeDeployment(uuid.UUID(lookup.DeploymentID.Bytes))
+	}
 	return nil
+}
+
+func (s *Service) waitForBackend(ctx context.Context, host string) (Route, bool) {
+	deadline := time.Now().Add(s.coldStartTimeout)
+	for time.Now().Before(deadline) {
+		s.mu.RLock()
+		route, ok := s.routes[host]
+		s.mu.RUnlock()
+		if ok && len(route.Backends) > 0 {
+			return route, true
+		}
+
+		lookup, err := s.q.DomainEdgeLookup(ctx, host)
+		if err == nil && lookup.RunningBackendCount > 0 {
+			if loadErr := s.loadRoutes(ctx); loadErr != nil {
+				slog.Warn("route reload during cold start", "host", host, "error", loadErr)
+			}
+			s.mu.RLock()
+			route, ok = s.routes[host]
+			s.mu.RUnlock()
+			if ok && len(route.Backends) > 0 {
+				return route, true
+			}
+		}
+
+		wait := coldStartLookupPollInterval
+		if remaining := time.Until(deadline); remaining < wait {
+			wait = remaining
+		}
+		if wait <= 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return Route{}, false
+		case <-time.After(wait):
+		}
+	}
+	return Route{}, false
 }
 
 func (s *Service) proxyControlPlane(w http.ResponseWriter, r *http.Request, host string) {
@@ -563,17 +598,7 @@ func (s *Service) reverseProxy(w http.ResponseWriter, r *http.Request, host stri
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		statusCaptured = resp.StatusCode
 		resp.Header.Set("Server", "Kindling")
-		if strings.EqualFold(route.DeploymentKind, "preview") {
-			if depID.Valid {
-				if err := s.q.DeploymentPreviewUpdateLastRequestAt(resp.Request.Context(), depID); err != nil {
-					slog.Warn("preview_last_request_at update", "error", err)
-				}
-			}
-		} else if projID.Valid {
-			if err := s.q.ProjectUpdateLastRequestAt(resp.Request.Context(), projID); err != nil {
-				slog.Warn("last_request_at update", "error", err)
-			}
-		}
+		s.recordRequestActivity(route.DeploymentKind, projID, depID)
 		return nil
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -611,6 +636,25 @@ func (s *Service) reverseProxy(w http.ResponseWriter, r *http.Request, host stri
 	// context.Background() is intentional: this is a fire-and-forget goroutine that
 	// records HTTP usage after the request completes; the request context may already be done.
 	go s.recordAppHTTPUsage(context.Background(), projID, depID, statusCaptured, inBytes, mw.n)
+}
+
+func (s *Service) recordRequestActivity(deploymentKind string, projectID, deploymentID pgtype.UUID) {
+	go func() {
+		ctx := context.Background()
+		if strings.EqualFold(deploymentKind, "preview") {
+			if deploymentID.Valid {
+				if err := s.q.DeploymentPreviewUpdateLastRequestAt(ctx, deploymentID); err != nil {
+					slog.Warn("preview_last_request_at update", "error", err)
+				}
+			}
+			return
+		}
+		if projectID.Valid {
+			if err := s.q.ProjectUpdateLastRequestAt(ctx, projectID); err != nil {
+				slog.Warn("last_request_at update", "error", err)
+			}
+		}
+	}()
 }
 
 type meteredResponseWriter struct {

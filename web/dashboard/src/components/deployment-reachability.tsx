@@ -1,8 +1,8 @@
-import { CopyIcon, ExternalLinkIcon, GlobeIcon, NetworkIcon, RouteIcon } from "lucide-react"
+import { CopyIcon, ExternalLinkIcon, GlobeIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import type { DeploymentReachability as DeploymentReachabilityData } from "@/lib/api"
-import { countAdditionalPublicEndpoints, isPrimaryPublicURLRedirect } from "@/lib/deployment-reachability"
+import { isPrimaryPublicURLRedirect } from "@/lib/deployment-reachability"
 
 async function copyText(label: string, text: string) {
   try {
@@ -14,8 +14,6 @@ async function copyText(label: string, text: string) {
 
 type DeploymentReachabilityProps = {
   reachable?: DeploymentReachabilityData | null
-  compact?: boolean
-  showOperatorDetails?: boolean
 }
 
 function ReachabilityRow({
@@ -59,17 +57,10 @@ function ReachabilityRow({
   )
 }
 
-export function DeploymentReachability({
-  reachable,
-  compact = false,
-  showOperatorDetails = false,
-}: DeploymentReachabilityProps) {
+export function DeploymentReachability({ reachable }: DeploymentReachabilityProps) {
   if (!reachable) {
     return <p className="text-sm text-muted-foreground">Not reachable yet.</p>
   }
-
-  const additionalEndpoints = reachable.public_endpoints?.slice(1) ?? []
-  const additionalCount = countAdditionalPublicEndpoints(reachable)
 
   return (
     <div className="space-y-4 text-sm">
@@ -90,97 +81,6 @@ export function DeploymentReachability({
                 : "This hostname routes directly to the deployment."
             }
           />
-          {isPrimaryPublicURLRedirect(reachable) && reachable.public_endpoints?.[0]?.redirect_to ? (
-            <ReachabilityRow
-              label="Redirect destination"
-              value={reachable.public_endpoints[0].redirect_to}
-              href={reachable.public_endpoints[0].redirect_to}
-              copyLabel="redirect-destination"
-              description={
-                reachable.public_endpoints[0].redirect_status_code
-                  ? `HTTP ${reachable.public_endpoints[0].redirect_status_code} redirect`
-                  : undefined
-              }
-            />
-          ) : null}
-          {compact && additionalCount > 0 ? (
-            <p className="text-xs text-muted-foreground">
-              +{additionalCount} more public endpoint{additionalCount === 1 ? "" : "s"}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-
-      {reachable.private_endpoints && reachable.private_endpoints.length > 0 ? (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <RouteIcon className="size-4 text-muted-foreground" />
-            Private endpoints
-          </div>
-          <div className="space-y-3">
-            {reachable.private_endpoints.map((endpoint) => (
-              <ReachabilityRow
-                key={`${endpoint.name}-${endpoint.dns_name}`}
-                label={`${endpoint.name} (${endpoint.visibility})`}
-                value={endpoint.dns_name}
-                copyLabel={`private-${endpoint.name}`}
-                description={`${endpoint.protocol.toUpperCase()} on port ${endpoint.port} via ${endpoint.private_ip}`}
-              />
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      {showOperatorDetails && reachable.runtime_url ? (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <NetworkIcon className="size-4 text-muted-foreground" />
-            Operator details
-          </div>
-          <ReachabilityRow
-            label="Raw runtime address"
-            value={reachable.runtime_url}
-            href={reachable.runtime_url}
-            copyLabel="runtime-url"
-            description="Host-level runtime endpoint for this deployment."
-          />
-          {reachable.vm_ip ? (
-            <ReachabilityRow
-              label="VM IP"
-              value={reachable.vm_ip}
-              copyLabel="vm-ip"
-              description="Underlying backend IP recorded for this deployment."
-            />
-          ) : null}
-        </div>
-      ) : null}
-
-      {!compact && additionalEndpoints.length > 0 ? (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <RouteIcon className="size-4 text-muted-foreground" />
-            Additional public endpoints
-          </div>
-          <div className="space-y-3">
-            {additionalEndpoints.map((endpoint) => (
-              <ReachabilityRow
-                key={endpoint.domain}
-                label={endpoint.domain}
-                value={endpoint.public_url}
-                href={endpoint.public_url}
-                copyLabel={endpoint.domain}
-                description={
-                  endpoint.proxies_to_deployment === false
-                    ? endpoint.redirect_to
-                      ? `Redirects to ${endpoint.redirect_to}${
-                          endpoint.redirect_status_code ? ` (HTTP ${endpoint.redirect_status_code})` : ""
-                        }`
-                      : "Redirecting entry point"
-                    : "Routes directly to the deployment."
-                }
-              />
-            ))}
-          </div>
         </div>
       ) : null}
     </div>
