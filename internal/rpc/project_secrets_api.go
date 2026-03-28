@@ -78,6 +78,11 @@ func (a *API) upsertProjectSecret(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	service, err := a.primaryServiceForProject(r.Context(), projectID)
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "project_primary_service", err)
+		return
+	}
 
 	var req struct {
 		Name  string  `json:"name"`
@@ -109,6 +114,7 @@ func (a *API) upsertProjectSecret(w http.ResponseWriter, r *http.Request) {
 	row, err := a.q.EnvironmentVariableCreate(r.Context(), queries.EnvironmentVariableCreateParams{
 		ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		ProjectID: projectID,
+		ServiceID: service.ID,
 		Name:      req.Name,
 		Value:     enc,
 	})

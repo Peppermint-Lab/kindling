@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from "react-router-dom"
 import {
   api,
   type Project,
+  type Service,
   type Deployment,
   type PreviewEnvironment,
   type GitHubSetup,
@@ -145,6 +146,7 @@ export function ProjectDetailPage() {
   const navigate = useNavigate()
   const [project, setProject] = useState<Project | null>(null)
   const [deployments, setDeployments] = useState<Deployment[]>([])
+  const [services, setServices] = useState<Service[]>([])
   const [deploymentsPage, setDeploymentsPage] = useState(1)
   const [ghSetup, setGhSetup] = useState<GitHubSetup | null>(null)
   const [loading, setLoading] = useState(true)
@@ -342,6 +344,7 @@ export function ProjectDetailPage() {
       }
       return Promise.all([
         api.getProject(id),
+        api.listProjectServices(id),
         api.listDeployments(id),
         api.getProjectVolume(id).catch((e) => {
           if (e instanceof APIError && e.status === 404) {
@@ -357,8 +360,9 @@ export function ProjectDetailPage() {
         }),
         api.listServers().catch(() => []),
       ])
-        .then(([p, d, v, backups, serverList]) => {
+        .then(([p, svc, d, v, backups, serverList]) => {
           setProject(p)
+          setServices(svc)
           setDeployments(d)
           setProjectVolume(v)
           setVolumeBackups(backups)
@@ -392,6 +396,7 @@ export function ProjectDetailPage() {
 
   useEffect(() => {
     setDeploymentsPage(1)
+    setServices([])
     setMinInstances(0)
     setMaxInstances(3)
     setScaleToZeroEnabled(true)
@@ -901,6 +906,42 @@ export function ProjectDetailPage() {
                     <p className="font-mono text-sm">{project.root_directory}</p>
                   </MetadataItem>
                 </MetadataGrid>
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Services</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Services are now the workload unit under a project. Existing projects keep a primary
+                      compatibility service automatically.
+                    </p>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {services.map((service) => (
+                      <div key={service.id} className="rounded-lg border p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-medium truncate">{service.name}</p>
+                            <p className="font-mono text-xs text-muted-foreground break-all">{service.slug}</p>
+                          </div>
+                          {service.is_primary ? <Badge variant="secondary">Primary</Badge> : null}
+                        </div>
+                        <div className="text-xs text-muted-foreground space-y-1">
+                          <p>
+                            Root: <span className="font-mono text-foreground">{service.root_directory}</span>
+                          </p>
+                          <p>
+                            Dockerfile: <span className="font-mono text-foreground">{service.dockerfile_path}</span>
+                          </p>
+                          <p>
+                            Default exposure:{" "}
+                            <span className="font-medium text-foreground">
+                              {service.public_default ? "public" : "private"}
+                            </span>
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </SurfaceBody>
               <SurfaceSeparator />
               <SurfaceBody className="space-y-3">

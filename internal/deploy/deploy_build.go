@@ -24,6 +24,7 @@ func (d *Deployer) ensureBuild(ctx context.Context, dep queries.Deployment, depl
 		build, err := d.q.BuildCreate(ctx, queries.BuildCreateParams{
 			ID:           pguuid.ToPgtype(uuid.New()),
 			ProjectID:    dep.ProjectID,
+			ServiceID:    dep.ServiceID,
 			Status:       "pending",
 			GithubCommit: dep.GithubCommit,
 			GithubBranch: branch,

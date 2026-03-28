@@ -185,10 +185,16 @@ func (h *Handler) triggerDeploy(w http.ResponseWriter, r *http.Request) {
 		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "project not found")
 		return
 	}
+	service, err := h.Q.ServicePrimaryByProjectID(r.Context(), projectID)
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "project_primary_service", err)
+		return
+	}
 
 	dep, err := h.Q.DeploymentCreate(r.Context(), queries.DeploymentCreateParams{
 		ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		ProjectID:            projectID,
+		ServiceID:            service.ID,
 		GithubCommit:         req.Commit,
 		GithubBranch:         req.Commit,
 		DeploymentKind:       "production",

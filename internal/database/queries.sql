@@ -271,13 +271,24 @@ SELECT * FROM images WHERE id = $1;
 -- Projects --
 
 -- name: ProjectCreate :one
-INSERT INTO projects (
-    id, org_id, name, github_repository, github_installation_id, github_webhook_secret,
-    root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count,
-    scale_to_zero_enabled, build_only_on_root_changes
+WITH inserted AS (
+    INSERT INTO projects (
+        id, org_id, name, github_repository, github_installation_id, github_webhook_secret,
+        root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count,
+        scale_to_zero_enabled, build_only_on_root_changes
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    RETURNING *
+), primary_service AS (
+    INSERT INTO services (
+        id, project_id, name, slug, root_directory, dockerfile_path,
+        desired_instance_count, build_only_on_root_changes, public_default, is_primary
+    )
+    SELECT gen_random_uuid(), id, name, 'app', root_directory, dockerfile_path,
+           desired_instance_count, build_only_on_root_changes, false, true
+    FROM inserted
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-RETURNING *;
+SELECT * FROM inserted;
 
 -- name: ProjectFirstByID :one
 SELECT * FROM projects WHERE id = $1;
@@ -334,6 +345,47 @@ SET build_only_on_root_changes = $2, updated_at = NOW()
 WHERE id = $1 AND org_id = $3
 RETURNING *;
 
+-- Services --
+
+-- name: ServiceCreate :one
+INSERT INTO services (
+    id, project_id, name, slug, root_directory, dockerfile_path,
+    desired_instance_count, build_only_on_root_changes, public_default, is_primary
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+RETURNING *;
+
+-- name: ServiceListByProjectID :many
+SELECT * FROM services WHERE project_id = $1 ORDER BY is_primary DESC, created_at ASC;
+
+-- name: ServiceFirstByID :one
+SELECT * FROM services WHERE id = $1;
+
+-- name: ServiceFirstByIDAndOrg :one
+SELECT s.*
+FROM services s
+JOIN projects p ON p.id = s.project_id
+WHERE s.id = $1 AND p.org_id = $2;
+
+-- name: ServicePrimaryByProjectID :one
+SELECT * FROM services
+WHERE project_id = $1 AND is_primary = true
+LIMIT 1;
+
+-- name: ServiceSyncPrimaryFromProject :one
+UPDATE services s
+SET name = p.name,
+    root_directory = p.root_directory,
+    dockerfile_path = p.dockerfile_path,
+    desired_instance_count = p.desired_instance_count,
+    build_only_on_root_changes = p.build_only_on_root_changes,
+    updated_at = NOW()
+FROM projects p
+WHERE s.project_id = p.id
+  AND s.project_id = $1
+  AND s.is_primary = true
+RETURNING s.*;
+
 -- name: ProjectUpdateLastRequestAt :exec
 UPDATE projects SET last_request_at = NOW(), updated_at = NOW() WHERE id = $1;
 
@@ -379,9 +431,9 @@ ORDER BY created_at ASC;
 
 -- name: ProjectVolumeCreate :one
 INSERT INTO project_volumes (
-    id, project_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled
+    id, project_id, service_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled
 ) VALUES (
-    $1, $2, $3, $4, $5, 'detached', 'unknown', $6, $7, $8
+    $1, $2, $3, $4, $5, $6, 'detached', 'unknown', $7, $8, $9
 )
 RETURNING *;
 
@@ -672,8 +724,8 @@ WHERE server_id = $1 AND deleted_at IS NULL;
 -- Environment Variables --
 
 -- name: EnvironmentVariableCreate :one
-INSERT INTO environment_variables (id, project_id, name, value)
-VALUES ($1, $2, $3, $4)
+INSERT INTO environment_variables (id, project_id, service_id, name, value)
+VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (project_id, name) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
 RETURNING *;
 
@@ -740,8 +792,8 @@ WHERE server_id = sqlc.arg(server_id);
 -- Builds --
 
 -- name: BuildCreate :one
-INSERT INTO builds (id, project_id, status, github_commit, github_branch)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO builds (id, project_id, service_id, status, github_commit, github_branch)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: BuildFirstByID :one
@@ -778,8 +830,8 @@ SELECT * FROM build_logs WHERE build_id = $1 ORDER BY created_at;
 -- Deployments --
 
 -- name: DeploymentCreate :one
-INSERT INTO deployments (id, project_id, github_commit, github_branch, deployment_kind, preview_environment_id)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO deployments (id, project_id, service_id, github_commit, github_branch, deployment_kind, preview_environment_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- name: DeploymentFirstByID :one
@@ -924,8 +976,8 @@ LIMIT $1;
 -- Preview environments --
 
 -- name: PreviewEnvironmentCreate :one
-INSERT INTO preview_environments (id, project_id, provider, pr_number, head_branch, head_sha, stable_domain_name)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO preview_environments (id, project_id, service_id, provider, pr_number, head_branch, head_sha, stable_domain_name)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: PreviewEnvironmentByProjectAndPR :one
@@ -1042,8 +1094,8 @@ ORDER BY created_at;
 -- Domains --
 
 -- name: DomainCreate :one
-INSERT INTO domains (id, project_id, domain_name, verification_token)
-VALUES ($1, $2, $3, $4)
+INSERT INTO domains (id, project_id, service_id, domain_name, verification_token)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: DomainListByProjectID :many
@@ -1075,8 +1127,8 @@ WHERE project_id = $2 AND domain_kind = 'production';
 UPDATE domains SET deployment_id = $2, updated_at = NOW() WHERE id = $1;
 
 -- name: DomainCreatePreview :one
-INSERT INTO domains (id, project_id, deployment_id, domain_name, verification_token, verified_at, domain_kind, preview_environment_id)
-VALUES ($1, $2, $3, $4, '', NOW(), $5, $6)
+INSERT INTO domains (id, project_id, service_id, deployment_id, domain_name, verification_token, verified_at, domain_kind, preview_environment_id)
+VALUES ($1, $2, $3, $4, $5, '', NOW(), $6, $7)
 RETURNING *;
 
 -- name: DomainFindByPreviewEnvironmentAndKind :one

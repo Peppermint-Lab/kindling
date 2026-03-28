@@ -193,6 +193,11 @@ func (h *Handler) createProjectDomain(w http.ResponseWriter, r *http.Request) {
 		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "project not found")
 		return
 	}
+	service, err := h.Q.ServicePrimaryByProjectID(r.Context(), projectID)
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "project_primary_service", err)
+		return
+	}
 	var req struct {
 		DomainName string `json:"domain_name"`
 	}
@@ -213,6 +218,7 @@ func (h *Handler) createProjectDomain(w http.ResponseWriter, r *http.Request) {
 	d, err := h.Q.DomainCreate(r.Context(), queries.DomainCreateParams{
 		ID:                pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		ProjectID:         projectID,
+		ServiceID:         service.ID,
 		DomainName:        domainName,
 		VerificationToken: token,
 	})

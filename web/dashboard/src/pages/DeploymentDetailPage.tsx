@@ -297,7 +297,7 @@ export function DeploymentDetailPage() {
                 ) : null}
                 <div className="space-y-2">
                   <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Reachability</p>
-                  <DeploymentReachability reachable={deployment.reachable} />
+                  <DeploymentReachability reachable={deployment.reachable} showOperatorDetails />
                 </div>
                 <div className="flex flex-wrap gap-2 pt-1">
                   {!terminal && (

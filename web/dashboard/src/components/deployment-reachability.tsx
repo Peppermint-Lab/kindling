@@ -15,6 +15,7 @@ async function copyText(label: string, text: string) {
 type DeploymentReachabilityProps = {
   reachable?: DeploymentReachabilityData | null
   compact?: boolean
+  showOperatorDetails?: boolean
 }
 
 function ReachabilityRow({
@@ -58,7 +59,11 @@ function ReachabilityRow({
   )
 }
 
-export function DeploymentReachability({ reachable, compact = false }: DeploymentReachabilityProps) {
+export function DeploymentReachability({
+  reachable,
+  compact = false,
+  showOperatorDetails = false,
+}: DeploymentReachabilityProps) {
   if (!reachable) {
     return <p className="text-sm text-muted-foreground">Not reachable yet.</p>
   }
@@ -106,11 +111,11 @@ export function DeploymentReachability({ reachable, compact = false }: Deploymen
         </div>
       ) : null}
 
-      {reachable.runtime_url ? (
+      {showOperatorDetails && reachable.runtime_url ? (
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-sm font-medium">
             <NetworkIcon className="size-4 text-muted-foreground" />
-            Runtime URL
+            Operator details
           </div>
           <ReachabilityRow
             label="Raw runtime address"
@@ -119,6 +124,14 @@ export function DeploymentReachability({ reachable, compact = false }: Deploymen
             copyLabel="runtime-url"
             description="Host-level runtime endpoint for this deployment."
           />
+          {reachable.vm_ip ? (
+            <ReachabilityRow
+              label="VM IP"
+              value={reachable.vm_ip}
+              copyLabel="vm-ip"
+              description="Underlying backend IP recorded for this deployment."
+            />
+          ) : null}
         </div>
       ) : null}
 

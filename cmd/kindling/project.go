@@ -262,9 +262,14 @@ Private repositories need github_token stored encrypted in cluster_secrets (see 
 			if refName == "" {
 				refName = "main"
 			}
+			service, err := q.ServicePrimaryByProjectID(cmd.Context(), pgtype.UUID{Bytes: id, Valid: true})
+			if err != nil {
+				return fmt.Errorf("load primary service: %w", err)
+			}
 			dep, err := q.DeploymentCreate(cmd.Context(), queries.DeploymentCreateParams{
 				ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
 				ProjectID:            pgtype.UUID{Bytes: id, Valid: true},
+				ServiceID:            service.ID,
 				GithubCommit:         resolved,
 				GithubBranch:         refName,
 				DeploymentKind:       "production",

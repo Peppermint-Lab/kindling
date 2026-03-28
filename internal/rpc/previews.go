@@ -201,10 +201,16 @@ func (a *API) redeployProjectPreview(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusConflict, "invalid_state", "preview environment is missing head branch or commit")
 		return
 	}
+	service, err := a.primaryServiceForProject(r.Context(), projectID)
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "project_primary_service", err)
+		return
+	}
 
 	dep, err := a.q.DeploymentCreate(r.Context(), queries.DeploymentCreateParams{
 		ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		ProjectID:            projectID,
+		ServiceID:            service.ID,
 		GithubCommit:         headSHA,
 		GithubBranch:         headBranch,
 		DeploymentKind:       "preview",

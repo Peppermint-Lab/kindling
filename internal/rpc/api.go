@@ -67,6 +67,10 @@ func (a *API) Register(mux *http.ServeMux) {
 		GetProjectUsageCurrent: a.getProjectUsageCurrent, GetProjectUsageHistory: a.getProjectUsageHistory,
 	}).RegisterRoutes(mux)
 
+	mux.HandleFunc("GET /api/projects/{id}/services", a.listProjectServices)
+	mux.HandleFunc("POST /api/projects/{id}/services", a.createProjectService)
+	mux.HandleFunc("GET /api/services/{id}", a.getService)
+
 	// Volumes sub-package: volume CRUD and operations.
 	(&volumes.Handlers{
 		GetProjectVolume: a.getProjectVolume, PutProjectVolume: a.putProjectVolume,

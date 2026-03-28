@@ -60,6 +60,21 @@ export type Project = {
   updated_at: string
 }
 
+export type Service = {
+  id: string
+  project_id: string
+  name: string
+  slug: string
+  root_directory: string
+  dockerfile_path: string
+  desired_instance_count: number
+  build_only_on_root_changes: boolean
+  public_default: boolean
+  is_primary: boolean
+  created_at?: string | null
+  updated_at?: string | null
+}
+
 export type ProjectVolume = {
   id: string
   project_id: string
@@ -622,6 +637,20 @@ export const api = {
   }) => request<Project>("/api/projects", { method: "POST", body: JSON.stringify(data) }),
 
   getProject: (id: string) => request<Project>(`/api/projects/${id}`),
+  listProjectServices: (id: string) => request<Service[]>(`/api/projects/${id}/services`),
+  createProjectService: (
+    id: string,
+    data: {
+      name: string
+      slug?: string
+      root_directory?: string
+      dockerfile_path?: string
+      desired_instance_count?: number
+      build_only_on_root_changes?: boolean
+      public_default?: boolean
+    },
+  ) => request<Service>(`/api/projects/${id}/services`, { method: "POST", body: JSON.stringify(data) }),
+  getService: (id: string) => request<Service>(`/api/services/${id}`),
 
   getProjectVolume: (id: string) => request<ProjectVolume>(`/api/projects/${id}/volume`),
   putProjectVolume: (id: string, data: { mount_path?: string; size_gb?: number; backup_schedule?: string; backup_retention_count?: number; pre_delete_backup_enabled?: boolean }) =>

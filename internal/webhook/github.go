@@ -238,10 +238,17 @@ func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request, body []byte
 		})
 		return
 	}
+	service, err := h.q.ServicePrimaryByProjectID(r.Context(), project.ID)
+	if err != nil {
+		slog.Error("failed to load primary service", "project", project.Name, "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 
 	dep, err := h.q.DeploymentCreate(r.Context(), queries.DeploymentCreateParams{
 		ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		ProjectID:            project.ID,
+		ServiceID:            service.ID,
 		GithubCommit:         commit,
 		GithubBranch:         branch,
 		DeploymentKind:       "production",
@@ -397,6 +404,12 @@ func (h *Handler) handlePullRequestSync(w http.ResponseWriter, ctx context.Conte
 		http.Error(w, "invalid preview base domain", http.StatusBadRequest)
 		return
 	}
+	service, err := h.q.ServicePrimaryByProjectID(ctx, project.ID)
+	if err != nil {
+		slog.Error("preview load primary service", "error", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 
 	var pe queries.PreviewEnvironment
 	existing, err := h.q.PreviewEnvironmentByProjectAndPR(ctx, queries.PreviewEnvironmentByProjectAndPRParams{
@@ -409,6 +422,7 @@ func (h *Handler) handlePullRequestSync(w http.ResponseWriter, ctx context.Conte
 			pe, err = h.q.PreviewEnvironmentCreate(ctx, queries.PreviewEnvironmentCreateParams{
 				ID:               pgtype.UUID{Bytes: uuid.New(), Valid: true},
 				ProjectID:        project.ID,
+				ServiceID:        service.ID,
 				Provider:         "github",
 				PrNumber:         prNum,
 				HeadBranch:       headBranch,
@@ -441,6 +455,7 @@ func (h *Handler) handlePullRequestSync(w http.ResponseWriter, ctx context.Conte
 	dep, err := h.q.DeploymentCreate(ctx, queries.DeploymentCreateParams{
 		ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		ProjectID:            project.ID,
+		ServiceID:            service.ID,
 		GithubCommit:         sha,
 		GithubBranch:         headBranch,
 		DeploymentKind:       "preview",
@@ -470,6 +485,7 @@ func (h *Handler) handlePullRequestSync(w http.ResponseWriter, ctx context.Conte
 			_, err = h.q.DomainCreatePreview(ctx, queries.DomainCreatePreviewParams{
 				ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
 				ProjectID:            project.ID,
+				ServiceID:            service.ID,
 				DeploymentID:         dep.ID,
 				DomainName:           stableHost,
 				DomainKind:           "preview_stable",

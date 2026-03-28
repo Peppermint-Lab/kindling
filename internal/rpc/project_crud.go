@@ -19,6 +19,28 @@ func projectStripSecret(p queries.Project) queries.Project {
 	return p
 }
 
+func projectFromCreateRow(row queries.ProjectCreateRow) queries.Project {
+	return queries.Project{
+		ID:                     row.ID,
+		OrgID:                  row.OrgID,
+		Name:                   row.Name,
+		GithubRepository:       row.GithubRepository,
+		GithubInstallationID:   row.GithubInstallationID,
+		GithubWebhookSecret:    row.GithubWebhookSecret,
+		RootDirectory:          row.RootDirectory,
+		DockerfilePath:         row.DockerfilePath,
+		DesiredInstanceCount:   row.DesiredInstanceCount,
+		MinInstanceCount:       row.MinInstanceCount,
+		MaxInstanceCount:       row.MaxInstanceCount,
+		LastRequestAt:          row.LastRequestAt,
+		ScaledToZero:           row.ScaledToZero,
+		ScaleToZeroEnabled:     row.ScaleToZeroEnabled,
+		BuildOnlyOnRootChanges: row.BuildOnlyOnRootChanges,
+		CreatedAt:              row.CreatedAt,
+		UpdatedAt:              row.UpdatedAt,
+	}
+}
+
 func validatePersistentVolumeScalingBounds(max int32, volumeExists bool) error {
 	if volumeExists && max > 1 {
 		return errors.New("persistent volumes require max_instance_count <= 1")
@@ -196,7 +218,7 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "create_project", err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, projectStripSecret(project))
+	writeJSON(w, http.StatusCreated, projectStripSecret(projectFromCreateRow(project)))
 }
 
 func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
@@ -296,6 +318,10 @@ func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
 			writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
 			return
 		}
+	}
+	if _, err := a.q.ServiceSyncPrimaryFromProject(r.Context(), id); err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project_service", err)
+		return
 	}
 	project, err = a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
 		ID:    id,

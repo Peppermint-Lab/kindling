@@ -186,6 +186,47 @@ CREATE TABLE IF NOT EXISTS projects (
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Services: deployable/networked workloads within a project.
+CREATE TABLE IF NOT EXISTS services (
+    id                      UUID PRIMARY KEY,
+    project_id              UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name                    TEXT NOT NULL,
+    slug                    TEXT NOT NULL,
+    root_directory          TEXT NOT NULL DEFAULT '/',
+    dockerfile_path         TEXT NOT NULL DEFAULT 'Dockerfile',
+    desired_instance_count  INT NOT NULL DEFAULT 1,
+    build_only_on_root_changes BOOLEAN NOT NULL DEFAULT false,
+    public_default          BOOLEAN NOT NULL DEFAULT false,
+    is_primary              BOOLEAN NOT NULL DEFAULT false,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (project_id, slug)
+);
+
+CREATE INDEX IF NOT EXISTS idx_services_project_id ON services(project_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_services_primary_per_project ON services(project_id) WHERE is_primary = true;
+
+-- Backfill one primary service per existing project.
+INSERT INTO services (
+    id, project_id, name, slug, root_directory, dockerfile_path,
+    desired_instance_count, build_only_on_root_changes, public_default, is_primary
+)
+SELECT
+    gen_random_uuid(),
+    p.id,
+    p.name,
+    'app',
+    p.root_directory,
+    p.dockerfile_path,
+    p.desired_instance_count,
+    p.build_only_on_root_changes,
+    false,
+    true
+FROM projects p
+WHERE NOT EXISTS (
+    SELECT 1 FROM services s WHERE s.project_id = p.id
+);
+
 -- Migrate existing DBs created before desired_instance_count existed
 DO $$ BEGIN
     IF NOT EXISTS (
@@ -318,6 +359,7 @@ END $$;
 CREATE TABLE IF NOT EXISTS preview_environments (
     id                   UUID PRIMARY KEY,
     project_id           UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    service_id           UUID REFERENCES services(id) ON DELETE CASCADE,
     provider             TEXT NOT NULL DEFAULT 'github' CHECK (provider IN ('github')),
     pr_number            INT NOT NULL,
     head_branch          TEXT NOT NULL DEFAULT '',
@@ -334,10 +376,27 @@ CREATE TABLE IF NOT EXISTS preview_environments (
 CREATE INDEX IF NOT EXISTS idx_preview_environments_project_id ON preview_environments(project_id);
 CREATE INDEX IF NOT EXISTS idx_preview_environments_expires_at ON preview_environments(expires_at) WHERE expires_at IS NOT NULL;
 
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'preview_environments' AND column_name = 'service_id'
+    ) THEN
+        ALTER TABLE preview_environments ADD COLUMN service_id UUID REFERENCES services(id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+UPDATE preview_environments pe
+SET service_id = s.id
+FROM services s
+WHERE pe.service_id IS NULL
+  AND s.project_id = pe.project_id
+  AND s.is_primary = true;
+
 -- Environment variables per project (values stored as encrypted envelopes)
 CREATE TABLE IF NOT EXISTS environment_variables (
     id          UUID PRIMARY KEY,
     project_id  UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    service_id  UUID REFERENCES services(id) ON DELETE CASCADE,
     name        TEXT NOT NULL,
     value       TEXT NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -345,10 +404,27 @@ CREATE TABLE IF NOT EXISTS environment_variables (
     UNIQUE (project_id, name)
 );
 
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'environment_variables' AND column_name = 'service_id'
+    ) THEN
+        ALTER TABLE environment_variables ADD COLUMN service_id UUID REFERENCES services(id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+UPDATE environment_variables ev
+SET service_id = s.id
+FROM services s
+WHERE ev.service_id IS NULL
+  AND s.project_id = ev.project_id
+  AND s.is_primary = true;
+
 -- Builds: a single build attempt for a commit
 CREATE TABLE IF NOT EXISTS builds (
     id              UUID PRIMARY KEY,
     project_id      UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    service_id      UUID REFERENCES services(id) ON DELETE CASCADE,
     status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'building', 'successful', 'failed')),
     github_commit   TEXT NOT NULL DEFAULT '',
     github_branch   TEXT NOT NULL DEFAULT '',
@@ -360,6 +436,22 @@ CREATE TABLE IF NOT EXISTS builds (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'builds' AND column_name = 'service_id'
+    ) THEN
+        ALTER TABLE builds ADD COLUMN service_id UUID REFERENCES services(id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+UPDATE builds b
+SET service_id = s.id
+FROM services s
+WHERE b.service_id IS NULL
+  AND s.project_id = b.project_id
+  AND s.is_primary = true;
 
 -- VMs: a running or pending Cloud Hypervisor microVM
 CREATE TABLE IF NOT EXISTS vms (
@@ -391,6 +483,7 @@ END $$;
 CREATE TABLE IF NOT EXISTS deployments (
     id                  UUID PRIMARY KEY,
     project_id          UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    service_id          UUID REFERENCES services(id) ON DELETE CASCADE,
     build_id            UUID REFERENCES builds(id),
     image_id            UUID REFERENCES images(id),
     vm_id               UUID REFERENCES vms(id),
@@ -411,6 +504,22 @@ CREATE TABLE IF NOT EXISTS deployments (
 );
 
 -- Upgrade path: DBs created before wake_requested_at existed
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'deployments' AND column_name = 'service_id'
+    ) THEN
+        ALTER TABLE deployments ADD COLUMN service_id UUID REFERENCES services(id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+UPDATE deployments d
+SET service_id = s.id
+FROM services s
+WHERE d.service_id IS NULL
+  AND s.project_id = d.project_id
+  AND s.is_primary = true;
+
 DO $$ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns
@@ -544,6 +653,7 @@ CREATE INDEX IF NOT EXISTS idx_deployment_instances_role
 CREATE TABLE IF NOT EXISTS project_volumes (
     id              UUID PRIMARY KEY,
     project_id      UUID NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE,
+    service_id      UUID REFERENCES services(id) ON DELETE CASCADE,
     server_id       UUID REFERENCES servers(id) ON DELETE SET NULL,
     attached_vm_id  UUID REFERENCES vms(id) ON DELETE SET NULL,
     mount_path      TEXT NOT NULL DEFAULT '/data',
@@ -563,6 +673,25 @@ CREATE TABLE IF NOT EXISTS project_volumes (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'project_volumes' AND column_name = 'service_id'
+    ) THEN
+        ALTER TABLE project_volumes ADD COLUMN service_id UUID REFERENCES services(id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+UPDATE project_volumes pv
+SET service_id = s.id
+FROM services s
+WHERE pv.service_id IS NULL
+  AND s.project_id = pv.project_id
+  AND s.is_primary = true;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_volumes_service_id
+    ON project_volumes(service_id) WHERE deleted_at IS NULL AND service_id IS NOT NULL;
 
 DO $$ BEGIN
     IF NOT EXISTS (
@@ -775,6 +904,7 @@ END $$;
 CREATE TABLE IF NOT EXISTS domains (
     id                  UUID PRIMARY KEY,
     project_id          UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    service_id          UUID REFERENCES services(id) ON DELETE CASCADE,
     deployment_id       UUID REFERENCES deployments(id),
     domain_name         TEXT NOT NULL UNIQUE,
     verification_token  TEXT NOT NULL DEFAULT '',
@@ -787,6 +917,22 @@ CREATE TABLE IF NOT EXISTS domains (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'domains' AND column_name = 'service_id'
+    ) THEN
+        ALTER TABLE domains ADD COLUMN service_id UUID REFERENCES services(id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+UPDATE domains d
+SET service_id = s.id
+FROM services s
+WHERE d.service_id IS NULL
+  AND s.project_id = d.project_id
+  AND s.is_primary = true;
 
 -- Preview vs production domain rows (custom domains are production)
 DO $$ BEGIN

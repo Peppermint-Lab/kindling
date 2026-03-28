@@ -252,6 +252,11 @@ func (a *API) putProjectVolume(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	service, err := a.primaryServiceForProject(r.Context(), projectID)
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "project_primary_service", err)
+		return
+	}
 
 	var req struct {
 		MountPath              *string `json:"mount_path"`
@@ -381,6 +386,7 @@ func (a *API) putProjectVolume(w http.ResponseWriter, r *http.Request) {
 			vol, err = a.q.ProjectVolumeCreate(r.Context(), queries.ProjectVolumeCreateParams{
 				ID:                     pgtype.UUID{Bytes: uuid.New(), Valid: true},
 				ProjectID:              projectID,
+				ServiceID:              service.ID,
 				MountPath:              mountPath,
 				SizeGb:                 sizeGB,
 				Filesystem:             "ext4",

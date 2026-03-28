@@ -29,6 +29,7 @@ type AuthProvider struct {
 type Build struct {
 	ID           pgtype.UUID        `json:"id"`
 	ProjectID    pgtype.UUID        `json:"project_id"`
+	ServiceID    pgtype.UUID        `json:"service_id"`
 	Status       string             `json:"status"`
 	GithubCommit string             `json:"github_commit"`
 	GithubBranch string             `json:"github_branch"`
@@ -70,6 +71,7 @@ type ClusterSetting struct {
 type Deployment struct {
 	ID                   pgtype.UUID        `json:"id"`
 	ProjectID            pgtype.UUID        `json:"project_id"`
+	ServiceID            pgtype.UUID        `json:"service_id"`
 	BuildID              pgtype.UUID        `json:"build_id"`
 	ImageID              pgtype.UUID        `json:"image_id"`
 	VmID                 pgtype.UUID        `json:"vm_id"`
@@ -104,6 +106,7 @@ type DeploymentInstance struct {
 type Domain struct {
 	ID                   pgtype.UUID        `json:"id"`
 	ProjectID            pgtype.UUID        `json:"project_id"`
+	ServiceID            pgtype.UUID        `json:"service_id"`
 	DeploymentID         pgtype.UUID        `json:"deployment_id"`
 	DomainName           string             `json:"domain_name"`
 	VerificationToken    string             `json:"verification_token"`
@@ -119,6 +122,7 @@ type Domain struct {
 type EnvironmentVariable struct {
 	ID        pgtype.UUID        `json:"id"`
 	ProjectID pgtype.UUID        `json:"project_id"`
+	ServiceID pgtype.UUID        `json:"service_id"`
 	Name      string             `json:"name"`
 	Value     string             `json:"value"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
@@ -200,6 +204,7 @@ type OrganizationMembership struct {
 type PreviewEnvironment struct {
 	ID                 pgtype.UUID        `json:"id"`
 	ProjectID          pgtype.UUID        `json:"project_id"`
+	ServiceID          pgtype.UUID        `json:"service_id"`
 	Provider           string             `json:"provider"`
 	PrNumber           int32              `json:"pr_number"`
 	HeadBranch         string             `json:"head_branch"`
@@ -250,6 +255,7 @@ type ProjectHttpUsageRollup struct {
 type ProjectVolume struct {
 	ID                     pgtype.UUID        `json:"id"`
 	ProjectID              pgtype.UUID        `json:"project_id"`
+	ServiceID              pgtype.UUID        `json:"service_id"`
 	ServerID               pgtype.UUID        `json:"server_id"`
 	AttachedVmID           pgtype.UUID        `json:"attached_vm_id"`
 	MountPath              string             `json:"mount_path"`
@@ -331,6 +337,21 @@ type ServerSetting struct {
 	CloudHypervisorKernelPath    string             `json:"cloud_hypervisor_kernel_path"`
 	CloudHypervisorInitramfsPath string             `json:"cloud_hypervisor_initramfs_path"`
 	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Service struct {
+	ID                     pgtype.UUID        `json:"id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	Name                   string             `json:"name"`
+	Slug                   string             `json:"slug"`
+	RootDirectory          string             `json:"root_directory"`
+	DockerfilePath         string             `json:"dockerfile_path"`
+	DesiredInstanceCount   int32              `json:"desired_instance_count"`
+	BuildOnlyOnRootChanges bool               `json:"build_only_on_root_changes"`
+	PublicDefault          bool               `json:"public_default"`
+	IsPrimary              bool               `json:"is_primary"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Team struct {
