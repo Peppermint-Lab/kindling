@@ -302,8 +302,8 @@ func (h *Handler) streamDeployment(w http.ResponseWriter, r *http.Request) {
 	if err := writeEvent("deployment", out); err != nil {
 		return
 	}
-	for _, l := range logs {
-		if err := writeEvent("logs", l); err != nil {
+	if dep.BuildID.Valid {
+		if err := writeEvent("logs", logs); err != nil {
 			return
 		}
 	}
@@ -344,13 +344,11 @@ func (h *Handler) streamDeployment(w http.ResponseWriter, r *http.Request) {
 				} else {
 					newLogs, fetchErr = h.Q.BuildLogsByBuildID(r.Context(), dep.BuildID)
 				}
-				if fetchErr == nil {
-					for _, l := range newLogs {
-						if err := writeEvent("logs", l); err != nil {
-							return
-						}
-						lastLogTS = l.CreatedAt
+				if fetchErr == nil && len(newLogs) > 0 {
+					if err := writeEvent("logs", newLogs); err != nil {
+						return
 					}
+					lastLogTS = newLogs[len(newLogs)-1].CreatedAt
 				}
 			}
 			if terminalPhase(newOut.Phase) {
