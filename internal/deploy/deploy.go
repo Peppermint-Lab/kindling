@@ -20,11 +20,11 @@ import (
 )
 
 // Duration constants for the deployment reconciler.
-const buildPollRetryInterval = 10 * time.Second   // retry delay while a build is still in progress
-const reconcileRetryInterval = 5 * time.Second    // default retry for instance/volume/ready waits
-const healthCheckTimeout = 90 * time.Second       // max wait for workload health check after start/resume
-const healthCheckClientTimeout = 10 * time.Second // per-probe HTTP client timeout
-const healthCheckPollInterval = 2 * time.Second   // sleep between successive health check probes
+const buildPollRetryInterval = 10 * time.Second        // retry delay while a build is still in progress
+const reconcileRetryInterval = 5 * time.Second         // default retry for instance/volume/ready waits
+const healthCheckTimeout = 90 * time.Second            // max wait for workload health check after start/resume
+const healthCheckClientTimeout = 10 * time.Second      // per-probe HTTP client timeout
+const healthCheckPollInterval = 100 * time.Millisecond // sleep between successive health check probes
 
 // Deployer orchestrates deployments via reconciliation.
 type Deployer struct {

@@ -33,8 +33,8 @@ const (
 )
 
 // Cloud Hypervisor duration constants.
-const chGuestReadyTimeout = 180 * time.Second       // max wait for guest agent ready signal
-const chTCPBridgeTimeout = 5 * time.Second           // max wait for host TCP bridge port to open
+const chGuestReadyTimeout = 180 * time.Second         // max wait for guest agent ready signal
+const chTCPBridgeTimeout = 5 * time.Second            // max wait for host TCP bridge port to open
 const chAPIReadyTimeout = 10 * time.Second            // max wait for cloud-hypervisor API socket
 const chAPIReadyPollInterval = 100 * time.Millisecond // poll interval when waiting for API/TCP
 const chAPIClientTimeout = 30 * time.Second           // HTTP client timeout for API socket calls
@@ -150,7 +150,8 @@ func (r *CloudHypervisorRuntime) Start(ctx context.Context, inst Instance) (stri
 }
 
 func (r *CloudHypervisorRuntime) startVM(ctx context.Context, inst Instance) (string, error) {
-	workDir := filepath.Join(os.TempDir(), "kindling-ch-"+inst.ID.String())
+	workDir := cloudHypervisorWorkDir(inst.ID)
+	cleanupCloudHypervisorRuntimeArtifacts(workDir, cloudHypervisorSocketBase(inst.ID))
 	_ = os.RemoveAll(workDir)
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
 		return "", fmt.Errorf("create work dir: %w", err)
@@ -213,7 +214,7 @@ func (r *CloudHypervisorRuntime) buildCHInstance(inst Instance, workDir, workDis
 		workDir:         workDir,
 		workDisk:        workDisk,
 		sharedRootfsRef: sharedRootfsRefFromWorkDisk(r.sharedRootfsDir, workDisk),
-		socketBase:      filepath.Join(os.TempDir(), "kindling-vsock-"+inst.ID.String()+".sock"),
+		socketBase:      cloudHypervisorSocketBase(inst.ID),
 		apiSocket:       filepath.Join(workDir, "api.sock"),
 		cancel:          cancel,
 		ready:           make(chan struct{}),
@@ -290,6 +291,7 @@ func (r *CloudHypervisorRuntime) startPreparedVM(ctx context.Context, inst Insta
 	if port == 0 {
 		port = 3000
 	}
+	cleanupCloudHypervisorRuntimeArtifacts(workDir, cloudHypervisorSocketBase(inst.ID))
 
 	ai, guestCIDR, hostIP, _, cleanup, err := r.buildCHInstance(inst, workDir, workDisk)
 	if err != nil {

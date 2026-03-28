@@ -37,7 +37,7 @@ func (r *CloudHypervisorRuntime) CreateTemplate(ctx context.Context, id uuid.UUI
 
 func (r *CloudHypervisorRuntime) StartClone(ctx context.Context, inst Instance, snapshotRef string, cloneSourceVMID uuid.UUID) (string, StartMetadata, error) {
 	r.mu.Lock()
-	tmpl, ok := r.templates[snapshotRef]
+	tmpl, ok := resolveCloudHypervisorTemplate(snapshotRef, r.templates)
 	r.mu.Unlock()
 	if !ok {
 		return "", StartMetadata{}, ErrInstanceNotRunning

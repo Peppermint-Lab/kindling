@@ -5,8 +5,10 @@ package runtime
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -43,12 +45,102 @@ func cloudHypervisorWorkDir(id uuid.UUID) string {
 	return filepath.Join(os.TempDir(), "kindling-ch-"+id.String())
 }
 
+func cloudHypervisorSocketBase(id uuid.UUID) string {
+	return filepath.Join(os.TempDir(), "kindling-vsock-"+id.String()+".sock")
+}
+
 func cloudHypervisorVMPIDPath(workDir string) string {
 	return filepath.Join(workDir, "cloud-hypervisor.pid")
 }
 
 func cloudHypervisorBridgePIDPath(workDir string) string {
 	return filepath.Join(workDir, "cloud-hypervisor-bridge.pid")
+}
+
+func cloudHypervisorAPISocketPath(workDir string) string {
+	return filepath.Join(workDir, "api.sock")
+}
+
+func cloudHypervisorWorkDiskPath(workDir string) string {
+	return filepath.Join(workDir, "rootfs.qcow2")
+}
+
+func cloudHypervisorSuspendedStatePath(workDir string) string {
+	return filepath.Join(workDir, "suspended.json")
+}
+
+func cleanupCloudHypervisorRuntimeArtifacts(workDir, socketBase string) {
+	_ = terminatePIDFromFile(cloudHypervisorBridgePIDPath(workDir))
+	_ = terminatePIDFromFile(cloudHypervisorVMPIDPath(workDir))
+	_ = os.Remove(cloudHypervisorBridgePIDPath(workDir))
+	_ = os.Remove(cloudHypervisorVMPIDPath(workDir))
+	_ = os.Remove(cloudHypervisorAPISocketPath(workDir))
+	if strings.TrimSpace(socketBase) != "" {
+		_ = os.Remove(socketBase)
+		_ = os.Remove(socketBase + "_" + strconv.Itoa(cloudHypervisorVsockPort))
+	}
+}
+
+type persistedCloudHypervisorSuspendedState struct {
+	Instance Instance `json:"instance"`
+	HostPort int      `json:"host_port"`
+	WorkDisk string   `json:"work_disk"`
+}
+
+func persistCloudHypervisorSuspendedState(workDir string, s *cloudHypervisorSuspended) error {
+	if s == nil {
+		return nil
+	}
+	if err := ensureDir(workDir); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(persistedCloudHypervisorSuspendedState{
+		Instance: s.inst,
+		HostPort: s.hostPort,
+		WorkDisk: s.workDisk,
+	})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(cloudHypervisorSuspendedStatePath(workDir), payload, 0o600)
+}
+
+func loadCloudHypervisorSuspendedState(id uuid.UUID) (*cloudHypervisorSuspended, error) {
+	workDir := cloudHypervisorWorkDir(id)
+	payload, err := os.ReadFile(cloudHypervisorSuspendedStatePath(workDir))
+	if err != nil {
+		return nil, err
+	}
+	var persisted persistedCloudHypervisorSuspendedState
+	if err := json.Unmarshal(payload, &persisted); err != nil {
+		return nil, err
+	}
+	workDisk := strings.TrimSpace(persisted.WorkDisk)
+	if workDisk == "" {
+		workDisk = cloudHypervisorWorkDiskPath(workDir)
+	}
+	return &cloudHypervisorSuspended{
+		inst:     persisted.Instance,
+		workDir:  workDir,
+		workDisk: workDisk,
+		hostPort: persisted.HostPort,
+	}, nil
+}
+
+func resolveCloudHypervisorTemplate(snapshotRef string, templates map[string]*cloudHypervisorTemplate) (*cloudHypervisorTemplate, bool) {
+	if tmpl, ok := templates[snapshotRef]; ok {
+		return tmpl, true
+	}
+	templateDisk := filepath.Join(strings.TrimSpace(snapshotRef), "rootfs.qcow2")
+	if strings.TrimSpace(snapshotRef) == "" {
+		return nil, false
+	}
+	if _, err := os.Stat(templateDisk); err != nil {
+		return nil, false
+	}
+	tmpl := &cloudHypervisorTemplate{workDisk: templateDisk}
+	templates[snapshotRef] = tmpl
+	return tmpl, true
 }
 
 func (r *CloudHypervisorRuntime) sharedRootfsPath(id uuid.UUID) (string, bool) {

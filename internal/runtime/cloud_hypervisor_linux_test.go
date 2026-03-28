@@ -134,6 +134,96 @@ func TestSharedRootfsPathHelpers(t *testing.T) {
 	}
 }
 
+func TestCleanupCloudHypervisorRuntimeArtifactsRemovesSocketAndPIDFiles(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	socketBase := filepath.Join(t.TempDir(), "kindling-vsock.sock")
+	paths := []string{
+		cloudHypervisorBridgePIDPath(workDir),
+		cloudHypervisorVMPIDPath(workDir),
+		cloudHypervisorAPISocketPath(workDir),
+		socketBase,
+		socketBase + "_1024",
+	}
+	for _, path := range paths {
+		if err := os.WriteFile(path, []byte("999999"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	cleanupCloudHypervisorRuntimeArtifacts(workDir, socketBase)
+
+	for _, path := range paths {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be removed, stat err=%v", path, err)
+		}
+	}
+}
+
+func TestPersistAndLoadCloudHypervisorSuspendedState(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	workDir := cloudHypervisorWorkDir(id)
+	s := &cloudHypervisorSuspended{
+		inst: Instance{
+			ID:       id,
+			ImageRef: "kindling/example:latest",
+			VCPUs:    2,
+			MemoryMB: 768,
+			Port:     3000,
+			Env:      []string{"FOO=bar"},
+		},
+		workDir:  workDir,
+		workDisk: cloudHypervisorWorkDiskPath(workDir),
+		hostPort: 43210,
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(workDir)
+	})
+
+	if err := persistCloudHypervisorSuspendedState(workDir, s); err != nil {
+		t.Fatalf("persist suspended state: %v", err)
+	}
+
+	got, err := loadCloudHypervisorSuspendedState(id)
+	if err != nil {
+		t.Fatalf("load suspended state: %v", err)
+	}
+	if got.inst.ID != s.inst.ID || got.inst.ImageRef != s.inst.ImageRef {
+		t.Fatalf("loaded instance = %+v, want %+v", got.inst, s.inst)
+	}
+	if got.hostPort != s.hostPort {
+		t.Fatalf("host port = %d, want %d", got.hostPort, s.hostPort)
+	}
+	if got.workDisk != s.workDisk {
+		t.Fatalf("work disk = %q, want %q", got.workDisk, s.workDisk)
+	}
+}
+
+func TestResolveCloudHypervisorTemplateFallsBackToDisk(t *testing.T) {
+	t.Parallel()
+
+	templateDir := t.TempDir()
+	templateDisk := filepath.Join(templateDir, "rootfs.qcow2")
+	if err := os.WriteFile(templateDisk, []byte("qcow2"), 0o644); err != nil {
+		t.Fatalf("write template disk: %v", err)
+	}
+
+	templates := make(map[string]*cloudHypervisorTemplate)
+	tmpl, ok := resolveCloudHypervisorTemplate(templateDir, templates)
+	if !ok {
+		t.Fatal("expected template fallback to load from disk")
+	}
+	if tmpl.workDisk != templateDisk {
+		t.Fatalf("workDisk = %q, want %q", tmpl.workDisk, templateDisk)
+	}
+	if _, ok := templates[templateDir]; !ok {
+		t.Fatal("expected template cache to be populated")
+	}
+}
+
 func mustUUID(s string) uuid.UUID {
 	id, err := uuid.Parse(s)
 	if err != nil {

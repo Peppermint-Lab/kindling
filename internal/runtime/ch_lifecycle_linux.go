@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -31,6 +32,12 @@ func (r *CloudHypervisorRuntime) Suspend(ctx context.Context, id uuid.UUID) erro
 	}
 	select {
 	case <-ai.stopped:
+		r.mu.Lock()
+		s := r.suspended[id]
+		r.mu.Unlock()
+		if err := persistCloudHypervisorSuspendedState(ai.workDir, s); err != nil {
+			return fmt.Errorf("persist suspended state: %w", err)
+		}
 		return nil
 	case <-ctx.Done():
 		r.mu.Lock()
@@ -49,9 +56,21 @@ func (r *CloudHypervisorRuntime) Resume(ctx context.Context, id uuid.UUID) (stri
 	}
 	r.mu.Unlock()
 	if !ok {
-		return "", ErrInstanceNotRunning
+		loaded, err := loadCloudHypervisorSuspendedState(id)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return "", ErrInstanceNotRunning
+			}
+			return "", err
+		}
+		s = loaded
 	}
-	return r.startPreparedVM(ctx, s.inst, s.workDir, s.workDisk, s.hostPort)
+	ip, err := r.startPreparedVM(ctx, s.inst, s.workDir, s.workDisk, s.hostPort)
+	if err != nil {
+		return "", err
+	}
+	_ = os.Remove(cloudHypervisorSuspendedStatePath(s.workDir))
+	return ip, nil
 }
 
 func (r *CloudHypervisorRuntime) waitCH(id uuid.UUID, ai *cloudHypervisorInstance) {
@@ -59,10 +78,8 @@ func (r *CloudHypervisorRuntime) waitCH(id uuid.UUID, ai *cloudHypervisorInstanc
 	if ai.bridgeCmd != nil && ai.bridgeCmd.Process != nil {
 		_ = terminatePID(ai.bridgeCmd.Process.Pid)
 	}
-	_ = os.Remove(cloudHypervisorVMPIDPath(ai.workDir))
-	_ = os.Remove(cloudHypervisorBridgePIDPath(ai.workDir))
+	cleanupCloudHypervisorRuntimeArtifacts(ai.workDir, ai.socketBase)
 	removeCHTap(ai.tapName)
-	r.cleanupGuestVsock(ai.socketBase)
 	r.mu.Lock()
 	delete(r.instances, id)
 	retain := ai.retain
@@ -88,6 +105,7 @@ func (r *CloudHypervisorRuntime) Stop(ctx context.Context, id uuid.UUID) error {
 			if prepared.cmd != nil && prepared.cmd.Process != nil {
 				_ = terminatePID(prepared.cmd.Process.Pid)
 			}
+			cleanupCloudHypervisorRuntimeArtifacts(prepared.workDir, prepared.socketBase)
 			_ = os.RemoveAll(prepared.workDir)
 			return nil
 		}
@@ -103,10 +121,7 @@ func (r *CloudHypervisorRuntime) Stop(ctx context.Context, id uuid.UUID) error {
 	r.mu.Unlock()
 	if !ok {
 		workDir := cloudHypervisorWorkDir(id)
-		_ = terminatePIDFromFile(cloudHypervisorBridgePIDPath(workDir))
-		_ = terminatePIDFromFile(cloudHypervisorVMPIDPath(workDir))
-		_ = os.Remove(cloudHypervisorBridgePIDPath(workDir))
-		_ = os.Remove(cloudHypervisorVMPIDPath(workDir))
+		cleanupCloudHypervisorRuntimeArtifacts(workDir, cloudHypervisorSocketBase(id))
 		_ = os.RemoveAll(workDir)
 		return nil
 	}

@@ -485,6 +485,7 @@ func (s *Service) serveRedirect(w http.ResponseWriter, r *http.Request, route Ro
 }
 
 func (s *Service) requestColdStart(ctx context.Context, lookup queries.DomainEdgeLookupRow) error {
+	s.recordRequestActivity(lookup.DeploymentKind.String, lookup.ProjectID, lookup.DeploymentID)
 	isPreview := lookup.DeploymentKind.Valid && lookup.DeploymentKind.String == "preview"
 	if isPreview {
 		if err := s.q.DeploymentPreviewClearScaledToZero(ctx, lookup.DeploymentID); err != nil {
@@ -598,7 +599,6 @@ func (s *Service) reverseProxy(w http.ResponseWriter, r *http.Request, host stri
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		statusCaptured = resp.StatusCode
 		resp.Header.Set("Server", "Kindling")
-		s.recordRequestActivity(route.DeploymentKind, projID, depID)
 		return nil
 	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
@@ -625,6 +625,7 @@ func (s *Service) reverseProxy(w http.ResponseWriter, r *http.Request, host stri
 		s.reverseProxy(w, r.WithContext(ctx), host, newRoute)
 	}
 
+	s.recordRequestActivity(route.DeploymentKind, projID, depID)
 	proxy.ServeHTTP(mw, r)
 
 	if statusCaptured == 0 {
