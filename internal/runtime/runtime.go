@@ -19,6 +19,7 @@ type CloudHypervisorHostConfig struct {
 	KernelPath      string
 	InitramfsPath   string
 	SharedRootfsDir string
+	StateDir        string
 }
 
 // HostRuntimeConfig wires DB-backed (or other) settings into runtime selection.
@@ -78,6 +79,20 @@ type StartMetadata struct {
 	SnapshotRef     string
 	SharedRootfsRef string
 	CloneSourceVMID uuid.UUID
+}
+
+type RetainedStateRecovery struct {
+	StateDir           string
+	InstanceDirsKept   int
+	InstanceDirsPruned int
+	TemplateDirsKept   int
+	TemplateDirsPruned int
+}
+
+type DurableRetainedStateRuntime interface {
+	StateDir() string
+	DurableFastWakeEnabled() bool
+	RecoverRetainedState(ctx context.Context, keepInstanceIDs []uuid.UUID, keepTemplateRefs []string) (RetainedStateRecovery, error)
 }
 
 type MigrationMetadata struct {

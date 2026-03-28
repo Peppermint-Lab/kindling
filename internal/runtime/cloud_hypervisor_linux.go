@@ -52,6 +52,7 @@ type CloudHypervisorRuntime struct {
 	kernelPath      string
 	initramfsPath   string
 	sharedRootfsDir string
+	stateDir        string
 	advertiseHost   string
 	pullAuth        *oci.Auth
 }
@@ -63,6 +64,7 @@ type cloudHypervisorInstance struct {
 	ip              string
 	vmIP            string
 	workDir         string
+	runtimeDir      string
 	socketBase      string
 	apiSocket       string
 	logs            []string
@@ -106,6 +108,20 @@ func NewCloudHypervisorRuntime(cfg CloudHypervisorHostConfig, advertiseHost stri
 	home, _ := os.UserHomeDir()
 	homeKernel := filepath.Join(home, ".kindling", "vmlinuz.bin")
 	homeInitramfs := filepath.Join(home, ".kindling", "initramfs.cpio.gz")
+	stateDir := strings.TrimSpace(cfg.StateDir)
+	if stateDir == "" {
+		stateDir = strings.TrimSpace(os.Getenv("KINDLING_CH_STATE_DIR"))
+	}
+	if stateDir == "" {
+		defaultState := filepath.Join("/data", "kindling-runtime", "cloud-hypervisor")
+		if _, err := os.Stat("/data"); err == nil {
+			stateDir = defaultState
+		} else if strings.TrimSpace(home) != "" {
+			stateDir = filepath.Join(home, ".kindling", "cloud-hypervisor")
+		} else {
+			stateDir = filepath.Join(os.TempDir(), "kindling-runtime", "cloud-hypervisor")
+		}
+	}
 	sharedRootfsDir := strings.TrimSpace(cfg.SharedRootfsDir)
 	if sharedRootfsDir == "" {
 		sharedRootfsDir = strings.TrimSpace(os.Getenv("KINDLING_CH_SHARED_ROOTFS_DIR"))
@@ -126,6 +142,7 @@ func NewCloudHypervisorRuntime(cfg CloudHypervisorHostConfig, advertiseHost stri
 		kernelPath:      firstExistingPath(cfg.KernelPath, cloudHypervisorDefaultKernel, homeKernel),
 		initramfsPath:   firstExistingPath(cfg.InitramfsPath, cloudHypervisorDefaultInitramfs, homeInitramfs),
 		sharedRootfsDir: sharedRootfsDir,
+		stateDir:        stateDir,
 		advertiseHost:   strings.TrimSpace(advertiseHost),
 		pullAuth:        pullAuth,
 	}
@@ -150,8 +167,10 @@ func (r *CloudHypervisorRuntime) Start(ctx context.Context, inst Instance) (stri
 }
 
 func (r *CloudHypervisorRuntime) startVM(ctx context.Context, inst Instance) (string, error) {
-	workDir := cloudHypervisorWorkDir(inst.ID)
-	cleanupCloudHypervisorRuntimeArtifacts(workDir, cloudHypervisorSocketBase(inst.ID))
+	workDir := r.instanceStateDir(inst.ID)
+	runtimeDir := r.instanceRuntimeDir(inst.ID)
+	cleanupCloudHypervisorRuntimeArtifacts(runtimeDir, cloudHypervisorSocketBase(inst.ID))
+	_ = os.RemoveAll(runtimeDir)
 	_ = os.RemoveAll(workDir)
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
 		return "", fmt.Errorf("create work dir: %w", err)
@@ -208,14 +227,16 @@ func (r *CloudHypervisorRuntime) buildCHInstance(inst Instance, workDir, workDis
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
+	runtimeDir := r.instanceRuntimeDir(inst.ID)
 	ai := &cloudHypervisorInstance{
 		tapName:         tapName,
 		vmIP:            guestIP,
 		workDir:         workDir,
+		runtimeDir:      runtimeDir,
 		workDisk:        workDisk,
 		sharedRootfsRef: sharedRootfsRefFromWorkDisk(r.sharedRootfsDir, workDisk),
 		socketBase:      cloudHypervisorSocketBase(inst.ID),
-		apiSocket:       filepath.Join(workDir, "api.sock"),
+		apiSocket:       cloudHypervisorAPISocketPath(runtimeDir),
 		cancel:          cancel,
 		ready:           make(chan struct{}),
 		inst:            inst,
@@ -247,7 +268,7 @@ func (r *CloudHypervisorRuntime) launchCHProcess(runCtx context.Context, ai *clo
 		return fmt.Errorf("start cloud-hypervisor: %w", err)
 	}
 	ai.cmd = cmd
-	if err := writePIDFile(cloudHypervisorVMPIDPath(ai.workDir), cmd.Process.Pid); err != nil {
+	if err := writePIDFile(cloudHypervisorVMPIDPath(ai.runtimeDir), cmd.Process.Pid); err != nil {
 		return fmt.Errorf("write vm pid: %w", err)
 	}
 	go r.captureOutputCH(ai, stdout)
@@ -260,29 +281,43 @@ func (r *CloudHypervisorRuntime) setupHostBridge(ctx context.Context, ai *cloudH
 	var err error
 	if requestedHostPort > 0 {
 		ai.hostPort = requestedHostPort
-	} else {
-		ai.hostPort, err = pickFreeTCPPort()
-		if err != nil {
-			return fmt.Errorf("allocate host tcp forward port: %w", err)
+		if err := r.startHostBridgeForPort(ctx, ai, ai.hostPort); err == nil {
+			return nil
+		} else {
+			slog.Warn("requested host port unavailable for resumed cloud-hypervisor VM, allocating a new port",
+				"id", ai.inst.ID,
+				"requested_port", requestedHostPort,
+				"error", err,
+			)
 		}
 	}
-	ai.ip, err = applyAdvertisedHost(net.JoinHostPort("0.0.0.0", strconv.Itoa(ai.hostPort)), r.advertiseHost)
+	ai.hostPort, err = pickFreeTCPPort()
+	if err != nil {
+		return fmt.Errorf("allocate host tcp forward port: %w", err)
+	}
+	return r.startHostBridgeForPort(ctx, ai, ai.hostPort)
+}
+
+func (r *CloudHypervisorRuntime) startHostBridgeForPort(ctx context.Context, ai *cloudHypervisorInstance, hostPort int) error {
+	ip, err := applyAdvertisedHost(net.JoinHostPort("0.0.0.0", strconv.Itoa(hostPort)), r.advertiseHost)
 	if err != nil {
 		return err
 	}
-	bridgeCmd, err := startCloudHypervisorBridgeHelper(ai.hostPort, ai.socketBase)
+	bridgeCmd, err := startCloudHypervisorBridgeHelper(hostPort, ai.socketBase)
 	if err != nil {
 		return fmt.Errorf("start host tcp bridge: %w", err)
 	}
-	ai.bridgeCmd = bridgeCmd
-	if err := writePIDFile(cloudHypervisorBridgePIDPath(ai.workDir), bridgeCmd.Process.Pid); err != nil {
+	if err := writePIDFile(cloudHypervisorBridgePIDPath(ai.runtimeDir), bridgeCmd.Process.Pid); err != nil {
 		_ = terminatePID(bridgeCmd.Process.Pid)
 		return fmt.Errorf("write bridge pid: %w", err)
 	}
-	if err := waitForTCPPort(ctx, net.JoinHostPort("127.0.0.1", strconv.Itoa(ai.hostPort)), chTCPBridgeTimeout); err != nil {
+	if err := waitForTCPPort(ctx, net.JoinHostPort("127.0.0.1", strconv.Itoa(hostPort)), chTCPBridgeTimeout); err != nil {
 		_ = terminatePID(bridgeCmd.Process.Pid)
 		return fmt.Errorf("wait for host tcp bridge: %w", err)
 	}
+	ai.hostPort = hostPort
+	ai.ip = ip
+	ai.bridgeCmd = bridgeCmd
 	return nil
 }
 
@@ -291,17 +326,22 @@ func (r *CloudHypervisorRuntime) startPreparedVM(ctx context.Context, inst Insta
 	if port == 0 {
 		port = 3000
 	}
-	cleanupCloudHypervisorRuntimeArtifacts(workDir, cloudHypervisorSocketBase(inst.ID))
+	runtimeDir := r.instanceRuntimeDir(inst.ID)
+	cleanupCloudHypervisorRuntimeArtifacts(runtimeDir, cloudHypervisorSocketBase(inst.ID))
+	_ = os.RemoveAll(runtimeDir)
+	if err := ensureDir(runtimeDir); err != nil {
+		return "", err
+	}
 
 	ai, guestCIDR, hostIP, _, cleanup, err := r.buildCHInstance(inst, workDir, workDisk)
 	if err != nil {
-		_ = os.RemoveAll(workDir)
+		_ = os.RemoveAll(runtimeDir)
 		return "", err
 	}
 
 	if err := r.startGuestVsockServer(ctx, inst, ai, guestCIDR, hostIP, port); err != nil {
 		cleanup()
-		_ = os.RemoveAll(workDir)
+		_ = os.RemoveAll(runtimeDir)
 		return "", err
 	}
 
@@ -311,7 +351,7 @@ func (r *CloudHypervisorRuntime) startPreparedVM(ctx context.Context, inst Insta
 	if err := r.launchCHProcess(runCtx, ai, inst); err != nil {
 		cancel()
 		cleanup()
-		_ = os.RemoveAll(workDir)
+		_ = os.RemoveAll(runtimeDir)
 		r.cleanupGuestVsock(ai.socketBase)
 		return "", err
 	}
@@ -332,7 +372,7 @@ func (r *CloudHypervisorRuntime) startPreparedVM(ctx context.Context, inst Insta
 
 	if err := r.setupHostBridge(runCtx, ai, requestedHostPort); err != nil {
 		cancel()
-		_ = os.RemoveAll(workDir)
+		_ = os.RemoveAll(runtimeDir)
 		return "", err
 	}
 

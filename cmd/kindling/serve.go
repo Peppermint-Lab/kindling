@@ -178,7 +178,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 			slog.Info("preserving workloads on shutdown", "env", "KINDLING_PRESERVE_WORKLOADS_ON_SHUTDOWN")
 		}
 		startWorkerHeartbeats(ctx, q, serverID, rt)
-		startReconcilers(ctx, q, serverID, recs, notifyRouteChange)
+		startReconcilers(ctx, q, serverID, rt, recs, notifyRouteChange)
 	}
 
 	// Component heartbeats for tracked servers.

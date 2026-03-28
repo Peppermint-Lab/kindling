@@ -1115,8 +1115,12 @@ CREATE TABLE IF NOT EXISTS server_settings (
     cloud_hypervisor_bin            TEXT NOT NULL DEFAULT '',
     cloud_hypervisor_kernel_path    TEXT NOT NULL DEFAULT '',
     cloud_hypervisor_initramfs_path TEXT NOT NULL DEFAULT '',
+    cloud_hypervisor_state_dir      TEXT NOT NULL DEFAULT '',
     updated_at                       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE server_settings
+    ADD COLUMN IF NOT EXISTS cloud_hypervisor_state_dir TEXT NOT NULL DEFAULT '';
 
 -- Latest control-plane component snapshots per server.
 CREATE TABLE IF NOT EXISTS server_component_statuses (

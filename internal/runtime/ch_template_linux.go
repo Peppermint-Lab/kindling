@@ -19,8 +19,8 @@ func (r *CloudHypervisorRuntime) CreateTemplate(ctx context.Context, id uuid.UUI
 		r.mu.Unlock()
 		return "", fmt.Errorf("cloud-hypervisor template requires suspended source")
 	}
-	templateDir := lifecyclePath("ch-template", id.String())
-	templateDisk := filepath.Join(templateDir, "rootfs.qcow2")
+	templateDir := r.templateStateDir(id)
+	templateDisk := cloudHypervisorTemplateDiskPath(templateDir)
 	r.mu.Unlock()
 	_ = os.RemoveAll(templateDir)
 	if err := ensureDir(templateDir); err != nil {
@@ -42,12 +42,12 @@ func (r *CloudHypervisorRuntime) StartClone(ctx context.Context, inst Instance, 
 	if !ok {
 		return "", StartMetadata{}, ErrInstanceNotRunning
 	}
-	workDir := filepath.Join(os.TempDir(), "kindling-ch-"+inst.ID.String())
+	workDir := r.instanceStateDir(inst.ID)
 	_ = os.RemoveAll(workDir)
 	if err := ensureDir(workDir); err != nil {
 		return "", StartMetadata{}, err
 	}
-	workDisk := filepath.Join(workDir, "rootfs.qcow2")
+	workDisk := cloudHypervisorWorkDiskPath(workDir)
 	if sharedDisk, ok := r.sharedRootfsPath(inst.ID); ok {
 		if err := ensureDir(filepath.Dir(sharedDisk)); err != nil {
 			return "", StartMetadata{}, err

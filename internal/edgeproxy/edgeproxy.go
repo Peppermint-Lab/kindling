@@ -459,13 +459,29 @@ func (s *Service) serveHTTPS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	coldStartBegan := time.Now()
+	slog.Info("edge cold start request admitted",
+		"host", host,
+		"project_id", uuid.UUID(lookup.ProjectID.Bytes),
+		"deployment_id", uuid.UUID(lookup.DeploymentID.Bytes),
+	)
 	if err := s.requestColdStart(r.Context(), lookup); err != nil {
 		slog.Error("cold start wake", "host", host, "error", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+	slog.Info("edge cold start wake scheduled",
+		"host", host,
+		"deployment_id", uuid.UUID(lookup.DeploymentID.Bytes),
+		"duration_ms", time.Since(coldStartBegan).Milliseconds(),
+	)
 
 	if route, routeOK := s.waitForBackend(r.Context(), host); routeOK {
+		slog.Info("edge route available after wake",
+			"host", host,
+			"deployment_id", uuid.UUID(lookup.DeploymentID.Bytes),
+			"duration_ms", time.Since(coldStartBegan).Milliseconds(),
+		)
 		s.reverseProxy(w, r, host, route)
 		return
 	}

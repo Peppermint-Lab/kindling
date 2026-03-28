@@ -56,7 +56,7 @@ func (r *CloudHypervisorRuntime) Resume(ctx context.Context, id uuid.UUID) (stri
 	}
 	r.mu.Unlock()
 	if !ok {
-		loaded, err := loadCloudHypervisorSuspendedState(id)
+		loaded, err := loadCloudHypervisorSuspendedState(r.instanceStateDir(id))
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				return "", ErrInstanceNotRunning
@@ -78,14 +78,19 @@ func (r *CloudHypervisorRuntime) waitCH(id uuid.UUID, ai *cloudHypervisorInstanc
 	if ai.bridgeCmd != nil && ai.bridgeCmd.Process != nil {
 		_ = terminatePID(ai.bridgeCmd.Process.Pid)
 	}
-	cleanupCloudHypervisorRuntimeArtifacts(ai.workDir, ai.socketBase)
+	cleanupCloudHypervisorRuntimeArtifacts(ai.runtimeDir, ai.socketBase)
+	_ = os.RemoveAll(ai.runtimeDir)
 	removeCHTap(ai.tapName)
 	r.mu.Lock()
 	delete(r.instances, id)
 	retain := ai.retain
+	if !retain {
+		delete(r.templates, r.templateStateDir(id))
+	}
 	r.mu.Unlock()
 	if !retain {
 		_ = os.RemoveAll(ai.workDir)
+		_ = os.RemoveAll(r.templateStateDir(id))
 	}
 	if err != nil {
 		slog.Error("cloud-hypervisor VM exited", "id", id, "error", err)
@@ -115,14 +120,25 @@ func (r *CloudHypervisorRuntime) Stop(ctx context.Context, id uuid.UUID) error {
 			if s.workDir != "" {
 				_ = os.RemoveAll(s.workDir)
 			}
+			_ = os.RemoveAll(r.instanceRuntimeDir(id))
+			r.mu.Lock()
+			delete(r.templates, r.templateStateDir(id))
+			r.mu.Unlock()
+			_ = os.RemoveAll(r.templateStateDir(id))
 			return nil
 		}
 	}
 	r.mu.Unlock()
 	if !ok {
-		workDir := cloudHypervisorWorkDir(id)
-		cleanupCloudHypervisorRuntimeArtifacts(workDir, cloudHypervisorSocketBase(id))
+		workDir := r.instanceStateDir(id)
+		runtimeDir := r.instanceRuntimeDir(id)
+		cleanupCloudHypervisorRuntimeArtifacts(runtimeDir, cloudHypervisorSocketBase(id))
+		_ = os.RemoveAll(runtimeDir)
 		_ = os.RemoveAll(workDir)
+		r.mu.Lock()
+		delete(r.templates, r.templateStateDir(id))
+		r.mu.Unlock()
+		_ = os.RemoveAll(r.templateStateDir(id))
 		return nil
 	}
 	if ai.bridgeCmd != nil && ai.bridgeCmd.Process != nil {

@@ -38,12 +38,12 @@ func (r *CloudHypervisorRuntime) PrepareMigrationTarget(ctx context.Context, id 
 	if strings.TrimSpace(r.sharedRootfsDir) == "" {
 		return PreparedMigrationTarget{}, ErrLiveMigrationUnsupported
 	}
-	workDir := cloudHypervisorWorkDir(id)
+	workDir := r.instanceRuntimeDir(id)
 	_ = os.RemoveAll(workDir)
 	if err := ensureDir(workDir); err != nil {
 		return PreparedMigrationTarget{}, err
 	}
-	apiSocket := filepath.Join(workDir, "api.sock")
+	apiSocket := cloudHypervisorAPISocketPath(workDir)
 	socketBase := filepath.Join(os.TempDir(), "kindling-vsock-"+id.String()+".sock")
 	cmd := exec.CommandContext(ctx, r.binaryPath, "--api-socket", apiSocket)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

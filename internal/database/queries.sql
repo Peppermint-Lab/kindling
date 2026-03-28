@@ -113,6 +113,12 @@ SET advertise_host = $2, updated_at = NOW()
 WHERE server_id = $1
   AND (advertise_host = '' OR BTRIM(advertise_host) = '');
 
+-- name: ServerSettingSeedCloudHypervisorStateDirIfUnset :exec
+UPDATE server_settings
+SET cloud_hypervisor_state_dir = $2, updated_at = NOW()
+WHERE server_id = $1
+  AND (cloud_hypervisor_state_dir = '' OR BTRIM(cloud_hypervisor_state_dir) = '');
+
 -- name: InstanceMigrationCreate :one
 INSERT INTO instance_migrations (
     id, deployment_instance_id, source_server_id, destination_server_id, source_vm_id, state, mode,
@@ -831,6 +837,21 @@ WHERE deployment_id = $1 AND deleted_at IS NULL;
 SELECT vm_id FROM deployment_instances
 WHERE server_id = $1 AND deleted_at IS NULL AND vm_id IS NOT NULL;
 
+-- name: DeploymentInstanceRetainedStateByServerID :many
+SELECT
+    di.id AS deployment_instance_id,
+    di.vm_id,
+    v.snapshot_ref
+FROM deployment_instances di
+INNER JOIN deployments d ON d.id = di.deployment_id
+  AND d.deleted_at IS NULL
+  AND d.stopped_at IS NULL
+  AND d.failed_at IS NULL
+LEFT JOIN vms v ON v.id = di.vm_id
+  AND v.deleted_at IS NULL
+WHERE di.server_id = $1
+  AND di.deleted_at IS NULL;
+
 -- name: DeploymentInstanceResetForDeadServer :exec
 UPDATE deployment_instances
 SET server_id = NULL, vm_id = NULL, role = 'active', clone_source_instance_id = NULL, status = 'pending', updated_at = NOW()
@@ -983,6 +1004,14 @@ SET status = $2,
     snapshot_ref = $3,
     shared_rootfs_ref = $4,
     clone_source_vm_id = $5,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: VMUpdateRuntimeAddress :one
+UPDATE vms
+SET ip_address = $2,
+    port = $3,
     updated_at = NOW()
 WHERE id = $1
 RETURNING *;

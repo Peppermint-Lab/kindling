@@ -1403,6 +1403,48 @@ func (q *Queries) DeploymentInstanceResetForDeadServer(ctx context.Context, serv
 	return err
 }
 
+const deploymentInstanceRetainedStateByServerID = `-- name: DeploymentInstanceRetainedStateByServerID :many
+SELECT
+    di.id AS deployment_instance_id,
+    di.vm_id,
+    v.snapshot_ref
+FROM deployment_instances di
+INNER JOIN deployments d ON d.id = di.deployment_id
+  AND d.deleted_at IS NULL
+  AND d.stopped_at IS NULL
+  AND d.failed_at IS NULL
+LEFT JOIN vms v ON v.id = di.vm_id
+  AND v.deleted_at IS NULL
+WHERE di.server_id = $1
+  AND di.deleted_at IS NULL
+`
+
+type DeploymentInstanceRetainedStateByServerIDRow struct {
+	DeploymentInstanceID pgtype.UUID `json:"deployment_instance_id"`
+	VmID                 pgtype.UUID `json:"vm_id"`
+	SnapshotRef          pgtype.Text `json:"snapshot_ref"`
+}
+
+func (q *Queries) DeploymentInstanceRetainedStateByServerID(ctx context.Context, serverID pgtype.UUID) ([]DeploymentInstanceRetainedStateByServerIDRow, error) {
+	rows, err := q.db.Query(ctx, deploymentInstanceRetainedStateByServerID, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DeploymentInstanceRetainedStateByServerIDRow{}
+	for rows.Next() {
+		var i DeploymentInstanceRetainedStateByServerIDRow
+		if err := rows.Scan(&i.DeploymentInstanceID, &i.VmID, &i.SnapshotRef); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deploymentInstanceSetCloneSource = `-- name: DeploymentInstanceSetCloneSource :one
 UPDATE deployment_instances SET clone_source_instance_id = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
@@ -7073,7 +7115,7 @@ func (q *Queries) ServerSettingEnsure(ctx context.Context, serverID pgtype.UUID)
 }
 
 const serverSettingGet = `-- name: ServerSettingGet :one
-SELECT server_id, runtime_override, advertise_host, cloud_hypervisor_bin, cloud_hypervisor_kernel_path, cloud_hypervisor_initramfs_path, updated_at FROM server_settings WHERE server_id = $1
+SELECT server_id, runtime_override, advertise_host, cloud_hypervisor_bin, cloud_hypervisor_kernel_path, cloud_hypervisor_initramfs_path, cloud_hypervisor_state_dir, updated_at FROM server_settings WHERE server_id = $1
 `
 
 func (q *Queries) ServerSettingGet(ctx context.Context, serverID pgtype.UUID) (ServerSetting, error) {
@@ -7086,6 +7128,7 @@ func (q *Queries) ServerSettingGet(ctx context.Context, serverID pgtype.UUID) (S
 		&i.CloudHypervisorBin,
 		&i.CloudHypervisorKernelPath,
 		&i.CloudHypervisorInitramfsPath,
+		&i.CloudHypervisorStateDir,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -7105,6 +7148,23 @@ type ServerSettingSeedAdvertiseHostIfUnsetParams struct {
 
 func (q *Queries) ServerSettingSeedAdvertiseHostIfUnset(ctx context.Context, arg ServerSettingSeedAdvertiseHostIfUnsetParams) error {
 	_, err := q.db.Exec(ctx, serverSettingSeedAdvertiseHostIfUnset, arg.ServerID, arg.AdvertiseHost)
+	return err
+}
+
+const serverSettingSeedCloudHypervisorStateDirIfUnset = `-- name: ServerSettingSeedCloudHypervisorStateDirIfUnset :exec
+UPDATE server_settings
+SET cloud_hypervisor_state_dir = $2, updated_at = NOW()
+WHERE server_id = $1
+  AND (cloud_hypervisor_state_dir = '' OR BTRIM(cloud_hypervisor_state_dir) = '')
+`
+
+type ServerSettingSeedCloudHypervisorStateDirIfUnsetParams struct {
+	ServerID                pgtype.UUID `json:"server_id"`
+	CloudHypervisorStateDir string      `json:"cloud_hypervisor_state_dir"`
+}
+
+func (q *Queries) ServerSettingSeedCloudHypervisorStateDirIfUnset(ctx context.Context, arg ServerSettingSeedCloudHypervisorStateDirIfUnsetParams) error {
+	_, err := q.db.Exec(ctx, serverSettingSeedCloudHypervisorStateDirIfUnset, arg.ServerID, arg.CloudHypervisorStateDir)
 	return err
 }
 
@@ -8506,6 +8566,45 @@ func (q *Queries) VMUpdateLifecycleMetadata(ctx context.Context, arg VMUpdateLif
 		arg.SharedRootfsRef,
 		arg.CloneSourceVmID,
 	)
+	var i Vm
+	err := row.Scan(
+		&i.ID,
+		&i.ServerID,
+		&i.ImageID,
+		&i.Status,
+		&i.Runtime,
+		&i.SnapshotRef,
+		&i.SharedRootfsRef,
+		&i.CloneSourceVmID,
+		&i.Vcpus,
+		&i.Memory,
+		&i.IpAddress,
+		&i.Port,
+		&i.EnvVariables,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const vMUpdateRuntimeAddress = `-- name: VMUpdateRuntimeAddress :one
+UPDATE vms
+SET ip_address = $2,
+    port = $3,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, server_id, image_id, status, runtime, snapshot_ref, shared_rootfs_ref, clone_source_vm_id, vcpus, memory, ip_address, port, env_variables, deleted_at, created_at, updated_at
+`
+
+type VMUpdateRuntimeAddressParams struct {
+	ID        pgtype.UUID `json:"id"`
+	IpAddress netip.Addr  `json:"ip_address"`
+	Port      pgtype.Int4 `json:"port"`
+}
+
+func (q *Queries) VMUpdateRuntimeAddress(ctx context.Context, arg VMUpdateRuntimeAddressParams) (Vm, error) {
+	row := q.db.QueryRow(ctx, vMUpdateRuntimeAddress, arg.ID, arg.IpAddress, arg.Port)
 	var i Vm
 	err := row.Scan(
 		&i.ID,

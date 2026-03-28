@@ -343,6 +343,7 @@ type ServerSetting struct {
 	CloudHypervisorBin           string             `json:"cloud_hypervisor_bin"`
 	CloudHypervisorKernelPath    string             `json:"cloud_hypervisor_kernel_path"`
 	CloudHypervisorInitramfsPath string             `json:"cloud_hypervisor_initramfs_path"`
+	CloudHypervisorStateDir      string             `json:"cloud_hypervisor_state_dir"`
 	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
 }
 

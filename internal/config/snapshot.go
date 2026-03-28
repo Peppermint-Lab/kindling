@@ -58,6 +58,7 @@ type Snapshot struct {
 	ServerCloudHypervisorBin           string
 	ServerCloudHypervisorKernelPath    string
 	ServerCloudHypervisorInitramfsPath string
+	ServerCloudHypervisorStateDir      string
 }
 
 // LoadSnapshot reads cluster_settings, server_settings, and cluster_secrets into a Snapshot.
@@ -133,6 +134,7 @@ func LoadSnapshot(ctx context.Context, q *queries.Queries, serverID uuid.UUID, m
 		s.ServerCloudHypervisorBin = strings.TrimSpace(st.CloudHypervisorBin)
 		s.ServerCloudHypervisorKernelPath = strings.TrimSpace(st.CloudHypervisorKernelPath)
 		s.ServerCloudHypervisorInitramfsPath = strings.TrimSpace(st.CloudHypervisorInitramfsPath)
+		s.ServerCloudHypervisorStateDir = strings.TrimSpace(st.CloudHypervisorStateDir)
 	}
 
 	if err := decryptSecretInto(ctx, q, masterKey, SecretGitHubToken, &s.GitHubToken); err != nil {

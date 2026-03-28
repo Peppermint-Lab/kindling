@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -155,6 +156,7 @@ func (d *Deployer) tryResumeFromSuspended(
 	}); err != nil {
 		return false, fmt.Errorf("mark resuming: %w", err)
 	}
+	startedAt := time.Now()
 	ip, err := d.rt.Resume(ctx, pguuid.FromPgtype(inst.ID))
 	if err != nil {
 		if errors.Is(err, runtime.ErrInstanceNotRunning) {
@@ -171,9 +173,21 @@ func (d *Deployer) tryResumeFromSuspended(
 		}
 		return false, fmt.Errorf("resume instance: %w", err)
 	}
+	addr, port, parseErr := parseRuntimeAddress(ip)
+	if parseErr == nil {
+		if _, err := d.q.VMUpdateRuntimeAddress(ctx, queries.VMUpdateRuntimeAddressParams{
+			ID:        inst.VmID,
+			IpAddress: addr,
+			Port:      pgtype.Int4{Int32: int32(port), Valid: true},
+		}); err != nil {
+			return false, fmt.Errorf("update resumed vm runtime address: %w", err)
+		}
+	}
+	logger.Info("instance runtime ready", "instance_id", pguuid.FromPgtype(inst.ID), "mode", launchModeResume, "runtime", d.rt.Name(), "duration_ms", time.Since(startedAt).Milliseconds())
 	if requiresExternalHealthCheck(d.rt.Name()) && !d.waitHealthCheckLocalForwarded(ip, healthCheckTimeout) {
 		return false, fmt.Errorf("health check failed after resume")
 	}
+	logger.Info("instance health check passed", "instance_id", pguuid.FromPgtype(inst.ID), "mode", launchModeResume, "runtime", d.rt.Name(), "duration_ms", time.Since(startedAt).Milliseconds())
 	if _, err := d.q.VMUpdateLifecycleMetadata(ctx, queries.VMUpdateLifecycleMetadataParams{
 		ID:              inst.VmID,
 		Status:          "running",
@@ -310,12 +324,14 @@ func (d *Deployer) startNewInstance(
 	if !shouldLaunch {
 		return nil
 	}
+	startedAt := time.Now()
 	logger.Info("starting instance", "instance_id", instID, "image", imageRef, "runtime", d.rt.Name(), "mode", mode)
 
 	ip, meta, err := d.launchInstance(ctx, startInst, templateRef, templateSourceVMID, inst, mode)
 	if err != nil {
 		return err
 	}
+	logger.Info("instance runtime ready", "instance_id", instID, "runtime", d.rt.Name(), "mode", mode, "duration_ms", time.Since(startedAt).Milliseconds())
 
 	vmID, err := d.persistInstanceVMMetadata(ctx, d.q, inst.ID, dep.ImageID, pguuid.FromPgtype(inst.ServerID), "starting", "starting", ip, 1, 512, env, meta)
 	if err != nil {
@@ -335,6 +351,7 @@ func (d *Deployer) startNewInstance(
 		})
 		return fmt.Errorf("health check failed")
 	}
+	logger.Info("instance health check passed", "instance_id", instID, "runtime", d.rt.Name(), "mode", mode, "duration_ms", time.Since(startedAt).Milliseconds())
 	if _, err := d.q.VMUpdateStatus(ctx, queries.VMUpdateStatusParams{
 		ID:     pguuid.ToPgtype(vmID),
 		Status: "running",
@@ -391,6 +408,7 @@ func (d *Deployer) launchInstance(
 		startedIP, startMeta, err := d.rt.StartClone(ctx, startInst, templateRef, pguuid.FromPgtype(templateSourceVMID))
 		if err != nil {
 			if errors.Is(err, runtime.ErrInstanceNotRunning) {
+				slog.Warn("warm clone state missing, falling back to cold start", "instance_id", startInst.ID, "template_ref", templateRef)
 				startedIP, coldErr := d.rt.Start(ctx, startInst)
 				if coldErr != nil {
 					_, _ = d.q.DeploymentInstanceUpdateStatus(ctx, queries.DeploymentInstanceUpdateStatusParams{

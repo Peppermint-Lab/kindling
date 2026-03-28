@@ -35,6 +35,9 @@ func seedAllSettings(ctx context.Context, q *queries.Queries, serverID uuid.UUID
 		if err := seedAdvertiseHostIfUnset(ctx, q, serverID, opts); err != nil {
 			return fmt.Errorf("seed advertise host: %w", err)
 		}
+		if err := seedCloudHypervisorStateDirIfUnset(ctx, q, serverID); err != nil {
+			return fmt.Errorf("seed cloud hypervisor state dir: %w", err)
+		}
 	}
 	return nil
 }
@@ -90,6 +93,17 @@ func seedAdvertiseHostIfUnset(ctx context.Context, q *queries.Queries, serverID 
 	return q.ServerSettingSeedAdvertiseHostIfUnset(ctx, queries.ServerSettingSeedAdvertiseHostIfUnsetParams{
 		ServerID:      pgtype.UUID{Bytes: serverID, Valid: true},
 		AdvertiseHost: host,
+	})
+}
+
+func seedCloudHypervisorStateDirIfUnset(ctx context.Context, q *queries.Queries, serverID uuid.UUID) error {
+	stateDir := strings.TrimSpace(os.Getenv("KINDLING_CH_STATE_DIR"))
+	if stateDir == "" {
+		return nil
+	}
+	return q.ServerSettingSeedCloudHypervisorStateDirIfUnset(ctx, queries.ServerSettingSeedCloudHypervisorStateDirIfUnsetParams{
+		ServerID:                pgtype.UUID{Bytes: serverID, Valid: true},
+		CloudHypervisorStateDir: stateDir,
 	})
 }
 

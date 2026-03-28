@@ -164,8 +164,9 @@ func TestCleanupCloudHypervisorRuntimeArtifactsRemovesSocketAndPIDFiles(t *testi
 func TestPersistAndLoadCloudHypervisorSuspendedState(t *testing.T) {
 	t.Parallel()
 
+	rt := &CloudHypervisorRuntime{stateDir: t.TempDir()}
 	id := uuid.New()
-	workDir := cloudHypervisorWorkDir(id)
+	workDir := rt.instanceStateDir(id)
 	s := &cloudHypervisorSuspended{
 		inst: Instance{
 			ID:       id,
@@ -187,7 +188,7 @@ func TestPersistAndLoadCloudHypervisorSuspendedState(t *testing.T) {
 		t.Fatalf("persist suspended state: %v", err)
 	}
 
-	got, err := loadCloudHypervisorSuspendedState(id)
+	got, err := loadCloudHypervisorSuspendedState(workDir)
 	if err != nil {
 		t.Fatalf("load suspended state: %v", err)
 	}
@@ -221,6 +222,54 @@ func TestResolveCloudHypervisorTemplateFallsBackToDisk(t *testing.T) {
 	}
 	if _, ok := templates[templateDir]; !ok {
 		t.Fatal("expected template cache to be populated")
+	}
+}
+
+func TestRecoverRetainedStatePrunesOrphans(t *testing.T) {
+	t.Parallel()
+
+	rt := &CloudHypervisorRuntime{
+		stateDir:  t.TempDir(),
+		templates: make(map[string]*cloudHypervisorTemplate),
+	}
+	keepInstance := uuid.New()
+	pruneInstance := uuid.New()
+	keepTemplate := uuid.New()
+	pruneTemplate := uuid.New()
+
+	for _, dir := range []string{
+		rt.instanceStateDir(keepInstance),
+		rt.instanceStateDir(pruneInstance),
+		rt.templateStateDir(keepTemplate),
+		rt.templateStateDir(pruneTemplate),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+
+	result, err := rt.RecoverRetainedState(context.Background(), []uuid.UUID{keepInstance}, []string{rt.templateStateDir(keepTemplate)})
+	if err != nil {
+		t.Fatalf("RecoverRetainedState: %v", err)
+	}
+	if result.InstanceDirsKept != 1 || result.InstanceDirsPruned != 1 {
+		t.Fatalf("instance recovery result = %+v", result)
+	}
+	if result.TemplateDirsKept != 1 || result.TemplateDirsPruned != 1 {
+		t.Fatalf("template recovery result = %+v", result)
+	}
+
+	if _, err := os.Stat(rt.instanceStateDir(keepInstance)); err != nil {
+		t.Fatalf("kept instance dir missing: %v", err)
+	}
+	if _, err := os.Stat(rt.templateStateDir(keepTemplate)); err != nil {
+		t.Fatalf("kept template dir missing: %v", err)
+	}
+	if _, err := os.Stat(rt.instanceStateDir(pruneInstance)); !os.IsNotExist(err) {
+		t.Fatalf("expected pruned instance dir to be removed, stat err=%v", err)
+	}
+	if _, err := os.Stat(rt.templateStateDir(pruneTemplate)); !os.IsNotExist(err) {
+		t.Fatalf("expected pruned template dir to be removed, stat err=%v", err)
 	}
 }
 

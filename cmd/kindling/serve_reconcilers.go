@@ -62,6 +62,7 @@ func setupWorker(
 			BinaryPath:    snap.ServerCloudHypervisorBin,
 			KernelPath:    snap.ServerCloudHypervisorKernelPath,
 			InitramfsPath: snap.ServerCloudHypervisorInitramfsPath,
+			StateDir:      snap.ServerCloudHypervisorStateDir,
 		},
 		AppleKernelPath:    "",
 		AppleInitramfsPath: "",
@@ -164,7 +165,7 @@ func setupWorker(
 
 // startReconcilers launches all reconciler goroutines and performs startup
 // recovery for deployments and volumes.
-func startReconcilers(ctx context.Context, q *queries.Queries, serverID uuid.UUID, recs reconcilers, notifyRouteChange func()) {
+func startReconcilers(ctx context.Context, q *queries.Queries, serverID uuid.UUID, rt crunrt.Runtime, recs reconcilers, notifyRouteChange func()) {
 	go recs.deployment.Start(ctx)
 	go recs.build.Start(ctx)
 	go recs.vm.Start(ctx)
@@ -173,6 +174,12 @@ func startReconcilers(ctx context.Context, q *queries.Queries, serverID uuid.UUI
 	go recs.migration.Start(ctx)
 	go recs.volumeOp.Start(ctx)
 	slog.Info("reconcilers started")
+
+	if retainedRT, ok := rt.(crunrt.DurableRetainedStateRuntime); ok {
+		if err := recoverWorkerRetainedState(ctx, q, serverID, retainedRT); err != nil {
+			slog.Warn("startup retained state recovery skipped", "error", err)
+		}
+	}
 
 	recoveredDeployments, err := queueStartupRecovery(ctx, q, serverID, recs.deployment, notifyRouteChange)
 	if err != nil {
@@ -192,6 +199,12 @@ func startWorkerHeartbeats(ctx context.Context, q *queries.Queries, serverID uui
 			meta["live_migration_enabled"] = rt.Supports(crunrt.CapabilityLiveMigration)
 			if v := cloudHypervisorVersion(); v != "" {
 				meta["cloud_hypervisor_version"] = v
+			}
+			if chrt, ok := rt.(crunrt.DurableRetainedStateRuntime); ok {
+				if v := strings.TrimSpace(chrt.StateDir()); v != "" {
+					meta["state_dir"] = v
+				}
+				meta["durable_fast_wake_enabled"] = chrt.DurableFastWakeEnabled()
 			}
 			if v := strings.TrimSpace(os.Getenv("KINDLING_CH_SHARED_ROOTFS_DIR")); v != "" {
 				meta["shared_rootfs_dir"] = v
