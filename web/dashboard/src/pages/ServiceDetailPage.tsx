@@ -11,6 +11,7 @@ import {
   type ProjectVolumeBackup,
   type Server,
   type Service,
+  type ServiceEndpoint,
   type ServiceSecret,
 } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
@@ -43,9 +44,35 @@ import {
   SurfaceSeparator,
   SurfaceTitle,
 } from "@/components/page-surface"
+import { useAuth } from "@/contexts/AuthContext"
+
+type EndpointDraft = {
+  name: string
+  protocol: "http" | "tcp"
+  target_port: number
+  visibility: "private" | "public"
+}
+
+const defaultEndpointDraft: EndpointDraft = {
+  name: "",
+  protocol: "http",
+  target_port: 3000,
+  visibility: "private",
+}
+
+function endpointHealthLabel(endpoint: ServiceEndpoint): string {
+  if (endpoint.last_healthy_at) {
+    return `Healthy at ${new Date(endpoint.last_healthy_at).toLocaleString()}`
+  }
+  if (endpoint.last_unhealthy_at) {
+    return `Last unhealthy at ${new Date(endpoint.last_unhealthy_at).toLocaleString()}`
+  }
+  return "No health signal recorded yet"
+}
 
 export function ServiceDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const { session } = useAuth()
   const [service, setService] = useState<Service | null>(null)
   const [deployments, setDeployments] = useState<Deployment[]>([])
   const [domains, setDomains] = useState<ProjectDomain[]>([])
@@ -63,6 +90,10 @@ export function ServiceDetailPage() {
   const [newDomainName, setNewDomainName] = useState("")
   const [domainSaving, setDomainSaving] = useState(false)
   const [verifyingDomainId, setVerifyingDomainId] = useState<string | null>(null)
+  const [endpointDraft, setEndpointDraft] = useState<EndpointDraft>(defaultEndpointDraft)
+  const [editingEndpointId, setEditingEndpointId] = useState<string | null>(null)
+  const [endpointSaving, setEndpointSaving] = useState(false)
+  const [deletingEndpointId, setDeletingEndpointId] = useState<string | null>(null)
 
   const [secretName, setSecretName] = useState("")
   const [secretValue, setSecretValue] = useState("")
@@ -84,6 +115,21 @@ export function ServiceDetailPage() {
     () => selectLatestRunningDeployment(deployments),
     [deployments],
   )
+  const canManageService =
+    session?.authenticated &&
+    (session.platform_admin || session.role === "owner" || session.role === "admin")
+  const canViewOperatorDetails = canManageService
+  const publicEndpoints = useMemo(
+    () => (service?.endpoints || []).filter((endpoint) => endpoint.visibility === "public"),
+    [service?.endpoints],
+  )
+  const generatedPublicURL = publicEndpoints.find((endpoint) => endpoint.public_hostname)?.public_hostname || ""
+
+  const loadService = useCallback(async (serviceId: string) => {
+    const svc = await api.getService(serviceId)
+    setService(svc)
+    return svc
+  }, [])
 
   const loadDeployments = useCallback(async (serviceId: string) => {
     const list = await api.listServiceDeployments(serviceId)
@@ -128,8 +174,7 @@ export function ServiceDetailPage() {
     setLoading(true)
     setError(null)
     try {
-      const svc = await api.getService(id)
-      setService(svc)
+      await loadService(id)
       await Promise.all([
         loadDeployments(id),
         loadDomains(id),
@@ -142,7 +187,7 @@ export function ServiceDetailPage() {
     } finally {
       setLoading(false)
     }
-  }, [id, loadDeployments, loadDomains, loadSecrets, loadVolume])
+  }, [id, loadDeployments, loadDomains, loadSecrets, loadService, loadVolume])
 
   useEffect(() => {
     void load()
@@ -187,6 +232,63 @@ export function ServiceDetailPage() {
       setDomainSaving(false)
     }
   }, [id, newDomainName])
+
+  const resetEndpointEditor = useCallback(() => {
+    setEndpointDraft(defaultEndpointDraft)
+    setEditingEndpointId(null)
+  }, [])
+
+  const handleEditEndpoint = useCallback((endpoint: ServiceEndpoint) => {
+    setEditingEndpointId(endpoint.id)
+    setEndpointDraft({
+      name: endpoint.name,
+      protocol: endpoint.protocol,
+      target_port: endpoint.target_port,
+      visibility: endpoint.visibility,
+    })
+  }, [])
+
+  const handleSaveEndpoint = useCallback(async () => {
+    if (!id) return
+    setEndpointSaving(true)
+    setError(null)
+    try {
+      const payload = {
+        name: endpointDraft.name.trim(),
+        protocol: endpointDraft.protocol,
+        target_port: Math.max(1, Math.min(65535, Math.floor(Number(endpointDraft.target_port)) || 3000)),
+        visibility: endpointDraft.visibility,
+      }
+      if (editingEndpointId) {
+        await api.updateServiceEndpoint(id, editingEndpointId, payload)
+      } else {
+        await api.createServiceEndpoint(id, payload)
+      }
+      await loadService(id)
+      resetEndpointEditor()
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not save endpoint")
+    } finally {
+      setEndpointSaving(false)
+    }
+  }, [editingEndpointId, endpointDraft, id, loadService, resetEndpointEditor])
+
+  const handleDeleteEndpoint = useCallback(async (endpointId: string) => {
+    if (!id) return
+    setDeletingEndpointId(endpointId)
+    setError(null)
+    try {
+      await api.deleteServiceEndpoint(id, endpointId)
+      await loadService(id)
+      if (editingEndpointId === endpointId) {
+        resetEndpointEditor()
+      }
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not delete endpoint")
+    } finally {
+      setDeletingEndpointId(null)
+    }
+  }, [editingEndpointId, id, loadService, resetEndpointEditor])
 
   const handleVerifyDomain = useCallback(async (domainId: string) => {
     if (!id) return
@@ -356,7 +458,11 @@ export function ServiceDetailPage() {
         <PageBackLink to={`/projects/${service.project_id}`}>Back to project</PageBackLink>
         <PageTitle>{service.name}</PageTitle>
         <PageDescription>
-          Service-scoped deploys, private endpoints, domains, secrets, and persistent storage for <span className="font-mono">{service.slug}</span>.
+          Service-scoped deploys, endpoints, domains, secrets, and persistent storage for{" "}
+          <span className="font-mono">{service.slug}</span> in{" "}
+          <Link to={`/projects/${service.project_id}`} className="underline underline-offset-4">
+            {service.project_name}
+          </Link>.
         </PageDescription>
       </PageHeader>
 
@@ -374,14 +480,88 @@ export function ServiceDetailPage() {
           <PageSection>
             <Surface>
               <SurfaceHeader>
-                <SurfaceTitle>Service config</SurfaceTitle>
-                <SurfaceDescription>Service-level build and networking settings.</SurfaceDescription>
+                <SurfaceTitle>Public endpoints</SurfaceTitle>
+                <SurfaceDescription>
+                  Services stay private by default. Public exposure is explicit and reversible.
+                </SurfaceDescription>
               </SurfaceHeader>
-              <SurfaceBody>
+              <SurfaceBody className="space-y-3">
+                {publicEndpoints.length === 0 ? (
+                  <EmptyState
+                    title="Private by default"
+                    description="This service has no public HTTP endpoint yet. Add or edit an endpoint below to expose a generated URL or attach custom domains."
+                  />
+                ) : (
+                  <div className="space-y-3">
+                    {publicEndpoints.map((endpoint) => (
+                      <div key={endpoint.id} className="rounded-xl border p-4 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="font-medium">{endpoint.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {endpoint.protocol.toUpperCase()}:{endpoint.target_port}
+                            </p>
+                          </div>
+                          <Badge>Public</Badge>
+                        </div>
+                        {endpoint.public_hostname ? (
+                          <div className="rounded-lg bg-muted/40 p-3 space-y-1">
+                            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                              Generated URL
+                            </p>
+                            <p className="font-mono text-sm break-all">{endpoint.public_hostname}</p>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            No generated URL yet. A public hostname appears after a production deployment is running and the platform service base domain is configured.
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <SurfaceSeparator />
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Custom domains</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Optional domains route through the Kindling edge to this service.
+                    </p>
+                  </div>
+                  {domains.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No custom domains attached.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {domains.map((domain) => (
+                        <div key={domain.id} className="rounded-lg border p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="font-medium break-all">{domain.domain_name}</p>
+                            <Badge variant={domain.verified_at ? "default" : "secondary"}>
+                              {domain.verified_at ? "Verified" : "Pending verification"}
+                            </Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </SurfaceBody>
+            </Surface>
+          </PageSection>
+
+          <PageSection>
+            <Surface>
+              <SurfaceHeader>
+                <SurfaceTitle>Private endpoints</SurfaceTitle>
+                <SurfaceDescription>
+                  Stable internal DNS names and ports for this service. Even public services still resolve privately first.
+                </SurfaceDescription>
+              </SurfaceHeader>
+              <SurfaceBody className="space-y-3">
                 <MetadataGrid>
                   <MetadataItem label="Project">
                     <Link to={`/projects/${service.project_id}`} className="underline underline-offset-4">
-                      {service.project_id}
+                      {service.project_name}
                     </Link>
                   </MetadataItem>
                   <MetadataItem label="Slug">
@@ -401,42 +581,122 @@ export function ServiceDetailPage() {
                       {service.public_default ? "public" : "private"}
                     </Badge>
                   </MetadataItem>
-                  {service.org_network_cidr ? (
-                    <MetadataItem label="Org network">
-                      <span className="font-mono text-sm">{service.org_network_cidr}</span>
-                    </MetadataItem>
-                  ) : null}
                 </MetadataGrid>
-              </SurfaceBody>
-              <SurfaceSeparator />
-              <SurfaceBody className="space-y-3">
-                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
-                  <div className="space-y-2">
-                    <Label htmlFor="service-deploy-commit">Deploy commit or branch</Label>
-                    <Input
-                      id="service-deploy-commit"
-                      value={commitSha}
-                      onChange={(event) => setCommitSha(event.target.value)}
-                      placeholder="main"
-                    />
-                  </div>
-                  <div className="flex items-end">
-                    <Button onClick={() => void handleDeploy()} disabled={deploying}>
-                      {deploying ? "Deploying…" : "Deploy service"}
-                    </Button>
-                  </div>
-                </div>
-              </SurfaceBody>
-            </Surface>
-          </PageSection>
-
-          <PageSection>
-            <Surface>
-              <SurfaceHeader>
-                <SurfaceTitle>Private endpoints</SurfaceTitle>
-                <SurfaceDescription>Internal DNS and port mappings for this service.</SurfaceDescription>
-              </SurfaceHeader>
-              <SurfaceBody className="space-y-3">
+                {canManageService ? (
+                  <>
+                    <SurfaceSeparator />
+                    <div className="space-y-3">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Endpoint management</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          One public HTTP endpoint per service in this release. TCP endpoints remain private-only.
+                        </p>
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="endpoint-name">Endpoint name</Label>
+                          <Input
+                            id="endpoint-name"
+                            value={endpointDraft.name}
+                            onChange={(event) =>
+                              setEndpointDraft((current) => ({ ...current, name: event.target.value }))
+                            }
+                            placeholder="web"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="endpoint-port">Target port</Label>
+                          <Input
+                            id="endpoint-port"
+                            type="number"
+                            min={1}
+                            max={65535}
+                            value={endpointDraft.target_port}
+                            onChange={(event) =>
+                              setEndpointDraft((current) => ({
+                                ...current,
+                                target_port: Number(event.target.value) || 3000,
+                              }))
+                            }
+                          />
+                        </div>
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label>Protocol</Label>
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              variant={endpointDraft.protocol === "http" ? "default" : "outline"}
+                              onClick={() =>
+                                setEndpointDraft((current) => ({
+                                  ...current,
+                                  protocol: "http",
+                                }))
+                              }
+                            >
+                              HTTP
+                            </Button>
+                            <Button
+                              type="button"
+                              variant={endpointDraft.protocol === "tcp" ? "default" : "outline"}
+                              onClick={() =>
+                                setEndpointDraft((current) => ({
+                                  ...current,
+                                  protocol: "tcp",
+                                  visibility: current.visibility === "public" ? "private" : current.visibility,
+                                }))
+                              }
+                            >
+                              TCP
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Visibility</Label>
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              variant={endpointDraft.visibility === "private" ? "default" : "outline"}
+                              onClick={() =>
+                                setEndpointDraft((current) => ({ ...current, visibility: "private" }))
+                              }
+                            >
+                              Private
+                            </Button>
+                            <Button
+                              type="button"
+                              variant={endpointDraft.visibility === "public" ? "default" : "outline"}
+                              disabled={endpointDraft.protocol !== "http"}
+                              onClick={() =>
+                                setEndpointDraft((current) => ({ ...current, visibility: "public" }))
+                              }
+                            >
+                              Public HTTP
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button onClick={() => void handleSaveEndpoint()} disabled={endpointSaving}>
+                          {endpointSaving
+                            ? editingEndpointId
+                              ? "Saving…"
+                              : "Creating…"
+                            : editingEndpointId
+                              ? "Save endpoint"
+                              : "Add endpoint"}
+                        </Button>
+                        {editingEndpointId ? (
+                          <Button type="button" variant="outline" onClick={resetEndpointEditor}>
+                            Cancel edit
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+                <SurfaceSeparator />
                 {service.endpoints && service.endpoints.length > 0 ? (
                   service.endpoints.map((endpoint) => (
                     <div key={endpoint.id} className="rounded-xl border p-4 space-y-2">
@@ -455,6 +715,23 @@ export function ServiceDetailPage() {
                       <p className="text-xs text-muted-foreground">
                         Private IP: <span className="font-mono text-foreground">{endpoint.private_ip}</span>
                       </p>
+                      <p className="text-xs text-muted-foreground">{endpointHealthLabel(endpoint)}</p>
+                      {canManageService ? (
+                        <div className="flex flex-wrap gap-2 pt-1">
+                          <Button type="button" variant="outline" size="sm" onClick={() => handleEditEndpoint(endpoint)}>
+                            Edit
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void handleDeleteEndpoint(endpoint.id)}
+                            disabled={deletingEndpointId === endpoint.id}
+                          >
+                            {deletingEndpointId === endpoint.id ? "Deleting…" : "Delete"}
+                          </Button>
+                        </div>
+                      ) : null}
                     </div>
                   ))
                 ) : (
@@ -468,9 +745,26 @@ export function ServiceDetailPage() {
             <Surface>
               <SurfaceHeader>
                 <SurfaceTitle>Deployments</SurfaceTitle>
-                <SurfaceDescription>Recent service deployments and the current reachability state.</SurfaceDescription>
+                <SurfaceDescription>Recent service deployments and current reachability.</SurfaceDescription>
               </SurfaceHeader>
               <SurfaceBody className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+                  <div className="space-y-2">
+                    <Label htmlFor="service-deploy-commit">Deploy commit or branch</Label>
+                    <Input
+                      id="service-deploy-commit"
+                      value={commitSha}
+                      onChange={(event) => setCommitSha(event.target.value)}
+                      placeholder="main"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button onClick={() => void handleDeploy()} disabled={deploying}>
+                      {deploying ? "Deploying…" : "Deploy service"}
+                    </Button>
+                  </div>
+                </div>
+                <SurfaceSeparator />
                 {latestRunningDeployment ? (
                   <div className="rounded-xl border p-4 space-y-3">
                     <div className="flex items-center justify-between gap-2">
@@ -505,6 +799,41 @@ export function ServiceDetailPage() {
               </SurfaceBody>
             </Surface>
           </PageSection>
+
+          {canViewOperatorDetails ? (
+            <PageSection>
+              <Surface>
+                <SurfaceHeader>
+                  <SurfaceTitle>Operator details</SurfaceTitle>
+                  <SurfaceDescription>
+                    Advanced runtime coordinates for org admins and platform operators.
+                  </SurfaceDescription>
+                </SurfaceHeader>
+                <SurfaceBody>
+                  <MetadataGrid>
+                    {service.org_network_cidr ? (
+                      <MetadataItem label="Org network">
+                        <span className="font-mono text-sm">{service.org_network_cidr}</span>
+                      </MetadataItem>
+                    ) : null}
+                    <MetadataItem label="Generated public URL">
+                      <span className="font-mono text-sm break-all">{generatedPublicURL || "Not exposed"}</span>
+                    </MetadataItem>
+                    <MetadataItem label="Runtime URL">
+                      <span className="font-mono text-xs break-all">
+                        {latestRunningDeployment?.reachable?.runtime_url || "No running deployment"}
+                      </span>
+                    </MetadataItem>
+                    <MetadataItem label="VM IP">
+                      <span className="font-mono text-xs break-all">
+                        {latestRunningDeployment?.reachable?.vm_ip || "No running deployment"}
+                      </span>
+                    </MetadataItem>
+                  </MetadataGrid>
+                </SurfaceBody>
+              </Surface>
+            </PageSection>
+          ) : null}
         </TabsContent>
 
         <TabsContent value="domains" className="space-y-4">

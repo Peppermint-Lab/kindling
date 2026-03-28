@@ -107,6 +107,7 @@ export function SettingsPage() {
   const [meta, setMeta] = useState<APIMeta | null>(null)
   const [publicUrlInput, setPublicUrlInput] = useState("")
   const [dashboardHostInput, setDashboardHostInput] = useState("")
+  const [serviceBaseDomainInput, setServiceBaseDomainInput] = useState("")
   const [previewBaseDomainInput, setPreviewBaseDomainInput] = useState("")
   const [previewRetentionInput, setPreviewRetentionInput] = useState("3600")
   const [previewIdleInput, setPreviewIdleInput] = useState("300")
@@ -149,6 +150,7 @@ export function SettingsPage() {
     setMeta(m)
     setPublicUrlInput(m?.public_base_url || "")
     setDashboardHostInput(m?.dashboard_public_host || "")
+    setServiceBaseDomainInput(m?.service_base_domain || "")
     setPreviewBaseDomainInput(m?.preview_base_domain || "")
     setPreviewRetentionInput(String(m?.preview_retention_after_close_seconds ?? 3600))
     setPreviewIdleInput(String(m?.preview_idle_scale_seconds ?? 300))
@@ -211,6 +213,7 @@ export function SettingsPage() {
       const m = await api.updateMeta({
         public_base_url: publicUrlInput.trim(),
         dashboard_public_host: dashboardHostInput.trim(),
+        service_base_domain: serviceBaseDomainInput.trim(),
         preview_base_domain: previewBaseDomainInput.trim(),
         preview_retention_after_close_seconds: Number.parseInt(previewRetentionInput, 10) || 0,
         preview_idle_scale_seconds: Number.parseInt(previewIdleInput, 10) || 300,
@@ -220,6 +223,7 @@ export function SettingsPage() {
       setMeta(m)
       setPublicUrlInput(m.public_base_url || "")
       setDashboardHostInput(m.dashboard_public_host || "")
+      setServiceBaseDomainInput(m.service_base_domain || "")
       setPreviewBaseDomainInput(m.preview_base_domain || "")
       setPreviewRetentionInput(String(m.preview_retention_after_close_seconds ?? 3600))
       setPreviewIdleInput(String(m.preview_idle_scale_seconds ?? 300))
@@ -322,6 +326,24 @@ export function SettingsPage() {
                     value={dashboardHostInput}
                     onChange={(e) => setDashboardHostInput(e.target.value)}
                   />
+                </div>
+                <div className="rounded-xl border border-dashed border-border/80 p-4 space-y-3 max-w-2xl bg-muted/20">
+                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Service URLs</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Optional hostname suffix for generated public production service URLs, for example{" "}
+                    <span className="font-mono">apps.example.com</span>. Public HTTP services then get
+                    platform-managed hostnames like <span className="font-mono">api-my-project.apps.example.com</span>.
+                  </p>
+                  <div className="space-y-1 max-w-xl">
+                    <Label htmlFor="service-base">Service base domain</Label>
+                    <Input
+                      id="service-base"
+                      placeholder="apps.example.com"
+                      className="font-mono text-sm"
+                      value={serviceBaseDomainInput}
+                      onChange={(e) => setServiceBaseDomainInput(e.target.value)}
+                    />
+                  </div>
                 </div>
                 <div className="rounded-xl border border-dashed border-border/80 p-4 space-y-3 max-w-2xl bg-muted/20">
                   <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">PR preview URLs</p>

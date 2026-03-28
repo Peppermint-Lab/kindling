@@ -63,6 +63,7 @@ export type Project = {
 export type Service = {
   id: string
   project_id: string
+  project_name: string
   name: string
   slug: string
   root_directory: string
@@ -484,6 +485,8 @@ export type APIMeta = {
   webhook_path: string
   /** Hostname for the dashboard when split from API (e.g. app.example.com). */
   dashboard_public_host?: string
+  /** Hostname suffix for generated public production service URLs. */
+  service_base_domain?: string
   /** Wildcard DNS base for PR previews, e.g. preview.example.com (DNS: *.preview.example.com → edge). */
   preview_base_domain?: string
   preview_retention_after_close_seconds?: number
@@ -648,6 +651,7 @@ export const api = {
   updateMeta: (data: {
     public_base_url?: string
     dashboard_public_host?: string
+    service_base_domain?: string
     preview_base_domain?: string
     preview_retention_after_close_seconds?: number
     preview_idle_scale_seconds?: number
@@ -694,9 +698,24 @@ export const api = {
       protocol?: "http" | "tcp"
       target_port?: number
       visibility?: "private" | "public"
-      public_hostname?: string
     },
   ) => request<ServiceEndpoint>(`/api/services/${id}/endpoints`, { method: "POST", body: JSON.stringify(data) }),
+  updateServiceEndpoint: (
+    id: string,
+    endpointId: string,
+    data: {
+      name: string
+      protocol?: "http" | "tcp"
+      target_port?: number
+      visibility?: "private" | "public"
+    },
+  ) =>
+    request<ServiceEndpoint>(`/api/services/${id}/endpoints/${endpointId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteServiceEndpoint: (id: string, endpointId: string) =>
+    request<void>(`/api/services/${id}/endpoints/${endpointId}`, { method: "DELETE" }),
   listServiceSecrets: (serviceId: string) => request<ServiceSecret[]>(`/api/services/${serviceId}/secrets`),
   upsertServiceSecret: (serviceId: string, data: { name: string; value: string }) =>
     request<ServiceSecret>(`/api/services/${serviceId}/secrets`, {

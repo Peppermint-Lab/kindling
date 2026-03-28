@@ -915,68 +915,84 @@ export function ProjectDetailPage() {
                     </p>
                   </div>
                   <div className="grid gap-3 md:grid-cols-2">
-                    {services.map((service) => (
-                      <div key={service.id} className="rounded-lg border p-3 space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="font-medium truncate">{service.name}</p>
-                            <p className="font-mono text-xs text-muted-foreground break-all">{service.slug}</p>
-                          </div>
-                          {service.is_primary ? <Badge variant="secondary">Primary</Badge> : null}
-                        </div>
-                        <div className="text-xs text-muted-foreground space-y-1">
-                          <p>
-                            Root: <span className="font-mono text-foreground">{service.root_directory}</span>
-                          </p>
-                          <p>
-                            Dockerfile: <span className="font-mono text-foreground">{service.dockerfile_path}</span>
-                          </p>
-                          {service.org_network_cidr ? (
-                            <p>
-                              Org network: <span className="font-mono text-foreground">{service.org_network_cidr}</span>
-                            </p>
-                          ) : null}
-                          <p>
-                            Default exposure:{" "}
-                            <span className="font-medium text-foreground">
-                              {service.public_default ? "public" : "private"}
-                            </span>
-                          </p>
-                        </div>
-                        {service.endpoints && service.endpoints.length > 0 ? (
-                          <div className="space-y-2 pt-1">
-                            <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                              Endpoints
-                            </p>
-                            <div className="space-y-2">
-                              {service.endpoints.map((endpoint) => (
-                                <div key={endpoint.id} className="rounded-md bg-muted/40 p-2.5 space-y-1">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span className="font-mono text-xs">{endpoint.name}</span>
-                                    <Badge variant={endpoint.visibility === "public" ? "default" : "secondary"}>
-                                      {endpoint.visibility}
-                                    </Badge>
-                                  </div>
-                                  <p className="text-[11px] text-muted-foreground">
-                                    {endpoint.protocol.toUpperCase()}:{endpoint.target_port} on{" "}
-                                    <span className="font-mono text-foreground">{endpoint.private_ip}</span>
-                                  </p>
-                                  <p className="font-mono text-[11px] break-all">{endpoint.dns_name}</p>
-                                </div>
-                              ))}
+                    {services.map((service) => {
+                      const endpoints = service.endpoints || []
+                      const publicEndpoints = endpoints.filter((endpoint) => endpoint.visibility === "public")
+                      const privateEndpoints = endpoints.filter((endpoint) => endpoint.visibility !== "public")
+                      const generatedPublicURL = publicEndpoints.find((endpoint) => endpoint.public_hostname)?.public_hostname
+                      return (
+                        <div key={service.id} className="rounded-lg border p-3 space-y-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="font-medium truncate">{service.name}</p>
+                              <p className="font-mono text-xs text-muted-foreground break-all">{service.slug}</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {service.is_primary ? <Badge variant="secondary">Primary</Badge> : null}
+                              <Badge variant={publicEndpoints.length > 0 ? "default" : "secondary"}>
+                                {publicEndpoints.length > 0 ? "Public" : "Private"}
+                              </Badge>
                             </div>
                           </div>
-                        ) : null}
-                        <div className="pt-1">
-                          <Link
-                            to={`/services/${service.id}`}
-                            className="inline-flex h-7 items-center rounded-[min(var(--radius-md),12px)] border border-border bg-background px-2.5 text-[0.8rem] font-medium hover:bg-muted"
-                          >
-                            Open service
-                          </Link>
+                          <div className="text-xs text-muted-foreground space-y-1">
+                            <p>
+                              Root: <span className="font-mono text-foreground">{service.root_directory}</span>
+                            </p>
+                            <p>
+                              Dockerfile: <span className="font-mono text-foreground">{service.dockerfile_path}</span>
+                            </p>
+                            <p>
+                              Private endpoints:{" "}
+                              <span className="font-medium text-foreground">{privateEndpoints.length}</span>
+                            </p>
+                            {generatedPublicURL ? (
+                              <p>
+                                Generated URL:{" "}
+                                <span className="font-mono text-foreground break-all">{generatedPublicURL}</span>
+                              </p>
+                            ) : null}
+                          </div>
+                          {endpoints.length > 0 ? (
+                            <div className="space-y-2 pt-1">
+                              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                                Networking
+                              </p>
+                              <div className="space-y-2">
+                                {endpoints.map((endpoint) => (
+                                  <div key={endpoint.id} className="rounded-md bg-muted/40 p-2.5 space-y-1">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="font-mono text-xs">{endpoint.name}</span>
+                                      <Badge variant={endpoint.visibility === "public" ? "default" : "secondary"}>
+                                        {endpoint.visibility}
+                                      </Badge>
+                                    </div>
+                                    <p className="text-[11px] text-muted-foreground">
+                                      {endpoint.protocol.toUpperCase()}:{endpoint.target_port}
+                                    </p>
+                                    <p className="font-mono text-[11px] break-all">{endpoint.dns_name}</p>
+                                    {endpoint.public_hostname ? (
+                                      <p className="font-mono text-[11px] break-all">{endpoint.public_hostname}</p>
+                                    ) : null}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">
+                              No endpoints declared yet. Services start private by default.
+                            </p>
+                          )}
+                          <div className="pt-1">
+                            <Link
+                              to={`/services/${service.id}`}
+                              className="inline-flex h-7 items-center rounded-[min(var(--radius-md),12px)] border border-border bg-background px-2.5 text-[0.8rem] font-medium hover:bg-muted"
+                            >
+                              Open service
+                            </Link>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 </div>
               </SurfaceBody>
