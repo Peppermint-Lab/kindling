@@ -73,10 +73,18 @@ func (d *Deployer) SetDashboardPublishers(projectEvents func(projectID uuid.UUID
 // effectiveReplicaCount returns how many instances the deployment reconciler
 // should converge to. Scale-to-zero uses projects.scaled_to_zero; cold start
 // uses deployments.wake_requested_at to temporarily raise the count.
-func effectiveReplicaCount(proj queries.Project, dep queries.Deployment) int32 {
+func serviceDesiredReplicaCount(proj queries.Project, service *queries.Service) int32 {
+	if service != nil && service.DesiredInstanceCount > 0 {
+		return service.DesiredInstanceCount
+	}
+	return proj.DesiredInstanceCount
+}
+
+func effectiveReplicaCount(proj queries.Project, service *queries.Service, dep queries.Deployment) int32 {
+	serviceDesired := serviceDesiredReplicaCount(proj, service)
 	if dep.DeploymentKind == "preview" {
 		if dep.WakeRequestedAt.Valid {
-			d := proj.DesiredInstanceCount
+			d := serviceDesired
 			if d < 1 {
 				return 1
 			}
@@ -85,7 +93,7 @@ func effectiveReplicaCount(proj queries.Project, dep queries.Deployment) int32 {
 		if dep.PreviewScaledToZero {
 			return 0
 		}
-		d := proj.DesiredInstanceCount
+		d := serviceDesired
 		if d < 1 {
 			return 1
 		}
@@ -97,7 +105,7 @@ func effectiveReplicaCount(proj queries.Project, dep queries.Deployment) int32 {
 	if proj.ScaledToZero {
 		return 0
 	}
-	return clampDesiredReplicaCount(proj)
+	return clampDesiredReplicaCount(proj, serviceDesired)
 }
 
 func nonZeroReplicaFloor(proj queries.Project) int32 {
@@ -110,11 +118,11 @@ func nonZeroReplicaFloor(proj queries.Project) int32 {
 	return 1
 }
 
-func clampDesiredReplicaCount(proj queries.Project) int32 {
+func clampDesiredReplicaCount(proj queries.Project, desired int32) int32 {
 	if proj.MaxInstanceCount <= 0 {
 		return 0
 	}
-	d := proj.DesiredInstanceCount
+	d := desired
 	floor := nonZeroReplicaFloor(proj)
 	if d < floor {
 		d = floor
@@ -151,6 +159,7 @@ func buildRuntimeEnv(envVars []queries.EnvironmentVariable, decoder projectSecre
 type reconcileContext struct {
 	dep              queries.Deployment
 	proj             queries.Project
+	service          *queries.Service
 	desired          int32
 	persistentVolume *runtime.PersistentVolumeMount
 	imageRef         string
@@ -168,9 +177,17 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 	if err != nil {
 		return fmt.Errorf("fetch project: %w", err)
 	}
+	var service *queries.Service
+	if dep.ServiceID.Valid {
+		svc, err := d.q.ServiceFirstByID(ctx, dep.ServiceID)
+		if err != nil {
+			return fmt.Errorf("fetch service: %w", err)
+		}
+		service = &svc
+	}
 
-	desired := effectiveReplicaCount(proj, dep)
-	projectVolume, persistentVolume, err := d.projectVolumeForProject(ctx, dep.ProjectID)
+	desired := effectiveReplicaCount(proj, service, dep)
+	projectVolume, persistentVolume, err := d.projectVolumeForDeployment(ctx, dep)
 	if err != nil {
 		return fmt.Errorf("fetch project volume: %w", err)
 	}
@@ -184,7 +201,7 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 		}
 	}
 
-	logger := slog.With("deployment_id", deploymentID, "effective_instances", desired, "desired_instance_count", proj.DesiredInstanceCount, "scaled_to_zero", proj.ScaledToZero, "wake", dep.WakeRequestedAt.Valid)
+	logger := slog.With("deployment_id", deploymentID, "effective_instances", desired, "desired_instance_count", serviceDesiredReplicaCount(proj, service), "scaled_to_zero", proj.ScaledToZero, "wake", dep.WakeRequestedAt.Valid)
 
 	if dep.DeletedAt.Valid || dep.FailedAt.Valid || dep.StoppedAt.Valid {
 		d.reconcileTerminalDeployment(ctx, dep, logger)
@@ -212,6 +229,7 @@ func (d *Deployer) ReconcileDeployment(ctx context.Context, deploymentID uuid.UU
 	rc := &reconcileContext{
 		dep:              dep,
 		proj:             proj,
+		service:          service,
 		desired:          desired,
 		persistentVolume: persistentVolume,
 		logger:           logger,

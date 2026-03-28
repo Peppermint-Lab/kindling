@@ -402,6 +402,12 @@ SELECT * FROM inserted;
 -- name: ServiceListByProjectID :many
 SELECT * FROM services WHERE project_id = $1 ORDER BY is_primary DESC, created_at ASC;
 
+-- name: DeploymentFindByServiceID :many
+SELECT * FROM deployments
+WHERE service_id = $1
+  AND deleted_at IS NULL
+ORDER BY created_at DESC;
+
 -- name: ServiceFirstByID :one
 SELECT * FROM services WHERE id = $1;
 
@@ -498,9 +504,18 @@ LIMIT 100;
 SELECT * FROM project_volumes
 WHERE project_id = $1 AND deleted_at IS NULL;
 
+-- name: ProjectVolumeFindByServiceID :one
+SELECT * FROM project_volumes
+WHERE service_id = $1 AND deleted_at IS NULL;
+
 -- name: ProjectVolumeFindAnyByProjectID :one
 SELECT * FROM project_volumes
 WHERE project_id = $1
+LIMIT 1;
+
+-- name: ProjectVolumeFindAnyByServiceID :one
+SELECT * FROM project_volumes
+WHERE service_id = $1
 LIMIT 1;
 
 -- name: ProjectVolumeFindByServerID :many
@@ -802,11 +817,41 @@ WHERE server_id = $1 AND deleted_at IS NULL;
 
 -- Environment Variables --
 
--- name: EnvironmentVariableCreate :one
-INSERT INTO environment_variables (id, project_id, service_id, name, value)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (project_id, name) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-RETURNING *;
+-- name: EnvironmentVariableUpsertProjectDefault :one
+WITH updated AS (
+    UPDATE environment_variables ev
+    SET value = $3, updated_at = NOW()
+    WHERE ev.project_id = $1
+      AND ev.service_id IS NULL
+      AND ev.name = $2
+    RETURNING *
+), inserted AS (
+    INSERT INTO environment_variables (id, project_id, service_id, name, value)
+    SELECT $4, $1, NULL, $2, $3
+    WHERE NOT EXISTS (SELECT 1 FROM updated)
+    RETURNING *
+)
+SELECT * FROM updated
+UNION ALL
+SELECT * FROM inserted;
+
+-- name: EnvironmentVariableUpsertForService :one
+WITH updated AS (
+    UPDATE environment_variables ev
+    SET value = $4, updated_at = NOW()
+    WHERE ev.project_id = $1
+      AND ev.service_id = $2
+      AND ev.name = $3
+    RETURNING *
+), inserted AS (
+    INSERT INTO environment_variables (id, project_id, service_id, name, value)
+    SELECT $5, $1, $2, $3, $4
+    WHERE NOT EXISTS (SELECT 1 FROM updated)
+    RETURNING *
+)
+SELECT * FROM updated
+UNION ALL
+SELECT * FROM inserted;
 
 -- name: EnvironmentVariableFindAll :many
 SELECT * FROM environment_variables ORDER BY project_id, name;
@@ -814,11 +859,38 @@ SELECT * FROM environment_variables ORDER BY project_id, name;
 -- name: EnvironmentVariableFindByProjectID :many
 SELECT * FROM environment_variables WHERE project_id = $1 ORDER BY name;
 
--- name: EnvironmentVariableMetadataFindByProjectID :many
-SELECT id, project_id, name, created_at, updated_at
+-- name: EnvironmentVariableFindEffectiveByServiceID :many
+SELECT DISTINCT ON (ev.name) ev.*
+FROM environment_variables ev
+JOIN services s ON s.id = $1
+WHERE ev.project_id = s.project_id
+  AND (ev.service_id = s.id OR ev.service_id IS NULL)
+ORDER BY ev.name ASC,
+         CASE WHEN ev.service_id = s.id THEN 0 ELSE 1 END,
+         ev.updated_at DESC;
+
+-- name: EnvironmentVariableMetadataFindProjectDefaultsByProjectID :many
+SELECT id, project_id, service_id, name, created_at, updated_at
 FROM environment_variables
 WHERE project_id = $1
+  AND service_id IS NULL
 ORDER BY name;
+
+-- name: EnvironmentVariableMetadataFindEffectiveByServiceID :many
+SELECT DISTINCT ON (ev.name)
+    ev.id,
+    ev.project_id,
+    ev.service_id,
+    ev.name,
+    ev.created_at,
+    ev.updated_at
+FROM environment_variables ev
+JOIN services s ON s.id = $1
+WHERE ev.project_id = s.project_id
+  AND (ev.service_id = s.id OR ev.service_id IS NULL)
+ORDER BY ev.name ASC,
+         CASE WHEN ev.service_id = s.id THEN 0 ELSE 1 END,
+         ev.updated_at DESC;
 
 -- name: EnvironmentVariableUpdateValue :one
 UPDATE environment_variables
@@ -829,6 +901,19 @@ RETURNING *;
 -- name: EnvironmentVariableDeleteByIDAndProjectID :one
 DELETE FROM environment_variables
 WHERE id = $1 AND project_id = $2
+RETURNING *;
+
+-- name: EnvironmentVariableDeleteProjectDefaultByIDAndProjectID :one
+DELETE FROM environment_variables
+WHERE id = $1
+  AND project_id = $2
+  AND service_id IS NULL
+RETURNING *;
+
+-- name: EnvironmentVariableDeleteByIDAndServiceID :one
+DELETE FROM environment_variables
+WHERE id = $1
+  AND service_id = $2
 RETURNING *;
 
 -- VMs --
@@ -985,6 +1070,17 @@ SELECT * FROM deployments WHERE project_id = $1 ORDER BY created_at DESC;
 -- name: DeploymentLatestRunningByProjectID :one
 SELECT * FROM deployments
 WHERE project_id = $1
+  AND deployment_kind = 'production'
+  AND running_at IS NOT NULL
+  AND stopped_at IS NULL
+  AND failed_at IS NULL
+  AND deleted_at IS NULL
+ORDER BY running_at DESC
+LIMIT 1;
+
+-- name: DeploymentLatestRunningByServiceID :one
+SELECT * FROM deployments
+WHERE service_id = $1
   AND deployment_kind = 'production'
   AND running_at IS NOT NULL
   AND stopped_at IS NULL
@@ -1182,8 +1278,14 @@ RETURNING *;
 -- name: DomainListByProjectID :many
 SELECT * FROM domains WHERE project_id = $1 ORDER BY domain_name ASC;
 
+-- name: DomainListByServiceID :many
+SELECT * FROM domains WHERE service_id = $1 ORDER BY domain_name ASC;
+
 -- name: DomainFirstByIDAndProject :one
 SELECT * FROM domains WHERE id = $1 AND project_id = $2;
+
+-- name: DomainFirstByIDAndService :one
+SELECT * FROM domains WHERE id = $1 AND service_id = $2;
 
 -- name: DomainProjectIDByDomainID :one
 SELECT project_id FROM domains WHERE id = $1;
@@ -1191,10 +1293,19 @@ SELECT project_id FROM domains WHERE id = $1;
 -- name: DomainDelete :exec
 DELETE FROM domains WHERE id = $1 AND project_id = $2;
 
+-- name: DomainDeleteByServiceID :exec
+DELETE FROM domains WHERE id = $1 AND service_id = $2;
+
 -- name: DomainSetVerified :one
 UPDATE domains
 SET verified_at = NOW(), verification_token = '', updated_at = NOW()
 WHERE id = $1 AND project_id = $2
+RETURNING *;
+
+-- name: DomainSetVerifiedByServiceID :one
+UPDATE domains
+SET verified_at = NOW(), verification_token = '', updated_at = NOW()
+WHERE id = $1 AND service_id = $2
 RETURNING *;
 
 -- name: DomainVerified :one

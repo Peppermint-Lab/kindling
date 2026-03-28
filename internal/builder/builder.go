@@ -23,8 +23,8 @@ import (
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
-const buildStuckTimeout = 15 * time.Minute   // max allowed build time before marking as stuck/failed
-const releaseLeaseTimeout = 5 * time.Second   // timeout for releasing a build lease after completion
+const buildStuckTimeout = 15 * time.Minute  // max allowed build time before marking as stuck/failed
+const releaseLeaseTimeout = 5 * time.Second // timeout for releasing a build lease after completion
 
 // Config holds builder configuration.
 type Config struct {
@@ -120,6 +120,14 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 	if err != nil {
 		return fmt.Errorf("fetch project: %w", err)
 	}
+	var service *queries.Service
+	if build.ServiceID.Valid {
+		svc, err := b.q.ServiceFirstByID(ctx, build.ServiceID)
+		if err != nil {
+			return fmt.Errorf("fetch service: %w", err)
+		}
+		service = &svc
+	}
 
 	cfg, err := b.pullConfig(ctx)
 	if err != nil {
@@ -146,7 +154,17 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 	defer os.RemoveAll(buildDir)
 
 	b.log(ctx, build.ID, "info", "Extracting source...")
-	framework, err := b.extractAndDetect(ctx, build, tarball, buildDir, project.RootDirectory, project.DockerfilePath)
+	rootDirectory := project.RootDirectory
+	dockerfilePath := project.DockerfilePath
+	if service != nil {
+		if strings.TrimSpace(service.RootDirectory) != "" {
+			rootDirectory = service.RootDirectory
+		}
+		if strings.TrimSpace(service.DockerfilePath) != "" {
+			dockerfilePath = service.DockerfilePath
+		}
+	}
+	framework, err := b.extractAndDetect(ctx, build, tarball, buildDir, rootDirectory, dockerfilePath)
 	if err != nil {
 		b.log(ctx, build.ID, "error", fmt.Sprintf("Failed to extract source: %v", err))
 		return b.q.BuildMarkFailed(ctx, build.ID)
@@ -166,10 +184,12 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 	if ociRepo == "" {
 		ociRepo = strings.ToLower(strings.TrimSpace(project.GithubRepository))
 	}
+	if service != nil && !service.IsPrimary && strings.TrimSpace(service.Slug) != "" {
+		ociRepo = fmt.Sprintf("%s/%s", strings.TrimSuffix(ociRepo, "/"), service.Slug)
+	}
 	registryURL := normalizeRegistryURL(cfg.RegistryURL)
 	imageRef := fmt.Sprintf("%s/%s:%s", registryURL, ociRepo, imageTag)
 
-	dockerfilePath := project.DockerfilePath
 	if dockerfilePath == "" {
 		dockerfilePath = "Dockerfile"
 	}

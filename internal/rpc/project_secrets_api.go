@@ -22,6 +22,16 @@ type projectSecretOut struct {
 	UpdatedAt *string `json:"updated_at"`
 }
 
+type serviceSecretOut struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Scope       string  `json:"scope"`
+	ServiceID   *string `json:"service_id,omitempty"`
+	ServiceName *string `json:"service_name,omitempty"`
+	CreatedAt   *string `json:"created_at"`
+	UpdatedAt   *string `json:"updated_at"`
+}
+
 func projectSecretFromEnv(row queries.EnvironmentVariable) projectSecretOut {
 	return projectSecretOut{
 		ID:        pguuid.ToString(row.ID),
@@ -31,12 +41,55 @@ func projectSecretFromEnv(row queries.EnvironmentVariable) projectSecretOut {
 	}
 }
 
-func projectSecretFromMetadataRow(row queries.EnvironmentVariableMetadataFindByProjectIDRow) projectSecretOut {
+func projectSecretFromMetadataRow(row queries.EnvironmentVariableMetadataFindProjectDefaultsByProjectIDRow) projectSecretOut {
 	return projectSecretOut{
 		ID:        pguuid.ToString(row.ID),
 		Name:      row.Name,
 		CreatedAt: formatTS(row.CreatedAt),
 		UpdatedAt: formatTS(row.UpdatedAt),
+	}
+}
+
+func projectSecretFromProjectUpsertRow(row queries.EnvironmentVariableUpsertProjectDefaultRow) projectSecretOut {
+	return projectSecretOut{
+		ID:        pguuid.ToString(row.ID),
+		Name:      row.Name,
+		CreatedAt: formatTS(row.CreatedAt),
+		UpdatedAt: formatTS(row.UpdatedAt),
+	}
+}
+
+func serviceSecretFromMetadataRow(row queries.EnvironmentVariableMetadataFindEffectiveByServiceIDRow, service queries.Service) serviceSecretOut {
+	out := serviceSecretOut{
+		ID:        pguuid.ToString(row.ID),
+		Name:      row.Name,
+		CreatedAt: formatTS(row.CreatedAt),
+		UpdatedAt: formatTS(row.UpdatedAt),
+		Scope:     "project_default",
+	}
+	if row.ServiceID.Valid {
+		serviceID := pguuid.ToString(row.ServiceID)
+		out.Scope = "service"
+		out.ServiceID = &serviceID
+		if row.ServiceID == service.ID {
+			serviceName := service.Name
+			out.ServiceName = &serviceName
+		}
+	}
+	return out
+}
+
+func serviceSecretFromUpsertRow(row queries.EnvironmentVariableUpsertForServiceRow, service queries.Service) serviceSecretOut {
+	serviceID := pguuid.ToString(row.ServiceID)
+	serviceName := service.Name
+	return serviceSecretOut{
+		ID:          pguuid.ToString(row.ID),
+		Name:        row.Name,
+		Scope:       "service",
+		ServiceID:   &serviceID,
+		ServiceName: &serviceName,
+		CreatedAt:   formatTS(row.CreatedAt),
+		UpdatedAt:   formatTS(row.UpdatedAt),
 	}
 }
 
@@ -54,7 +107,7 @@ func (a *API) listProjectSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := a.q.EnvironmentVariableMetadataFindByProjectID(r.Context(), projectID)
+	rows, err := a.q.EnvironmentVariableMetadataFindProjectDefaultsByProjectID(r.Context(), projectID)
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "list_project_secrets", err)
 		return
@@ -78,12 +131,6 @@ func (a *API) upsertProjectSecret(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	service, err := a.primaryServiceForProject(r.Context(), projectID)
-	if err != nil {
-		writeAPIErrorFromErr(w, http.StatusInternalServerError, "project_primary_service", err)
-		return
-	}
-
 	var req struct {
 		Name  string  `json:"name"`
 		Value *string `json:"value"`
@@ -111,10 +158,9 @@ func (a *API) upsertProjectSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row, err := a.q.EnvironmentVariableCreate(r.Context(), queries.EnvironmentVariableCreateParams{
+	row, err := a.q.EnvironmentVariableUpsertProjectDefault(r.Context(), queries.EnvironmentVariableUpsertProjectDefaultParams{
 		ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		ProjectID: projectID,
-		ServiceID: service.ID,
 		Name:      req.Name,
 		Value:     enc,
 	})
@@ -125,7 +171,7 @@ func (a *API) upsertProjectSecret(w http.ResponseWriter, r *http.Request) {
 	if a.dashboardEvents != nil {
 		a.dashboardEvents.Publish(TopicProject(uuid.UUID(projectID.Bytes)))
 	}
-	writeJSON(w, http.StatusOK, projectSecretFromEnv(row))
+	writeJSON(w, http.StatusOK, projectSecretFromProjectUpsertRow(row))
 }
 
 func (a *API) deleteProjectSecret(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +191,7 @@ func (a *API) deleteProjectSecret(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid secret id")
 		return
 	}
-	if _, err := a.q.EnvironmentVariableDeleteByIDAndProjectID(r.Context(), queries.EnvironmentVariableDeleteByIDAndProjectIDParams{
+	if _, err := a.q.EnvironmentVariableDeleteProjectDefaultByIDAndProjectID(r.Context(), queries.EnvironmentVariableDeleteProjectDefaultByIDAndProjectIDParams{
 		ID:        secretID,
 		ProjectID: projectID,
 	}); err != nil {
@@ -158,6 +204,116 @@ func (a *API) deleteProjectSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	if a.dashboardEvents != nil {
 		a.dashboardEvents.Publish(TopicProject(uuid.UUID(projectID.Bytes)))
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) listServiceSecrets(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	ctx, ok := a.serviceForRequest(w, r, p.OrganizationID)
+	if !ok {
+		return
+	}
+	rows, err := a.q.EnvironmentVariableMetadataFindEffectiveByServiceID(r.Context(), ctx.ID)
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "list_service_secrets", err)
+		return
+	}
+	out := make([]serviceSecretOut, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, serviceSecretFromMetadataRow(row, ctx.Service))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (a *API) upsertServiceSecret(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !requireOrgAdmin(w, p) {
+		return
+	}
+	ctx, ok := a.serviceForRequest(w, r, p.OrganizationID)
+	if !ok {
+		return
+	}
+	var req struct {
+		Name  string  `json:"name"`
+		Value *string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if !validProjectSecretName(req.Name) {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", "name must be a valid environment variable identifier")
+		return
+	}
+	if req.Value == nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", "value is required")
+		return
+	}
+	if a.cfg == nil {
+		writeAPIError(w, http.StatusInternalServerError, "encrypt_service_secret", "config manager unavailable")
+		return
+	}
+	enc, err := a.cfg.EncryptProjectSecretValue(*req.Value)
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "encrypt_service_secret", err)
+		return
+	}
+	row, err := a.q.EnvironmentVariableUpsertForService(r.Context(), queries.EnvironmentVariableUpsertForServiceParams{
+		ID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		ProjectID: ctx.Project.ID,
+		ServiceID: ctx.ID,
+		Name:      req.Name,
+		Value:     enc,
+	})
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "upsert_service_secret", err)
+		return
+	}
+	if a.dashboardEvents != nil {
+		a.dashboardEvents.Publish(TopicProject(uuid.UUID(ctx.Project.ID.Bytes)))
+	}
+	writeJSON(w, http.StatusOK, serviceSecretFromUpsertRow(row, ctx.Service))
+}
+
+func (a *API) deleteServiceSecret(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !requireOrgAdmin(w, p) {
+		return
+	}
+	ctx, ok := a.serviceForRequest(w, r, p.OrganizationID)
+	if !ok {
+		return
+	}
+	secretID, err := parseUUID(r.PathValue("secret_id"))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid secret id")
+		return
+	}
+	if _, err := a.q.EnvironmentVariableDeleteByIDAndServiceID(r.Context(), queries.EnvironmentVariableDeleteByIDAndServiceIDParams{
+		ID:        secretID,
+		ServiceID: ctx.ID,
+	}); err != nil {
+		if err == pgx.ErrNoRows {
+			writeAPIError(w, http.StatusNotFound, "not_found", "service secret not found")
+			return
+		}
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "delete_service_secret", err)
+		return
+	}
+	if a.dashboardEvents != nil {
+		a.dashboardEvents.Publish(TopicProject(uuid.UUID(ctx.Project.ID.Bytes)))
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

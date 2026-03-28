@@ -19,30 +19,42 @@ func TestEffectiveReplicaCount(t *testing.T) {
 		ScaledToZero:         false,
 	}
 	dep := queries.Deployment{}
-	if got := effectiveReplicaCount(proj, dep); got != 3 {
+	if got := effectiveReplicaCount(proj, nil, dep); got != 3 {
 		t.Fatalf("got %d want 3", got)
 	}
 	proj.ScaledToZero = true
-	if got := effectiveReplicaCount(proj, dep); got != 0 {
+	if got := effectiveReplicaCount(proj, nil, dep); got != 0 {
 		t.Fatalf("scaled_to_zero: got %d want 0", got)
 	}
 	dep.WakeRequestedAt = wake
-	if got := effectiveReplicaCount(proj, dep); got != 1 {
+	if got := effectiveReplicaCount(proj, nil, dep); got != 1 {
 		t.Fatalf("wake + scaled_to_zero: got %d want 1", got)
 	}
 	proj.ScaledToZero = false
 	proj.MinInstanceCount = 2
 	proj.DesiredInstanceCount = 0
-	if got := effectiveReplicaCount(proj, dep); got != 2 {
+	if got := effectiveReplicaCount(proj, nil, dep); got != 2 {
 		t.Fatalf("wake + desired 0: got %d want 2", got)
 	}
 	dep.WakeRequestedAt = pgtype.Timestamptz{}
-	if got := effectiveReplicaCount(proj, dep); got != 2 {
+	if got := effectiveReplicaCount(proj, nil, dep); got != 2 {
 		t.Fatalf("desired 0: got %d want 2", got)
 	}
 	proj.MaxInstanceCount = 0
-	if got := effectiveReplicaCount(proj, dep); got != 0 {
+	if got := effectiveReplicaCount(proj, nil, dep); got != 0 {
 		t.Fatalf("max 0: got %d want 0", got)
+	}
+}
+
+func TestEffectiveReplicaCountUsesServiceDesiredCount(t *testing.T) {
+	proj := queries.Project{
+		DesiredInstanceCount: 1,
+		MinInstanceCount:     1,
+		MaxInstanceCount:     5,
+	}
+	service := &queries.Service{DesiredInstanceCount: 4}
+	if got := effectiveReplicaCount(proj, service, queries.Deployment{}); got != 4 {
+		t.Fatalf("got %d want 4", got)
 	}
 }
 

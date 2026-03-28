@@ -477,8 +477,7 @@ CREATE TABLE IF NOT EXISTS environment_variables (
     name        TEXT NOT NULL,
     value       TEXT NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (project_id, name)
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 DO $$ BEGIN
@@ -496,6 +495,26 @@ FROM services s
 WHERE ev.service_id IS NULL
   AND s.project_id = ev.project_id
   AND s.is_primary = true;
+
+UPDATE environment_variables ev
+SET service_id = NULL
+FROM services s
+WHERE ev.service_id = s.id
+  AND s.project_id = ev.project_id
+  AND s.is_primary = true;
+
+DO $$ BEGIN
+    ALTER TABLE environment_variables DROP CONSTRAINT IF EXISTS environment_variables_project_id_name_key;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_environment_variables_project_default_name
+    ON environment_variables(project_id, name)
+    WHERE service_id IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_environment_variables_service_name
+    ON environment_variables(service_id, name)
+    WHERE service_id IS NOT NULL;
 
 -- Builds: a single build attempt for a commit
 CREATE TABLE IF NOT EXISTS builds (

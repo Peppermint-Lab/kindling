@@ -58,13 +58,13 @@ type DeploymentListItemOut struct {
 
 // DeploymentReachabilityOut contains reachability info for a deployment.
 type DeploymentReachabilityOut struct {
-	PublicURL           string                        `json:"public_url,omitempty"`
-	RuntimeURL          string                        `json:"runtime_url,omitempty"`
-	Domain              string                        `json:"domain,omitempty"`
-	VmIP                string                        `json:"vm_ip,omitempty"`
-	Port                *int                          `json:"port,omitempty"`
-	ProxiesToDeployment *bool                         `json:"proxies_to_deployment,omitempty"`
-	PublicEndpoints     []DeploymentPublicEndpointOut `json:"public_endpoints,omitempty"`
+	PublicURL           string                         `json:"public_url,omitempty"`
+	RuntimeURL          string                         `json:"runtime_url,omitempty"`
+	Domain              string                         `json:"domain,omitempty"`
+	VmIP                string                         `json:"vm_ip,omitempty"`
+	Port                *int                           `json:"port,omitempty"`
+	ProxiesToDeployment *bool                          `json:"proxies_to_deployment,omitempty"`
+	PublicEndpoints     []DeploymentPublicEndpointOut  `json:"public_endpoints,omitempty"`
 	PrivateEndpoints    []DeploymentPrivateEndpointOut `json:"private_endpoints,omitempty"`
 }
 
@@ -138,6 +138,30 @@ func decorateDeploymentOutWithVolume(out *DeploymentOut, dep queries.Deployment,
 	}
 }
 
+func deploymentDesiredReplicaCount(proj queries.Project, service *queries.Service) int {
+	if service != nil && service.DesiredInstanceCount > 0 {
+		return int(service.DesiredInstanceCount)
+	}
+	return int(proj.DesiredInstanceCount)
+}
+
+func (h *Handler) deploymentVolume(ctx context.Context, dep queries.Deployment) (*queries.ProjectVolume, error) {
+	if dep.ServiceID.Valid {
+		vol, err := h.Q.ProjectVolumeFindByServiceID(ctx, dep.ServiceID)
+		if err == nil {
+			return &vol, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+	}
+	vol, err := h.Q.ProjectVolumeFindByProjectID(ctx, dep.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	return &vol, nil
+}
+
 // DeploymentToOut converts a deployment and optional build/reachability into the API output.
 func DeploymentToOut(dep queries.Deployment, build *queries.Build, reachable *DeploymentReachabilityOut) DeploymentOut {
 	var bs string
@@ -184,20 +208,22 @@ func (h *Handler) ToOutCtx(ctx context.Context, dep queries.Deployment) Deployme
 	}
 	out := DeploymentToOut(dep, build, h.reachability(ctx, dep))
 	out.WakeRequestedAt = rpcutil.FormatTS(dep.WakeRequestedAt)
+	var service *queries.Service
 	if proj, err := h.Q.ProjectFirstByID(ctx, dep.ProjectID); err == nil {
-		out.DesiredInstanceCount = int(proj.DesiredInstanceCount)
 		out.MinInstanceCount = int(proj.MinInstanceCount)
 		out.MaxInstanceCount = int(proj.MaxInstanceCount)
 		out.ScaledToZero = proj.ScaledToZero
 		out.ScaleToZeroEnabled = proj.ScaleToZeroEnabled
-	}
-	if dep.ServiceID.Valid {
-		if service, err := h.Q.ServiceFirstByID(ctx, dep.ServiceID); err == nil {
-			out.ServiceName = service.Name
+		if dep.ServiceID.Valid {
+			if svc, err := h.Q.ServiceFirstByID(ctx, dep.ServiceID); err == nil {
+				service = &svc
+				out.ServiceName = svc.Name
+			}
 		}
+		out.DesiredInstanceCount = deploymentDesiredReplicaCount(proj, service)
 	}
-	if vol, err := h.Q.ProjectVolumeFindByProjectID(ctx, dep.ProjectID); err == nil {
-		decorateDeploymentOutWithVolume(&out, dep, &vol)
+	if vol, err := h.deploymentVolume(ctx, dep); err == nil {
+		decorateDeploymentOutWithVolume(&out, dep, vol)
 	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		// Ignore volume lookup failures and preserve deployment response.
 	}
@@ -281,24 +307,27 @@ func (h *Handler) ListRowToOutCtx(ctx context.Context, row queries.DeploymentFin
 	}
 	out := DeploymentToOut(dep, buildPtr, h.reachability(ctx, dep))
 	out.WakeRequestedAt = rpcutil.FormatTS(dep.WakeRequestedAt)
+	var service *queries.Service
 	if proj, err := h.Q.ProjectFirstByID(ctx, dep.ProjectID); err == nil {
-		out.DesiredInstanceCount = int(proj.DesiredInstanceCount)
 		out.MinInstanceCount = int(proj.MinInstanceCount)
 		out.MaxInstanceCount = int(proj.MaxInstanceCount)
 		out.ScaledToZero = proj.ScaledToZero
 		out.ScaleToZeroEnabled = proj.ScaleToZeroEnabled
-	}
-	if dep.ServiceID.Valid {
-		if service, err := h.Q.ServiceFirstByID(ctx, dep.ServiceID); err == nil {
-			out.ServiceName = service.Name
+		if dep.ServiceID.Valid {
+			if svc, err := h.Q.ServiceFirstByID(ctx, dep.ServiceID); err == nil {
+				service = &svc
+				out.ServiceName = svc.Name
+			}
 		}
+		out.DesiredInstanceCount = deploymentDesiredReplicaCount(proj, service)
 	}
-	if vol, err := h.Q.ProjectVolumeFindByProjectID(ctx, dep.ProjectID); err == nil {
-		decorateDeploymentOutWithVolume(&out, dep, &vol)
+	if vol, err := h.deploymentVolume(ctx, dep); err == nil {
+		decorateDeploymentOutWithVolume(&out, dep, vol)
 	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		// Ignore volume lookup failures and preserve deployment response.
 	}
-	if insts, err := h.Q.DeploymentInstanceFindByDeploymentID(ctx, dep.ID); err == nil {
+	insts, err := h.Q.DeploymentInstanceFindByDeploymentID(ctx, dep.ID)
+	if err == nil {
 		rc := 0
 		for _, inst := range insts {
 			if inst.Status == "running" && inst.VmID.Valid {

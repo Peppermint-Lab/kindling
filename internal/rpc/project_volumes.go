@@ -219,6 +219,29 @@ func hasCloudHypervisorWorker(rows []queries.ServerComponentStatus, servers []qu
 	return false
 }
 
+func samePgUUID(a, b pgtype.UUID) bool {
+	if !a.Valid || !b.Valid {
+		return false
+	}
+	return a.Bytes == b.Bytes
+}
+
+func (a *API) serviceVolumeContextForRequest(w http.ResponseWriter, r *http.Request, orgID pgtype.UUID) (serviceRequestContext, *queries.ProjectVolume, bool) {
+	ctx, ok := a.serviceForRequest(w, r, orgID)
+	if !ok {
+		return serviceRequestContext{}, nil, false
+	}
+	vol, err := a.q.ProjectVolumeFindByServiceID(r.Context(), ctx.ID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ctx, nil, true
+		}
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "get_service_volume", err)
+		return serviceRequestContext{}, nil, false
+	}
+	return ctx, &vol, true
+}
+
 func (a *API) getProjectVolume(w http.ResponseWriter, r *http.Request) {
 	p, ok := mustPrincipal(w, r)
 	if !ok {
@@ -238,6 +261,22 @@ func (a *API) getProjectVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, projectVolumeToOutCtx(r.Context(), a.q, vol))
+}
+
+func (a *API) getServiceVolume(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	_, vol, ok := a.serviceVolumeContextForRequest(w, r, p.OrganizationID)
+	if !ok {
+		return
+	}
+	if vol == nil {
+		writeAPIError(w, http.StatusNotFound, "not_found", "service volume not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, projectVolumeToOutCtx(r.Context(), a.q, *vol))
 }
 
 func (a *API) putProjectVolume(w http.ResponseWriter, r *http.Request) {
@@ -413,6 +452,176 @@ func (a *API) putProjectVolume(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, projectVolumeToOutCtx(r.Context(), a.q, vol))
 }
 
+func (a *API) putServiceVolume(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !requireOrgAdmin(w, p) {
+		return
+	}
+	ctx, activeVol, ok := a.serviceVolumeContextForRequest(w, r, p.OrganizationID)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		MountPath              *string `json:"mount_path"`
+		SizeGB                 *int32  `json:"size_gb"`
+		BackupSchedule         *string `json:"backup_schedule"`
+		BackupRetentionCount   *int32  `json:"backup_retention_count"`
+		PreDeleteBackupEnabled *bool   `json:"pre_delete_backup_enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
+		return
+	}
+
+	sizeGB := int32(10)
+	if req.SizeGB != nil {
+		sizeGB = *req.SizeGB
+	}
+	if sizeGB <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", "size_gb must be at least 1")
+		return
+	}
+	mountPath, err := normalizeProjectVolumeMountPath(pgTextStringPtr(req.MountPath))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+	backupSchedule, err := normalizeProjectVolumeBackupSchedule(pgTextStringPtr(req.BackupSchedule))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+	backupRetentionCount, err := normalizeProjectVolumeBackupRetention(req.BackupRetentionCount)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+	preDeleteBackupEnabled := req.PreDeleteBackupEnabled != nil && *req.PreDeleteBackupEnabled
+	if ctx.Project.MaxInstanceCount > 1 {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", "persistent volumes require max_instance_count <= 1")
+		return
+	}
+	servers, err := a.q.ServerFindAll(r.Context())
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "put_service_volume", err)
+		return
+	}
+	statuses, err := a.q.ServerComponentStatusFindAll(r.Context())
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "put_service_volume", err)
+		return
+	}
+	if !hasCloudHypervisorWorker(statuses, servers) {
+		writeAPIError(w, http.StatusConflict, "volume_unavailable", "no active cloud-hypervisor worker is available")
+		return
+	}
+
+	vol := queries.ProjectVolume{}
+	switch {
+	case activeVol != nil:
+		vol = *activeVol
+		if req.BackupSchedule == nil {
+			backupSchedule = vol.BackupSchedule
+		}
+		if req.BackupRetentionCount == nil {
+			backupRetentionCount = vol.BackupRetentionCount
+		}
+		if req.PreDeleteBackupEnabled == nil {
+			preDeleteBackupEnabled = vol.PreDeleteBackupEnabled
+		}
+		if vol.MountPath != mountPath {
+			writeAPIError(w, http.StatusBadRequest, "validation_error", "mount_path is immutable after creation")
+			return
+		}
+		if sizeGB < vol.SizeGb {
+			writeAPIError(w, http.StatusBadRequest, "validation_error", "size_gb cannot shrink an existing volume")
+			return
+		}
+		if vol.Status == "attached" && sizeGB != vol.SizeGb {
+			writeAPIError(w, http.StatusConflict, "volume_attached", "detach the volume before resizing it")
+			return
+		}
+		vol, err = a.q.ProjectVolumeUpdateSpec(r.Context(), queries.ProjectVolumeUpdateSpecParams{
+			ProjectID:              ctx.Project.ID,
+			SizeGb:                 sizeGB,
+			Filesystem:             "ext4",
+			BackupSchedule:         backupSchedule,
+			BackupRetentionCount:   backupRetentionCount,
+			PreDeleteBackupEnabled: preDeleteBackupEnabled,
+		})
+		if err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "put_service_volume", err)
+			return
+		}
+	default:
+		anyVol, anyErr := a.q.ProjectVolumeFindAnyByProjectID(r.Context(), ctx.Project.ID)
+		switch {
+		case anyErr == nil:
+			if anyVol.ServiceID.Valid && !samePgUUID(anyVol.ServiceID, ctx.ID) {
+				writeAPIError(w, http.StatusConflict, "volume_owned_by_other_service", "this project already has a persistent volume attached to another service")
+				return
+			}
+			if req.BackupSchedule == nil {
+				backupSchedule = anyVol.BackupSchedule
+			}
+			if req.BackupRetentionCount == nil {
+				backupRetentionCount = anyVol.BackupRetentionCount
+			}
+			if req.PreDeleteBackupEnabled == nil {
+				preDeleteBackupEnabled = anyVol.PreDeleteBackupEnabled
+			}
+			if anyVol.MountPath != mountPath {
+				writeAPIError(w, http.StatusBadRequest, "validation_error", "mount_path is immutable after creation")
+				return
+			}
+			if sizeGB < anyVol.SizeGb {
+				writeAPIError(w, http.StatusBadRequest, "validation_error", "size_gb cannot shrink an existing volume")
+				return
+			}
+			vol, err = a.q.ProjectVolumeRevive(r.Context(), queries.ProjectVolumeReviveParams{
+				ProjectID:              ctx.Project.ID,
+				SizeGb:                 sizeGB,
+				Filesystem:             "ext4",
+				BackupSchedule:         backupSchedule,
+				BackupRetentionCount:   backupRetentionCount,
+				PreDeleteBackupEnabled: preDeleteBackupEnabled,
+			})
+			if err != nil {
+				writeAPIErrorFromErr(w, http.StatusInternalServerError, "put_service_volume", err)
+				return
+			}
+		case errors.Is(anyErr, pgx.ErrNoRows):
+			vol, err = a.q.ProjectVolumeCreate(r.Context(), queries.ProjectVolumeCreateParams{
+				ID:                     pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				ProjectID:              ctx.Project.ID,
+				ServiceID:              ctx.ID,
+				MountPath:              mountPath,
+				SizeGb:                 sizeGB,
+				Filesystem:             "ext4",
+				BackupSchedule:         backupSchedule,
+				BackupRetentionCount:   backupRetentionCount,
+				PreDeleteBackupEnabled: preDeleteBackupEnabled,
+			})
+			if err != nil {
+				writeAPIErrorFromErr(w, http.StatusInternalServerError, "put_service_volume", err)
+				return
+			}
+		default:
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "put_service_volume", anyErr)
+			return
+		}
+	}
+
+	if a.dashboardEvents != nil {
+		a.publishProjectVolumeTopics(uuid.UUID(ctx.Project.ID.Bytes))
+	}
+	writeJSON(w, http.StatusOK, projectVolumeToOutCtx(r.Context(), a.q, vol))
+}
+
 func (a *API) deleteProjectVolume(w http.ResponseWriter, r *http.Request) {
 	p, ok := mustPrincipal(w, r)
 	if !ok {
@@ -491,6 +700,83 @@ func (a *API) deleteProjectVolume(w http.ResponseWriter, r *http.Request) {
 	}
 	if a.dashboardEvents != nil {
 		a.publishProjectVolumeTopics(uuid.UUID(projectID.Bytes))
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) deleteServiceVolume(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !requireOrgAdmin(w, p) {
+		return
+	}
+	ctx, vol, ok := a.serviceVolumeContextForRequest(w, r, p.OrganizationID)
+	if !ok {
+		return
+	}
+	if vol == nil {
+		writeAPIError(w, http.StatusNotFound, "not_found", "service volume not found")
+		return
+	}
+	if vol.Status == "attached" || vol.AttachedVmID.Valid {
+		writeAPIError(w, http.StatusConflict, "volume_attached", "detach the volume before deleting it")
+		return
+	}
+	if isProjectVolumeTransitionalStatus(vol.Status) {
+		writeAPIError(w, http.StatusConflict, "volume_busy", "another volume operation is already in progress")
+		return
+	}
+	if _, err := a.q.ProjectVolumeOperationFindCurrentByVolumeID(r.Context(), vol.ID); err == nil {
+		writeAPIError(w, http.StatusConflict, "volume_busy", "another volume operation is already in progress")
+		return
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "delete_service_volume", err)
+		return
+	}
+	if vol.PreDeleteBackupEnabled {
+		if !vol.ServerID.Valid {
+			writeAPIError(w, http.StatusConflict, "backup_store_unavailable", "volume must be pinned to a worker before a pre-delete backup can run")
+			return
+		}
+		if err := a.ensureVolumeBackupStoreConfigured(); err != nil {
+			writeAPIError(w, http.StatusConflict, "backup_store_unavailable", err.Error())
+			return
+		}
+		backup, err := a.q.ProjectVolumeBackupCreate(r.Context(), queries.ProjectVolumeBackupCreateParams{
+			ID:              pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			ProjectVolumeID: vol.ID,
+			Kind:            "pre_delete",
+			Metadata:        []byte(`{}`),
+		})
+		if err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "delete_service_volume", err)
+			return
+		}
+		op, err := a.enqueueProjectVolumeOperation(r.Context(), *vol, vol.ServerID, "backup", projectVolumeOperationRequest{
+			BackupID:    pguuid.ToString(backup.ID),
+			BackupKind:  "pre_delete",
+			DeleteAfter: true,
+		}, "deleting")
+		if err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "delete_service_volume", err)
+			return
+		}
+		a.publishProjectVolumeTopics(uuid.UUID(ctx.Project.ID.Bytes))
+		writeJSON(w, http.StatusAccepted, projectVolumeOperationToOut(op))
+		return
+	}
+	if err := os.Remove(runtime.PersistentVolumePath(uuid.UUID(vol.ID.Bytes))); err != nil && !os.IsNotExist(err) {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "delete_service_volume", err)
+		return
+	}
+	if err := a.q.ProjectVolumeSoftDelete(r.Context(), ctx.Project.ID); err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "delete_service_volume", err)
+		return
+	}
+	if a.dashboardEvents != nil {
+		a.publishProjectVolumeTopics(uuid.UUID(ctx.Project.ID.Bytes))
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

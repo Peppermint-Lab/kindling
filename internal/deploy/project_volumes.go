@@ -45,8 +45,16 @@ func projectVolumeServerStatusMessage(serverID pgtype.UUID, status string) strin
 	return fmt.Sprintf("pinned server %s is %s", pguuid.FromPgtype(serverID), status)
 }
 
-func (d *Deployer) projectVolumeForProject(ctx context.Context, projectID pgtype.UUID) (*queries.ProjectVolume, *runtime.PersistentVolumeMount, error) {
-	vol, err := d.q.ProjectVolumeFindByProjectID(ctx, projectID)
+func (d *Deployer) projectVolumeForDeployment(ctx context.Context, dep queries.Deployment) (*queries.ProjectVolume, *runtime.PersistentVolumeMount, error) {
+	var (
+		vol queries.ProjectVolume
+		err error
+	)
+	if dep.ServiceID.Valid {
+		vol, err = d.q.ProjectVolumeFindByServiceID(ctx, dep.ServiceID)
+	} else {
+		vol, err = d.q.ProjectVolumeFindByProjectID(ctx, dep.ProjectID)
+	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil, nil

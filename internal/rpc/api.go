@@ -57,13 +57,13 @@ func (a *API) Register(mux *http.ServeMux) {
 		GetMeta: a.getMeta, PutMeta: a.putMeta,
 		ListProjects: a.listProjects, CreateProject: a.createProject,
 		GetProject: a.getProject, PatchProject: a.patchProject,
-		DeleteProject: a.deleteProject,
+		DeleteProject:      a.deleteProject,
 		ListProjectSecrets: a.listProjectSecrets, UpsertProjectSecret: a.upsertProjectSecret,
 		DeleteProjectSecret: a.deleteProjectSecret,
 		ListProjectPreviews: a.listProjectPreviews, RedeployProjectPreview: a.redeployProjectPreview,
 		DeleteProjectPreview: a.deleteProjectPreview,
-		GetGitHubSetup: a.getGitHubSetup, GitHead: a.gitHead,
-		RotateWebhookSecret: a.rotateWebhookSecret,
+		GetGitHubSetup:       a.getGitHubSetup, GitHead: a.gitHead,
+		RotateWebhookSecret:    a.rotateWebhookSecret,
 		GetProjectUsageCurrent: a.getProjectUsageCurrent, GetProjectUsageHistory: a.getProjectUsageHistory,
 	}).RegisterRoutes(mux)
 
@@ -72,16 +72,26 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/services/{id}", a.getService)
 	mux.HandleFunc("GET /api/services/{id}/endpoints", a.listServiceEndpoints)
 	mux.HandleFunc("POST /api/services/{id}/endpoints", a.createServiceEndpoint)
+	mux.HandleFunc("GET /api/services/{id}/secrets", a.listServiceSecrets)
+	mux.HandleFunc("POST /api/services/{id}/secrets", a.upsertServiceSecret)
+	mux.HandleFunc("DELETE /api/services/{id}/secrets/{secret_id}", a.deleteServiceSecret)
 
 	// Volumes sub-package: volume CRUD and operations.
 	(&volumes.Handlers{
 		GetProjectVolume: a.getProjectVolume, PutProjectVolume: a.putProjectVolume,
-		DeleteProjectVolume: a.deleteProjectVolume,
+		DeleteProjectVolume:      a.deleteProjectVolume,
 		ListProjectVolumeBackups: a.listProjectVolumeBackups,
-		PostProjectVolumeBackup: a.postProjectVolumeBackup,
+		PostProjectVolumeBackup:  a.postProjectVolumeBackup,
 		PostProjectVolumeRestore: a.postProjectVolumeRestore,
-		PostProjectVolumeMove: a.postProjectVolumeMove,
-		PostProjectVolumeRepair: a.postProjectVolumeRepair,
+		PostProjectVolumeMove:    a.postProjectVolumeMove,
+		PostProjectVolumeRepair:  a.postProjectVolumeRepair,
+		GetServiceVolume:         a.getServiceVolume, PutServiceVolume: a.putServiceVolume,
+		DeleteServiceVolume:      a.deleteServiceVolume,
+		ListServiceVolumeBackups: a.listServiceVolumeBackups,
+		PostServiceVolumeBackup:  a.postServiceVolumeBackup,
+		PostServiceVolumeRestore: a.postServiceVolumeRestore,
+		PostServiceVolumeMove:    a.postServiceVolumeMove,
+		PostServiceVolumeRepair:  a.postServiceVolumeRepair,
 	}).RegisterRoutes(mux)
 
 	// Deployments sub-package: deployment CRUD, logs, SSE stream, live migration.
@@ -102,12 +112,12 @@ func (a *API) Register(mux *http.ServeMux) {
 		AuthLogout: a.authLogout, AuthSwitchOrg: a.authSwitchOrg,
 		ListAPIKeys: a.listAPIKeys, CreateAPIKey: a.createAPIKey, RevokeAPIKey: a.revokeAPIKey,
 		ListOrgProviders: a.listOrgProviderConnections, CreateOrgProvider: a.createOrgProviderConnection,
-		DeleteOrgProvider: a.deleteOrgProviderConnection,
+		DeleteOrgProvider:       a.deleteOrgProviderConnection,
 		ListPublicAuthProviders: a.listPublicAuthProviders, ListAdminAuthProviders: a.listAdminAuthProviders,
 		PutAdminAuthProvider: a.putAdminAuthProvider,
-		ListAuthIdentities: a.listAuthIdentities,
-		StartExternalAuth: a.startExternalAuth, LinkExternalAuth: a.linkExternalAuth,
-		ExternalAuthCallback: a.externalAuthCallback,
+		ListAuthIdentities:   a.listAuthIdentities,
+		StartExternalAuth:    a.startExternalAuth, LinkExternalAuth: a.linkExternalAuth,
+		ExternalAuthCallback:  a.externalAuthCallback,
 		StreamDashboardEvents: a.streamDashboardEvents,
 	}).RegisterRoutes(mux)
 }

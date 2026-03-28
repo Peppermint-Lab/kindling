@@ -28,11 +28,13 @@ type Handler struct {
 // RegisterRoutes mounts deployment routes on the given mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/projects/{id}/deployments", h.listDeployments)
+	mux.HandleFunc("GET /api/services/{id}/deployments", h.listServiceDeployments)
 	mux.HandleFunc("GET /api/deployments", h.listAllDeployments)
 	mux.HandleFunc("GET /api/deployments/{id}", h.getDeployment)
 	mux.HandleFunc("GET /api/deployments/{id}/logs", h.getDeploymentLogs)
 	mux.HandleFunc("GET /api/deployments/{id}/stream", h.streamDeployment)
 	mux.HandleFunc("POST /api/projects/{id}/deploy", h.triggerDeploy)
+	mux.HandleFunc("POST /api/services/{id}/deploy", h.triggerServiceDeploy)
 	mux.HandleFunc("POST /api/deployments/{id}/cancel", h.cancelDeployment)
 }
 
@@ -56,6 +58,36 @@ func (h *Handler) listDeployments(w http.ResponseWriter, r *http.Request) {
 	deps, err := h.Q.DeploymentFindByProjectID(r.Context(), id)
 	if err != nil {
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "list_deployments", err)
+		return
+	}
+	out := make([]DeploymentOut, 0, len(deps))
+	for _, d := range deps {
+		out = append(out, h.ToOutCtx(r.Context(), d))
+	}
+	rpcutil.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) listServiceDeployments(w http.ResponseWriter, r *http.Request) {
+	p, ok := rpcutil.MustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	serviceID, err := rpcutil.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_id", "invalid service id")
+		return
+	}
+	service, err := h.Q.ServiceFirstByIDAndOrg(r.Context(), queries.ServiceFirstByIDAndOrgParams{
+		ID:    serviceID,
+		OrgID: p.OrganizationID,
+	})
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "service not found")
+		return
+	}
+	deps, err := h.Q.DeploymentFindByServiceID(r.Context(), service.ID)
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "list_service_deployments", err)
 		return
 	}
 	out := make([]DeploymentOut, 0, len(deps))
@@ -205,6 +237,53 @@ func (h *Handler) triggerDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rpcutil.WriteJSON(w, http.StatusCreated, h.ToOutCtx(r.Context(), dep))
+}
+
+func (h *Handler) triggerServiceDeploy(w http.ResponseWriter, r *http.Request) {
+	p, ok := rpcutil.MustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !rpcutil.RequireOrgAdmin(w, p) {
+		return
+	}
+	serviceID, err := rpcutil.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_id", "invalid service id")
+		return
+	}
+	var req struct {
+		Commit string `json:"commit"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_json", "malformed JSON body")
+		return
+	}
+	if req.Commit == "" {
+		req.Commit = "main"
+	}
+	service, err := h.Q.ServiceFirstByIDAndOrg(r.Context(), queries.ServiceFirstByIDAndOrgParams{
+		ID:    serviceID,
+		OrgID: p.OrganizationID,
+	})
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "service not found")
+		return
+	}
+	dep, err := h.Q.DeploymentCreate(r.Context(), queries.DeploymentCreateParams{
+		ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		ProjectID:            service.ProjectID,
+		ServiceID:            service.ID,
+		GithubCommit:         req.Commit,
+		GithubBranch:         req.Commit,
+		DeploymentKind:       "production",
+		PreviewEnvironmentID: pgtype.UUID{Valid: false},
+	})
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "create_service_deployment", err)
+		return
+	}
 	rpcutil.WriteJSON(w, http.StatusCreated, h.ToOutCtx(r.Context(), dep))
 }
 
