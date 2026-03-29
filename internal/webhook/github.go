@@ -207,7 +207,18 @@ func shouldCreateDeploymentForService(service queries.Service, push pushEvent) b
 	return shouldCreateDeploymentForRoot(service.RootDirectory, service.BuildOnlyOnRootChanges, push)
 }
 
-// ServeHTTP handles POST /webhooks/github.
+// genericWebhookPayload is a minimal struct for extracting the repository
+// full name from any GitHub webhook event payload. All GitHub webhook events
+// include a repository object.
+type genericWebhookPayload struct {
+	Repository struct {
+		FullName string `json:"full_name"`
+	} `json:"repository"`
+}
+
+// ServeHTTP handles POST /webhooks/github. Signature verification is
+// centralized here — it runs BEFORE any event-specific dispatch so that
+// unsigned or tampered requests never reach business logic.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -226,20 +237,76 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ── Step 1: extract repository name from the generic payload ──
+	var generic genericWebhookPayload
+	if err := json.Unmarshal(body, &generic); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	repoFullName := strings.TrimSpace(generic.Repository.FullName)
+	if repoFullName == "" {
+		http.Error(w, "missing repository", http.StatusBadRequest)
+		return
+	}
+	repoFullName = githubapi.NormalizeRepo(repoFullName)
+
+	// ── Step 2: look up project ──
+	project, err := h.q.ProjectFindByGitHubRepo(r.Context(), repoFullName)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("webhook for unknown repo", "repo", repoFullName)
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// ── Step 3: determine the webhook secret ──
+	// For workflow_job events the secret comes from the org integration,
+	// not the project's own webhook secret.
+	var secret string
+	if event == "workflow_job" {
+		var wjEvent workflowJobEvent
+		if err := json.Unmarshal(body, &wjEvent); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		s, err := h.resolveWorkflowJobSecret(r.Context(), wjEvent, project)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				http.Error(w, "webhook secret not configured", http.StatusUnauthorized)
+				return
+			}
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		secret = s
+	} else {
+		secret = project.GithubWebhookSecret
+	}
+
+	// ── Step 4: verify HMAC signature (centralized) ──
+	sig := r.Header.Get("X-Hub-Signature-256")
+	if !enforceSignature(w, body, sig, secret) {
+		return
+	}
+
+	// ── Step 5: dispatch to event handler (signature is verified) ──
 	switch event {
 	case "push":
-		h.handlePush(w, r, body)
+		h.handlePush(w, r, body, project)
 	case "pull_request":
-		h.handlePullRequest(w, r, body)
+		h.handlePullRequest(w, r, body, project)
 	case "workflow_job":
-		h.handleWorkflowJob(w, r, body)
+		h.handleWorkflowJob(w, r, body, project)
 	default:
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, "ignored event: %s", event)
 	}
 }
 
-func (h *Handler) handleWorkflowJob(w http.ResponseWriter, r *http.Request, body []byte) {
+func (h *Handler) handleWorkflowJob(w http.ResponseWriter, r *http.Request, body []byte, project queries.Project) {
 	if h.ciJobService == nil {
 		http.Error(w, "ci workflow job handler unavailable", http.StatusServiceUnavailable)
 		return
@@ -250,20 +317,8 @@ func (h *Handler) handleWorkflowJob(w http.ResponseWriter, r *http.Request, body
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
-	secret, err := h.workflowJobWebhookSecret(r.Context(), event)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			w.WriteHeader(http.StatusOK)
-			fmt.Fprint(w, "ignored: repository not connected to Kindling")
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	sig := r.Header.Get("X-Hub-Signature-256")
-	if !enforceSignature(w, body, sig, secret) {
-		return
-	}
+
+	// Signature already verified centrally in ServeHTTP.
 
 	result, err := h.ciJobService.HandleGitHubWorkflowJobEvent(r.Context(), ci.GitHubWorkflowJobEvent{
 		Action:         strings.TrimSpace(event.Action),
@@ -296,11 +351,9 @@ func (h *Handler) handleWorkflowJob(w http.ResponseWriter, r *http.Request, body
 	fmt.Fprint(w, "ok")
 }
 
-func (h *Handler) workflowJobWebhookSecret(ctx context.Context, event workflowJobEvent) (string, error) {
-	project, err := h.q.ProjectFindByGitHubRepo(ctx, githubapi.NormalizeRepo(event.Repository.FullName))
-	if err != nil {
-		return "", err
-	}
+// resolveWorkflowJobSecret looks up the webhook secret for a workflow_job
+// event from the org's provider connection (GitHub App integration).
+func (h *Handler) resolveWorkflowJobSecret(ctx context.Context, event workflowJobEvent, project queries.Project) (string, error) {
 	rows, err := h.q.OrgProviderConnectionListByOrg(ctx, project.OrgID)
 	if err != nil {
 		return "", err
@@ -331,12 +384,14 @@ func (h *Handler) workflowJobWebhookSecret(ctx context.Context, event workflowJo
 	return strings.TrimSpace(integration.Credentials.WebhookSecret), nil
 }
 
-func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request, body []byte) {
+func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request, body []byte, project queries.Project) {
 	var push pushEvent
 	if err := json.Unmarshal(body, &push); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
+
+	// Signature already verified centrally in ServeHTTP.
 
 	branch := strings.TrimPrefix(push.Ref, "refs/heads/")
 	if branch != "main" && branch != "master" {
@@ -349,18 +404,6 @@ func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request, body []byte
 	commit := push.After
 
 	slog.Info("GitHub push received", "repo", repo, "branch", branch, "commit", commit)
-
-	project, err := h.q.ProjectFindByGitHubRepo(r.Context(), repo)
-	if err != nil {
-		slog.Warn("webhook for unknown repo", "repo", repo)
-		http.Error(w, "project not found", http.StatusNotFound)
-		return
-	}
-
-	sig := r.Header.Get("X-Hub-Signature-256")
-	if !enforceSignature(w, body, sig, project.GithubWebhookSecret) {
-		return
-	}
 
 	services, err := h.q.ServiceListByProjectID(r.Context(), project.ID)
 	if err != nil {
@@ -442,35 +485,19 @@ func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request, body []byte
 	})
 }
 
-func (h *Handler) handlePullRequest(w http.ResponseWriter, r *http.Request, body []byte) {
+func (h *Handler) handlePullRequest(w http.ResponseWriter, r *http.Request, body []byte, project queries.Project) {
 	var payload pullRequestEvent
 	if err := json.Unmarshal(body, &payload); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
-	repo := strings.TrimSpace(payload.Repository.FullName)
-	if repo == "" {
-		http.Error(w, "missing repository", http.StatusBadRequest)
-		return
-	}
-
-	project, err := h.q.ProjectFindByGitHubRepo(r.Context(), repo)
-	if err != nil {
-		slog.Warn("webhook PR for unknown repo", "repo", repo)
-		http.Error(w, "project not found", http.StatusNotFound)
-		return
-	}
-
-	sig := r.Header.Get("X-Hub-Signature-256")
-	if !enforceSignature(w, body, sig, project.GithubWebhookSecret) {
-		return
-	}
+	// Signature already verified centrally in ServeHTTP.
 
 	ctx := r.Context()
 	baseDomain := previewBaseDomain(ctx, h.q)
 	if strings.TrimSpace(baseDomain) == "" {
-		slog.Info("GitHub PR webhook ignored (preview_base_domain unset)", "repo", repo, "pr", payload.Number)
+		slog.Info("GitHub PR webhook ignored (preview_base_domain unset)", "repo", payload.Repository.FullName, "pr", payload.Number)
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "preview disabled: set cluster_settings.preview_base_domain")
 		return
