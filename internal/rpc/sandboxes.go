@@ -139,6 +139,10 @@ func normalizeSandboxBaseImageRef(v string) (string, error) {
 	return trimmed, nil
 }
 
+func sandboxDeleteCanBypassReconciler(sb queries.Sandbox) bool {
+	return !sb.VmID.Valid
+}
+
 func resolveSandboxHostGroup(requested string, template *queries.SandboxTemplate) string {
 	if trimmed := strings.TrimSpace(requested); trimmed != "" {
 		return trimmed
@@ -496,6 +500,15 @@ func (a *API) setSandboxDesiredState(w http.ResponseWriter, r *http.Request, sta
 	})
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "sandbox_state", err)
+		return
+	}
+	if state == "deleted" && sandboxDeleteCanBypassReconciler(row) {
+		row, err = a.q.SandboxMarkDeleted(r.Context(), row.ID)
+		if err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "sandbox_state", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, sandboxToOut(row, nil))
 		return
 	}
 	if a.sandboxReconciler != nil {

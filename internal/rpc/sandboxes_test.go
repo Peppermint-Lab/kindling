@@ -3,8 +3,10 @@ package rpc
 import (
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/sandbox"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 func TestNormalizeSandboxAutoSuspendSeconds(t *testing.T) {
@@ -46,4 +48,26 @@ func TestResolveSandboxHostGroup(t *testing.T) {
 	if got := resolveSandboxHostGroup("", nil); got != sandbox.HostGroupLinux {
 		t.Fatalf("resolveSandboxHostGroup default = %q, want %q", got, sandbox.HostGroupLinux)
 	}
+}
+
+func TestSandboxDeleteCanBypassReconciler(t *testing.T) {
+	t.Parallel()
+
+	if !sandboxDeleteCanBypassReconciler(queries.Sandbox{}) {
+		t.Fatal("expected sandbox without vm to bypass reconciler")
+	}
+
+	if sandboxDeleteCanBypassReconciler(queries.Sandbox{
+		VmID: pguuid.ToPgtype(uuidMustParse("11111111-1111-1111-1111-111111111111")),
+	}) {
+		t.Fatal("expected sandbox with vm to require reconciler cleanup")
+	}
+}
+
+func uuidMustParse(raw string) uuid.UUID {
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		panic(err)
+	}
+	return id
 }
