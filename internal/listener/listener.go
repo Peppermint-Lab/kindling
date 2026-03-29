@@ -409,22 +409,40 @@ func (l *Listener) dispatch(ctx context.Context, relationID uint32, tuple *pglog
 		if l.cfg.OnSandboxTemplate != nil {
 			l.cfg.OnSandboxTemplate(ctx, id)
 		}
+	case "preview_environments":
+		// No handler currently registered; changes are silently ignored.
+		// Add OnPreviewEnvironment to Config and a case here when ready.
+	default:
+		slog.Warn("WAL listener: no handler for relation, ignoring", "relation", rel.RelationName)
 	}
 
 	return nil
 }
 
-// extractID finds the "id" column in a tuple and parses it as a UUID.
+// extractID finds the "id" column by name in the relation schema and extracts
+// the UUID value from the corresponding tuple slot. Column order in the WAL
+// tuple is not guaranteed to match the schema definition, so we resolve by
+// name rather than by index.
 func extractID(tuple *pglogrepl.TupleData, rel *pglogrepl.RelationMessageV2) (uuid.UUID, error) {
-	for i, col := range tuple.Columns {
-		if i >= len(rel.Columns) {
-			continue
-		}
-		if rel.Columns[i].Name == "id" && col.Data != nil {
-			return uuid.Parse(string(col.Data))
+	// Build a name→index map from the relation schema (stable order).
+	var idColIdx int = -1
+	for i, col := range rel.Columns {
+		if col.Name == "id" {
+			idColIdx = i
+			break
 		}
 	}
-	return uuid.Nil, fmt.Errorf("id column not found")
+	if idColIdx < 0 {
+		return uuid.Nil, fmt.Errorf("relation %q has no id column", rel.RelationName)
+	}
+	if idColIdx >= len(tuple.Columns) {
+		return uuid.Nil, fmt.Errorf("tuple has fewer columns than relation %q", rel.RelationName)
+	}
+	col := tuple.Columns[idColIdx]
+	if col.Data == nil {
+		return uuid.Nil, fmt.Errorf("id column is null")
+	}
+	return uuid.Parse(string(col.Data))
 }
 
 // replicationURL appends replication=database to a PostgreSQL connection string.

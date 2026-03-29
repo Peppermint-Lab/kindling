@@ -81,14 +81,12 @@ func New(cfg Config) *Scheduler {
 }
 
 // Schedule queues an entity for reconciliation at the given time.
-// If the entity is already scheduled, the earlier time wins.
+// The latest schedule always wins — if an entity is re-scheduled while a
+// reconciliation is already in-flight, the newer time takes precedence.
 func (s *Scheduler) Schedule(id uuid.UUID, at time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if existing, ok := s.schedule[id]; ok && !existing.IsZero() && existing.Before(at) {
-		return // already scheduled earlier
-	}
 	s.schedule[id] = at
 }
 
@@ -128,7 +126,6 @@ func (s *Scheduler) Start(ctx context.Context) {
 
 func (s *Scheduler) dispatchDue() {
 	now := time.Now()
-	var due []uuid.UUID
 
 	s.mu.Lock()
 	for id, at := range s.schedule {
@@ -140,13 +137,16 @@ func (s *Scheduler) dispatchDue() {
 		}
 		s.running[id] = struct{}{}
 		s.schedule[id] = time.Time{} // clear schedule
-		due = append(due, id)
+		select {
+		case s.work <- id:
+			// dispatched
+		default:
+			// work channel full — leave in schedule so next tick picks it up
+			delete(s.running, id)
+			s.schedule[id] = now.Add(time.Second)
+		}
 	}
 	s.mu.Unlock()
-
-	for _, id := range due {
-		s.work <- id
-	}
 }
 
 func (s *Scheduler) worker(ctx context.Context) {
@@ -167,7 +167,7 @@ func (s *Scheduler) worker(ctx context.Context) {
 			s.schedule[id] = time.Now().Add(s.retryAfter)
 		} else {
 			logger.InfoContext(reconcileCtx, "reconcile done")
-			// Only schedule default re-check if reconcile didn't already schedule something
+			// Schedule a re-check if no future schedule was already set.
 			if s.schedule[id].IsZero() {
 				s.schedule[id] = time.Now().Add(s.defaultAfter)
 			}

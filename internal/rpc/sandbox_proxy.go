@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/kindlingvm/kindling/internal/auth"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
 
@@ -25,8 +26,20 @@ const (
 	sandboxProxyClockSkew       = 2 * time.Minute
 )
 
-var sandboxWebsocketUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+// sandboxWebsocketUpgrader returns a websocket.Upgrader configured to validate
+// the Origin header against the API's trusted origin list.
+func (a *API) sandboxWebsocketUpgrader() *websocket.Upgrader {
+	return &websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				// No Origin header (not a browser client) — allow.
+				// Proxy auth is still required below.
+				return true
+			}
+			return auth.OriginMatchesAny(origin, auth.TrustedOrigins(r.Context(), a.q))
+		},
+	}
 }
 
 func (a *API) sandboxProxySecret() string {
@@ -228,7 +241,7 @@ func (a *API) proxySandboxWebsocket(w http.ResponseWriter, r *http.Request, sb q
 		return true
 	}
 	defer remoteConn.Close()
-	localConn, err := sandboxWebsocketUpgrader.Upgrade(w, r, nil)
+	localConn, err := a.sandboxWebsocketUpgrader().Upgrade(w, r, nil)
 	if err != nil {
 		return true
 	}

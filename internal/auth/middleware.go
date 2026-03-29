@@ -78,10 +78,10 @@ func requestHasTrustedOrigin(r *http.Request, allow []string) bool {
 	}
 	target := requestTargetOrigin(r)
 	if origin := r.Header.Get("Origin"); strings.TrimSpace(origin) != "" {
-		return originMatchesTarget(origin, target) || originMatchesAny(origin, allow) || loopbackOriginAllowed(r, origin)
+		return originMatchesTarget(origin, target) || OriginMatchesAny(origin, allow) || loopbackOriginAllowed(r, origin)
 	}
 	if referer := r.Header.Get("Referer"); strings.TrimSpace(referer) != "" {
-		return originMatchesTarget(referer, target) || originMatchesAny(referer, allow) || loopbackOriginAllowed(r, referer)
+		return originMatchesTarget(referer, target) || OriginMatchesAny(referer, allow) || loopbackOriginAllowed(r, referer)
 	}
 	return false
 }

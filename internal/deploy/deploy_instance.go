@@ -383,6 +383,7 @@ func (d *Deployer) startNewInstance(
 			AttachedVmID: pguuid.ToPgtype(vmID),
 		}); err != nil {
 			_ = d.rt.Stop(ctx, instID)
+			_ = d.q.VMSoftDelete(ctx, pguuid.ToPgtype(vmID))
 			_, _ = d.q.DeploymentInstanceUpdateStatus(ctx, queries.DeploymentInstanceUpdateStatusParams{
 				ID:     inst.ID,
 				Status: "failed",

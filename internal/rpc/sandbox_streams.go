@@ -54,7 +54,7 @@ func (a *API) sandboxShellWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer stream.Close()
 
-	ws, err := sandboxWebsocketUpgrader.Upgrade(w, r, nil)
+	ws, err := a.sandboxWebsocketUpgrader().Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
@@ -145,7 +145,7 @@ func (a *API) sandboxSSHWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer stream.Close()
 
-	ws, err := sandboxWebsocketUpgrader.Upgrade(w, r, nil)
+	ws, err := a.sandboxWebsocketUpgrader().Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}

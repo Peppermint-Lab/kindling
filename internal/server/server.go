@@ -158,11 +158,14 @@ func (s *Server) RunHeartbeat(ctx context.Context) {
 // When acquired, it runs cluster-wide duties until the connection drops or
 // ctx is cancelled. Blocks until ctx is cancelled.
 func (s *Server) RunLeaderElection(ctx context.Context) {
+	ticker := time.NewTicker(leaderRetryInterval)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(leaderRetryInterval):
+		case <-ticker.C:
 			s.tryBecomeLeader(ctx)
 		}
 	}

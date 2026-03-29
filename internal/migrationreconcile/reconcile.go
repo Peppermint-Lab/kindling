@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/netip"
 	"net/url"
@@ -59,6 +60,17 @@ func (h *Handler) Reconcile(ctx context.Context, migrationID uuid.UUID) error {
 		if uuid.UUID(mig.SourceServerID.Bytes) == h.serverID {
 			return h.sendFromSource(ctx, mig, instanceID)
 		}
+	case "sending":
+		// Migration is in progress from source side. If the deadline has passed
+		// without reaching "received", abort and fall back.
+		if mig.CutoverDeadlineAt.Valid && time.Now().After(mig.CutoverDeadlineAt.Time) {
+			if err := h.abortMigrationFromSource(ctx, mig); err != nil {
+				return fmt.Errorf("abort timed-out migration: %w", err)
+			}
+			return nil
+		}
+		// Otherwise, let it continue — next tick will advance if SendMigration completed.
+		return nil
 	case "received":
 		if uuid.UUID(mig.DestinationServerID.Bytes) == h.serverID {
 			return h.commitOnDestination(ctx, mig, instanceID)
@@ -79,11 +91,13 @@ func (h *Handler) Reconcile(ctx context.Context, migrationID uuid.UUID) error {
 
 func (h *Handler) prepareDestination(ctx context.Context, mig queries.InstanceMigration, instanceID uuid.UUID) error {
 	if h.rt == nil || !h.rt.Supports(runtime.CapabilityLiveMigration) {
-		_, _ = h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
+		if _, err := h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
 			ID:             mig.ID,
 			FailureCode:    "unsupported_runtime",
 			FailureMessage: "live migration is not supported on this destination runtime",
-		})
+		}); err != nil {
+			return fmt.Errorf("persist failure (unsupported_runtime): %w", err)
+		}
 		return nil
 	}
 	server, err := h.q.ServerFindByID(ctx, mig.DestinationServerID)
@@ -91,38 +105,46 @@ func (h *Handler) prepareDestination(ctx context.Context, mig queries.InstanceMi
 		return fmt.Errorf("fetch destination server: %w", err)
 	}
 	if server.Status != "active" {
-		_, _ = h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
+		if _, err := h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
 			ID:             mig.ID,
 			FailureCode:    "destination_inactive",
 			FailureMessage: "destination server is not active",
-		})
+		}); err != nil {
+			return fmt.Errorf("persist failure (destination_inactive): %w", err)
+		}
 		return nil
 	}
 	if ip := strings.TrimSpace(server.InternalIp); ip == "" || ip == "127.0.0.1" || ip == "0.0.0.0" {
-		_, _ = h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
+		if _, err := h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
 			ID:             mig.ID,
 			FailureCode:    "destination_internal_ip",
 			FailureMessage: "destination server has no usable internal IP for live migration",
-		})
+		}); err != nil {
+			return fmt.Errorf("persist failure (destination_internal_ip): %w", err)
+		}
 		return nil
 	}
 	prepared, err := h.rt.PrepareMigrationTarget(ctx, instanceID)
 	if err != nil {
-		_, _ = h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
+		if _, err := h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
 			ID:             mig.ID,
 			FailureCode:    "destination_prepare",
 			FailureMessage: err.Error(),
-		})
+		}); err != nil {
+			return fmt.Errorf("persist failure (destination_prepare): %w", err)
+		}
 		return nil
 	}
 	_, portStr, err := net.SplitHostPort(prepared.ReceiveAddr)
 	if err != nil {
 		_ = h.rt.AbortMigrationTarget(ctx, instanceID)
-		_, _ = h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
+		if _, err := h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
 			ID:             mig.ID,
 			FailureCode:    "destination_prepare",
 			FailureMessage: fmt.Sprintf("invalid prepared receive address %q", prepared.ReceiveAddr),
-		})
+		}); err != nil {
+			return fmt.Errorf("persist failure (invalid receive addr): %w", err)
+		}
 		return nil
 	}
 	receiveAddr := net.JoinHostPort(strings.TrimSpace(server.InternalIp), portStr)
@@ -133,6 +155,29 @@ func (h *Handler) prepareDestination(ctx context.Context, mig queries.InstanceMi
 	})
 	if err != nil {
 		return fmt.Errorf("update migration prepared state: %w", err)
+	}
+	return nil
+}
+
+// abortMigrationFromSource marks a timed-out migration as aborted on the source side
+// and triggers fallback evacuation on the destination. The source VM continues running
+// normally — no runtime-level abort is needed since the migration was never finalized.
+func (h *Handler) abortMigrationFromSource(ctx context.Context, mig queries.InstanceMigration) error {
+	_, err := h.q.InstanceMigrationUpdateAborted(ctx, queries.InstanceMigrationUpdateAbortedParams{
+		ID:             mig.ID,
+		FailureCode:    "cutover_timeout",
+		FailureMessage: "migration did not complete within cutover deadline",
+	})
+	if err != nil {
+		return fmt.Errorf("persist migration abort: %w", err)
+	}
+	_, err = h.q.InstanceMigrationUpdateFallbackEvacuating(ctx, queries.InstanceMigrationUpdateFallbackEvacuatingParams{
+		ID:             mig.ID,
+		FailureCode:    "cutover_timeout",
+		FailureMessage: "migration did not complete within cutover deadline",
+	})
+	if err != nil {
+		return fmt.Errorf("persist fallback evacuation: %w", err)
 	}
 	return nil
 }
@@ -150,11 +195,13 @@ func (h *Handler) sendFromSource(ctx context.Context, mig queries.InstanceMigrat
 		return fmt.Errorf("fetch deployment: %w", err)
 	}
 	if _, err := h.q.ProjectVolumeFindByProjectID(ctx, dep.ProjectID); err == nil {
-		_, _ = h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
+		if _, err := h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
 			ID:             mig.ID,
 			FailureCode:    "unsupported_volume",
 			FailureMessage: "live migration does not support workloads with persistent volumes yet",
-		})
+		}); err != nil {
+			return fmt.Errorf("persist failure (unsupported_volume): %w", err)
+		}
 		return nil
 	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("check project volume: %w", err)
@@ -164,20 +211,24 @@ func (h *Handler) sendFromSource(ctx context.Context, mig queries.InstanceMigrat
 		return fmt.Errorf("fetch source VM: %w", err)
 	}
 	if strings.TrimSpace(vm.SharedRootfsRef) == "" {
-		_, _ = h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
+		if _, err := h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
 			ID:             mig.ID,
 			FailureCode:    "shared_rootfs_missing",
 			FailureMessage: "source VM is missing a shared rootfs reference",
-		})
+		}); err != nil {
+			return fmt.Errorf("persist failure (shared_rootfs_missing): %w", err)
+		}
 		return nil
 	}
 	sourceMeta, err := h.rt.MigrationMetadata(ctx, instanceID)
 	if err != nil {
-		_, _ = h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
+		if _, err := h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
 			ID:             mig.ID,
 			FailureCode:    "source_metadata",
 			FailureMessage: err.Error(),
-		})
+		}); err != nil {
+			return fmt.Errorf("persist failure (source_metadata): %w", err)
+		}
 		return nil
 	}
 	destinationStatus, err := h.q.ServerComponentStatusFindByServerID(ctx, mig.DestinationServerID)
@@ -186,43 +237,54 @@ func (h *Handler) sendFromSource(ctx context.Context, mig queries.InstanceMigrat
 	}
 	destinationMeta, err := liveMigrationWorkerMetadataFromStatuses(destinationStatus)
 	if err != nil {
-		_, _ = h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
+		if _, err := h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
 			ID:             mig.ID,
 			FailureCode:    "destination_runtime",
 			FailureMessage: err.Error(),
-		})
+		}); err != nil {
+			return fmt.Errorf("persist failure (destination_runtime): %w", err)
+		}
 		return nil
 	}
 	if destinationMeta.Runtime != "cloud-hypervisor" {
-		_, _ = h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
+		if _, err := h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
 			ID:             mig.ID,
 			FailureCode:    "destination_runtime",
 			FailureMessage: "destination server worker runtime is not cloud-hypervisor",
-		})
+		}); err != nil {
+			return fmt.Errorf("persist failure (runtime check): %w", err)
+		}
 		return nil
 	}
 	if !destinationMeta.LiveMigrationEnabled {
-		_, _ = h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
+		if _, err := h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
 			ID:             mig.ID,
 			FailureCode:    "destination_runtime",
 			FailureMessage: "destination server worker does not advertise live migration support",
-		})
+		}); err != nil {
+			return fmt.Errorf("persist failure (lm disabled): %w", err)
+		}
 		return nil
 	}
 	if destinationMeta.SharedRootfsDir == "" {
-		_, _ = h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
+		if _, err := h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
 			ID:             mig.ID,
 			FailureCode:    "destination_runtime",
 			FailureMessage: "destination server worker does not advertise shared rootfs storage",
-		})
+		}); err != nil {
+			return fmt.Errorf("persist failure (shared_rootfs): %w", err)
+		}
 		return nil
 	}
+	// Version check: both sides must agree, or both must be unset.
 	if sourceMeta.Version != "" && destinationMeta.CloudHypervisorVersion != "" && sourceMeta.Version != destinationMeta.CloudHypervisorVersion {
-		_, _ = h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
+		if _, err := h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
 			ID:             mig.ID,
 			FailureCode:    "version_mismatch",
 			FailureMessage: fmt.Sprintf("destination cloud-hypervisor version %q does not match source %q", destinationMeta.CloudHypervisorVersion, sourceMeta.Version),
-		})
+		}); err != nil {
+			return fmt.Errorf("persist failure (version_mismatch): %w", err)
+		}
 		return nil
 	}
 	if _, err := h.q.InstanceMigrationUpdateSending(ctx, mig.ID); err != nil {
@@ -234,11 +296,13 @@ func (h *Handler) sendFromSource(ctx context.Context, mig queries.InstanceMigrat
 		TimeoutSeconds: 3600,
 	})
 	if err != nil {
-		_, _ = h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
+		if _, err := h.q.InstanceMigrationUpdateFailed(ctx, queries.InstanceMigrationUpdateFailedParams{
 			ID:             mig.ID,
 			FailureCode:    "send_failed",
 			FailureMessage: err.Error(),
-		})
+		}); err != nil {
+			return fmt.Errorf("persist failure (send_failed): %w", err)
+		}
 		return nil
 	}
 	if _, err := h.q.InstanceMigrationUpdateReceived(ctx, mig.ID); err != nil {
@@ -322,6 +386,10 @@ func (h *Handler) commitOnDestination(ctx context.Context, mig queries.InstanceM
 		return fmt.Errorf("update migration completed: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
+		// DB commit failed but VM is running in runtime — stop it to avoid orphan.
+		if stopErr := h.rt.Stop(ctx, instanceID); stopErr != nil {
+			slog.Error("failed to stop orphaned VM after commit failure", "instance_id", instanceID, "vm_id", newVMID, "commit_err", err, "stop_err", stopErr)
+		}
 		return fmt.Errorf("commit migration transaction: %w", err)
 	}
 	if h.notifyRoute != nil {

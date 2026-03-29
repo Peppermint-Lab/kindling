@@ -42,7 +42,6 @@ func TrustedOrigins(ctx context.Context, q *queries.Queries) []string {
 	if v, err := q.ClusterSettingGet(ctx, settings.ClusterSettingKeyDashboardPublicHost); err == nil {
 		if host := settings.NormalizeDashboardPublicHost(v); host != "" {
 			add("https://" + host)
-			add("http://" + host)
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return out
@@ -55,7 +54,8 @@ func TrustedOrigins(ctx context.Context, q *queries.Queries) []string {
 	return out
 }
 
-func originMatchesAny(raw string, allow []string) bool {
+// OriginMatchesAny reports whether raw matches any entry in allow.
+func OriginMatchesAny(raw string, allow []string) bool {
 	for _, target := range allow {
 		if originMatchesTarget(raw, target) {
 			return true

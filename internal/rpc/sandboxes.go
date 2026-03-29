@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -185,17 +186,43 @@ func (a *API) listSandboxes(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+
+	limit := int32(50)
+	if q := r.URL.Query().Get("limit"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n > 0 && n <= 200 {
+			limit = int32(n)
+		}
+	}
+	offset := int32(0)
+	if q := r.URL.Query().Get("offset"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n >= 0 {
+			offset = int32(n)
+		}
+	}
+
 	rows, err := a.q.SandboxListByOrg(r.Context(), p.OrganizationID)
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "list_sandboxes", err)
 		return
 	}
-	out := make([]sandboxOut, 0, len(rows))
-	for _, row := range rows {
+
+	total := int32(len(rows))
+	if offset >= total {
+		writeJSON(w, http.StatusOK, map[string]any{"items": []sandboxOut{}, "total": total, "limit": limit, "offset": offset})
+		return
+	}
+
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+
+	out := make([]sandboxOut, 0, end-offset)
+	for _, row := range rows[offset:end] {
 		ports, _ := a.q.SandboxPublishedPortsBySandboxID(r.Context(), row.ID)
 		out = append(out, sandboxToOut(row, ports))
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, map[string]any{"items": out, "total": total, "limit": limit, "offset": offset})
 }
 
 func (a *API) createSandbox(w http.ResponseWriter, r *http.Request) {

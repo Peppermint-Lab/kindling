@@ -408,6 +408,10 @@ func (a *API) authLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) authSwitchOrg(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequestHasTrustedOrigin(r, auth.TrustedOrigins(r.Context(), a.q)) {
+		writeAPIError(w, http.StatusForbidden, "csrf_forbidden", "request origin is not allowed")
+		return
+	}
 	p, ok := mustPrincipal(w, r)
 	if !ok {
 		return
@@ -471,6 +475,10 @@ func (a *API) authSwitchOrg(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) authChangePassword(w http.ResponseWriter, r *http.Request) {
+	if !auth.RequestHasTrustedOrigin(r, auth.TrustedOrigins(r.Context(), a.q)) {
+		writeAPIError(w, http.StatusForbidden, "csrf_forbidden", "request origin is not allowed")
+		return
+	}
 	p, ok := mustPrincipal(w, r)
 	if !ok {
 		return
