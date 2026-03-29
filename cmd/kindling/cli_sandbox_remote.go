@@ -38,6 +38,7 @@ func cliSandboxRemoteCmd() *cobra.Command {
 	cmd.AddCommand(cliSandboxListCmd())
 	cmd.AddCommand(cliSandboxGetCmd())
 	cmd.AddCommand(cliSandboxCreateCmd())
+	cmd.AddCommand(cliSandboxUpdateCmd())
 	cmd.AddCommand(cliSandboxDeleteCmd())
 	cmd.AddCommand(cliSandboxStartCmd())
 	cmd.AddCommand(cliSandboxStopCmd())
@@ -165,10 +166,45 @@ func cliSandboxCreateCmd() *cobra.Command {
 	cmd.Flags().Int32Var(&vcpu, "vcpu", 2, "vCPU count")
 	cmd.Flags().Int32Var(&memoryMB, "memory-mb", 2048, "Memory in MB")
 	cmd.Flags().Int32Var(&diskGB, "disk-gb", 10, "Disk size in GB")
-	cmd.Flags().Int64Var(&autoSuspend, "auto-suspend-seconds", 900, "Idle auto-suspend timeout in seconds")
+	cmd.Flags().Int64Var(&autoSuspend, "auto-suspend-seconds", 0, "Idle auto-suspend timeout in seconds (0 disables auto-suspend)")
 	cmd.Flags().Int32Var(&port, "port", 0, "Published HTTP port")
 	cmd.Flags().StringVar(&expiresAt, "expires-at", "", "Optional RFC3339 expiry time")
 	cmd.Flags().BoolVar(&startStopped, "stopped", false, "Create the sandbox in stopped state")
+	return cmd
+}
+
+func cliSandboxUpdateCmd() *cobra.Command {
+	var sandboxID string
+	var autoSuspend int64
+	cmd := &cobra.Command{
+		Use:   "update",
+		Short: "Update sandbox settings (org admin)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := strings.TrimSpace(sandboxID)
+			if id == "" {
+				return fmt.Errorf("--sandbox is required")
+			}
+			if _, err := uuid.Parse(id); err != nil {
+				return fmt.Errorf("invalid sandbox id: %w", err)
+			}
+			if autoSuspend < 0 {
+				return fmt.Errorf("--auto-suspend-seconds must be >= 0")
+			}
+			c, err := mustRemoteClient()
+			if err != nil {
+				return fmt.Errorf("create client: %w", err)
+			}
+			var out map[string]any
+			if err := c.DoJSON(cmd.Context(), http.MethodPatch, "/api/sandboxes/"+id, map[string]any{
+				"auto_suspend_seconds": autoSuspend,
+			}, &out); err != nil {
+				return fmt.Errorf("update sandbox: %w", err)
+			}
+			return printRemote(out)
+		},
+	}
+	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
+	cmd.Flags().Int64Var(&autoSuspend, "auto-suspend-seconds", 0, "Idle auto-suspend timeout in seconds (0 disables auto-suspend)")
 	return cmd
 }
 
