@@ -29,6 +29,7 @@ func (a *API) registerAuthRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auth/login", a.authLogin)
 	mux.HandleFunc("POST /api/auth/logout", a.authLogout)
 	mux.HandleFunc("POST /api/auth/switch-org", a.authSwitchOrg)
+	mux.HandleFunc("PUT /api/auth/password", a.authChangePassword)
 	a.registerExternalAuthRoutes(mux)
 }
 
@@ -467,4 +468,86 @@ func (a *API) authSwitchOrg(w http.ResponseWriter, r *http.Request) {
 		allOrgs = []queries.Organization{orgRow}
 	}
 	writeJSON(w, http.StatusOK, a.authSuccessPayload(r.Context(), uRow, orgRow, mem.Role, allOrgs))
+}
+
+func (a *API) authChangePassword(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
+		return
+	}
+	if req.CurrentPassword == "" || req.NewPassword == "" {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", "current_password and new_password are required")
+		return
+	}
+	if len(req.NewPassword) < 8 {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", "new password must be at least 8 characters")
+		return
+	}
+
+	u, err := a.q.UserByID(r.Context(), auth.PgUUID(p.UserID))
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "user_lookup", err)
+		return
+	}
+	if !auth.CheckPassword(u.PasswordHash, req.CurrentPassword) {
+		writeAPIError(w, http.StatusUnauthorized, "invalid_credentials", "current password is incorrect")
+		return
+	}
+
+	newHash, err := auth.HashPassword(req.NewPassword)
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "hash_password", err)
+		return
+	}
+
+	if err := a.q.UserUpdatePasswordHash(r.Context(), queries.UserUpdatePasswordHashParams{
+		ID:           auth.PgUUID(p.UserID),
+		PasswordHash: newHash,
+	}); err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_password", err)
+		return
+	}
+
+	// Extract the current session's token hash from the cookie so we can
+	// preserve this session while revoking all others.
+	currentTokenHash := sessionTokenHashFromRequest(r)
+	if currentTokenHash != nil {
+		if err := a.q.UserSessionDeleteOthersByTokenHash(r.Context(), queries.UserSessionDeleteOthersByTokenHashParams{
+			UserID:    auth.PgUUID(p.UserID),
+			TokenHash: currentTokenHash,
+		}); err != nil {
+			slog.Warn("failed to revoke other sessions after password change", "error", err, "user_id", p.UserID)
+		}
+	} else {
+		// Fallback: cannot identify current session token, revoke all sessions.
+		if err := a.q.UserSessionDeleteAllForUser(r.Context(), auth.PgUUID(p.UserID)); err != nil {
+			slog.Warn("failed to revoke sessions after password change", "error", err, "user_id", p.UserID)
+		}
+	}
+
+	slog.Info("password changed, other sessions revoked", "user_id", p.UserID)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// sessionTokenHashFromRequest extracts the SHA-256 hash of the session token
+// from the request cookie. Returns nil if the cookie is missing or invalid.
+func sessionTokenHashFromRequest(r *http.Request) []byte {
+	cookie, err := r.Cookie(auth.SessionCookieName)
+	if err != nil || cookie.Value == "" {
+		return nil
+	}
+	raw, err := hex.DecodeString(strings.TrimSpace(cookie.Value))
+	if err != nil || len(raw) != auth.SessionTokenBytes {
+		return nil
+	}
+	return auth.HashSessionToken(raw)
 }

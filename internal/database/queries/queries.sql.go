@@ -10201,6 +10201,21 @@ func (q *Queries) UserSessionDeleteAllForUser(ctx context.Context, userID pgtype
 	return err
 }
 
+const userSessionDeleteOthersByTokenHash = `-- name: UserSessionDeleteOthersByTokenHash :exec
+DELETE FROM user_sessions
+WHERE user_id = $1 AND token_hash != $2
+`
+
+type UserSessionDeleteOthersByTokenHashParams struct {
+	UserID    pgtype.UUID `json:"user_id"`
+	TokenHash []byte      `json:"token_hash"`
+}
+
+func (q *Queries) UserSessionDeleteOthersByTokenHash(ctx context.Context, arg UserSessionDeleteOthersByTokenHashParams) error {
+	_, err := q.db.Exec(ctx, userSessionDeleteOthersByTokenHash, arg.UserID, arg.TokenHash)
+	return err
+}
+
 const userSessionUpdateCurrentOrg = `-- name: UserSessionUpdateCurrentOrg :one
 UPDATE user_sessions
 SET current_organization_id = $2

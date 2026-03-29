@@ -1949,6 +1949,10 @@ DELETE FROM user_sessions WHERE id = $1;
 -- name: UserSessionDeleteAllForUser :exec
 DELETE FROM user_sessions WHERE user_id = $1;
 
+-- name: UserSessionDeleteOthersByTokenHash :exec
+DELETE FROM user_sessions
+WHERE user_id = $1 AND token_hash != $2;
+
 -- name: UserSessionUpdateCurrentOrg :one
 UPDATE user_sessions
 SET current_organization_id = $2
