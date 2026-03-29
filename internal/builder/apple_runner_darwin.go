@@ -110,8 +110,29 @@ func (r *AppleVZBuildRunner) BuildAndPush(ctx context.Context, run BuildRun) err
 		run.LogLine("OCI build completed")
 		run.LogLine("Pushing image to registry...")
 	}
-	creds := run.RegistryUsername + ":" + run.RegistryPassword
-	push := append([]string{"buildah"}, oci.BuildahPushArgs(run.ImageRef, creds)...)
+	// Write a temporary Docker-format authfile to the shared workspace so the guest
+	// can read it via the VirtIO mount. The file is created with 0600 permissions
+	// and removed after the push completes to avoid leaking credentials on disk.
+	auth := &oci.Auth{Username: run.RegistryUsername, Password: run.RegistryPassword}
+	authFilePath, err := oci.WriteAuthFile(run.ImageRef, auth)
+	if err != nil {
+		return fmt.Errorf("create auth file for push: %w", err)
+	}
+	defer os.Remove(authFilePath)
+
+	// Copy the authfile into the workspace so the guest can access it via the VirtIO mount.
+	guestAuthPath := "/workspace/.kindling-push-auth.json"
+	hostAuthDest := filepath.Join(ws, ".kindling-push-auth.json")
+	authData, err := os.ReadFile(authFilePath)
+	if err != nil {
+		return fmt.Errorf("read auth file: %w", err)
+	}
+	if err := os.WriteFile(hostAuthDest, authData, 0o600); err != nil {
+		return fmt.Errorf("write auth file to workspace: %w", err)
+	}
+	defer os.Remove(hostAuthDest)
+
+	push := append([]string{"buildah"}, oci.BuildahPushArgs(run.ImageRef, guestAuthPath)...)
 	code, err = vm.Exec(ctx, push, "/workspace", env, run.LogLine)
 	if err != nil {
 		return fmt.Errorf("exec buildah push: %w", err)

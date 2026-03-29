@@ -122,9 +122,20 @@ func skopeoCopy(ctx context.Context, src, dest string, useSrcAuth bool, auth *Au
 			args = append(args, "--override-arch", "amd64")
 		}
 	}
+
+	// Pass registry credentials via a temporary authfile (mode 0600) instead of
+	// --src-creds so they are never visible in /proc/<pid>/cmdline.
+	var authFilePath string
 	if useSrcAuth && auth != nil && auth.Username != "" {
-		args = append(args, "--src-creds", auth.Username+":"+auth.Password)
+		af, err := WriteAuthFile(src, auth)
+		if err != nil {
+			return fmt.Errorf("create auth file: %w", err)
+		}
+		defer os.Remove(af)
+		authFilePath = af
+		args = append(args, "--authfile", authFilePath)
 	}
+
 	args = append(args, src, dest)
 	// Rootless skopeo needs the same user namespace as buildah (see `buildah unshare`); otherwise
 	// `containers-storage:` reads fail with "Error during unshare(...): Operation not permitted".
@@ -140,7 +151,7 @@ func skopeoCopy(ctx context.Context, src, dest string, useSrcAuth bool, auth *Au
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s: %w", string(out), err)
+		return fmt.Errorf("%s: %w", redactCredentials(string(out), auth), err)
 	}
 	return nil
 }
@@ -226,17 +237,23 @@ func BuildDockerfileWithOpts(ctx context.Context, engine BuildEngine, buildDir, 
 }
 
 // PushImage pushes a local tag to docker://imageRef using registry credentials when set.
+// Credentials are passed via a temporary authfile (mode 0600) instead of CLI arguments.
 func PushImage(ctx context.Context, engine BuildEngine, imageRef string, auth *Auth) error {
 	switch engine {
 	case EngineBuildah:
-		creds := ""
+		var authFilePath string
 		if auth != nil && auth.Username != "" {
-			creds = auth.Username + ":" + auth.Password
+			af, err := WriteAuthFile(imageRef, auth)
+			if err != nil {
+				return fmt.Errorf("create auth file for push: %w", err)
+			}
+			defer os.Remove(af)
+			authFilePath = af
 		}
-		args := BuildahPushArgs(imageRef, creds)
+		args := BuildahPushArgs(imageRef, authFilePath)
 		out, err := exec.CommandContext(ctx, "buildah", args...).CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("buildah push: %s: %w", string(out), err)
+			return fmt.Errorf("buildah push: %s: %w", redactCredentials(string(out), auth), err)
 		}
 		return nil
 	default:

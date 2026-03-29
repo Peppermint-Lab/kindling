@@ -11,11 +11,12 @@ func BuildahBudArgs(imageRef, dockerfilePath string, localLayerCache bool) []str
 	return args
 }
 
-// BuildahPushArgs returns argv slice for buildah push (after the binary name): args..., imageRef, docker://imageRef
-func BuildahPushArgs(imageRef string, creds string) []string {
+// BuildahPushArgs returns argv slice for buildah push (after the binary name): args..., imageRef, docker://imageRef.
+// When authFilePath is non-empty, --authfile is used instead of passing credentials on the command line.
+func BuildahPushArgs(imageRef string, authFilePath string) []string {
 	args := []string{"push"}
-	if creds != "" {
-		args = append(args, "--creds", creds)
+	if authFilePath != "" {
+		args = append(args, "--authfile", authFilePath)
 	}
 	args = append(args, imageRef, "docker://"+imageRef)
 	return args
