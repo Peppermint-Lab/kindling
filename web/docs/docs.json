@@ -1,6 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "name": "Kindling",
+  "theme": "maple",
   "description": "Self-hosted PaaS on microVMs. Push code, get production.",
   "logo": {
     "light": "/images/logo-light.svg",
@@ -12,49 +13,51 @@
     "light": "#f97316",
     "dark": "#fb923c"
   },
-  "navigation": [
-    {
-      "group": "Getting Started",
-      "pages": [
-        "index",
-        "getting-started/overview",
-        "getting-started/linux",
-        "getting-started/first-deploy"
-      ]
-    },
-    {
-      "group": "Guides",
-      "pages": [
-        "guides/projects-and-services",
-        "guides/deployments-and-previews",
-        "guides/domains-and-routing",
-        "guides/secrets-and-volumes"
-      ]
-    },
-    {
-      "group": "Operate",
-      "pages": [
-        "operate/production-setup",
-        "operate/topology-and-hostnames",
-        "operate/server-drain",
-        "operate/troubleshooting"
-      ]
-    },
-    {
-      "group": "Reference",
-      "pages": [
-        "reference/cli",
-        "reference/api-overview",
-        "reference/configuration"
-      ]
-    },
-    {
-      "group": "Concepts",
-      "pages": [
-        "concepts/architecture",
-        "concepts/reconcilers",
-        "concepts/runtimes"
-      ]
-    }
-  ]
+  "navigation": {
+    "groups": [
+      {
+        "group": "Getting Started",
+        "pages": [
+          "index",
+          "getting-started/overview",
+          "getting-started/linux",
+          "getting-started/first-deploy"
+        ]
+      },
+      {
+        "group": "Guides",
+        "pages": [
+          "guides/projects-and-services",
+          "guides/deployments-and-previews",
+          "guides/domains-and-routing",
+          "guides/secrets-and-volumes"
+        ]
+      },
+      {
+        "group": "Operate",
+        "pages": [
+          "operate/production-setup",
+          "operate/topology-and-hostnames",
+          "operate/server-drain",
+          "operate/troubleshooting"
+        ]
+      },
+      {
+        "group": "Reference",
+        "pages": [
+          "reference/cli",
+          "reference/api-overview",
+          "reference/configuration"
+        ]
+      },
+      {
+        "group": "Concepts",
+        "pages": [
+          "concepts/architecture",
+          "concepts/reconcilers",
+          "concepts/runtimes"
+        ]
+      }
+    ]
+  }
 }

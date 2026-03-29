@@ -1,6 +1,11 @@
 package rpc
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/sandbox"
+)
 
 func TestNormalizeSandboxAutoSuspendSeconds(t *testing.T) {
 	t.Parallel()
@@ -24,5 +29,21 @@ func TestNormalizeSandboxBaseImageRef(t *testing.T) {
 	}
 	if _, err := normalizeSandboxBaseImageRef("   "); err == nil {
 		t.Fatal("expected empty image ref to fail")
+	}
+}
+
+func TestResolveSandboxHostGroup(t *testing.T) {
+	t.Parallel()
+
+	tpl := &queries.SandboxTemplate{HostGroup: sandbox.HostGroupMac}
+
+	if got := resolveSandboxHostGroup("linux-sandbox", tpl); got != sandbox.HostGroupLinux {
+		t.Fatalf("resolveSandboxHostGroup explicit = %q, want %q", got, sandbox.HostGroupLinux)
+	}
+	if got := resolveSandboxHostGroup("", tpl); got != sandbox.HostGroupMac {
+		t.Fatalf("resolveSandboxHostGroup template = %q, want %q", got, sandbox.HostGroupMac)
+	}
+	if got := resolveSandboxHostGroup("", nil); got != sandbox.HostGroupLinux {
+		t.Fatalf("resolveSandboxHostGroup default = %q, want %q", got, sandbox.HostGroupLinux)
 	}
 }

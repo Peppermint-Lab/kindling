@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { SandboxTerminal } from "@/components/sandbox-terminal"
+import { sandboxImageContract } from "@/lib/sandbox-catalog"
 
 async function copyText(label: string, text: string) {
   try {
@@ -47,29 +48,6 @@ function compactSSHKey(publicKey: string): string {
   return `${parts[0]} ${body.slice(0, 16)}...${body.slice(-8)}`
 }
 
-function sandboxImageContract(baseImageRef: string) {
-  const ref = baseImageRef.toLowerCase()
-  if (ref.includes("distroless") || ref.includes("scratch") || ref.includes("busybox")) {
-    return {
-      tone: "caution" as const,
-      title: "Minimal image",
-      description: "Shell, SSH, and guest tooling are unlikely to be present by default. Expect to add them yourself or switch to a fuller base image.",
-    }
-  }
-  if (ref.includes("alpine")) {
-    return {
-      tone: "caution" as const,
-      title: "Lightweight image",
-      description: "Alpine works well, but SSH still depends on installing and starting OpenSSH inside the image.",
-    }
-  }
-  return {
-    tone: "ready" as const,
-    title: "General-purpose image",
-    description: "This is a better fit for interactive sandboxing, but Kindling still expects /bin/sh and benefits from sshd + ssh-keygen.",
-  }
-}
-
 export function SandboxDetailPage() {
   const navigate = useNavigate()
   const { id = "" } = useParams()
@@ -85,17 +63,19 @@ export function SandboxDetailPage() {
   const [diskGb, setDiskGb] = useState("10")
   const [autoSuspendEnabled, setAutoSuspendEnabled] = useState(false)
   const [autoSuspendSeconds, setAutoSuspendSeconds] = useState("900")
+  const [templateName, setTemplateName] = useState("")
+  const [notice, setNotice] = useState<string | null>(null)
   const [sshFingerprint, setSSHFingerprint] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const load = async () => {
     setError(null)
     try {
-      const [sandboxValue, logsValue, statsValue, eventsValue] = await Promise.all([
-        api.getSandbox(id),
-        api.getSandboxLogs(id),
-        api.getSandboxStats(id),
-        api.getSandboxAccessEvents(id),
+      const sandboxValue = await api.getSandbox(id)
+      const [logsValue, statsValue, eventsValue] = await Promise.all([
+        api.getSandboxLogs(id).catch(() => []),
+        api.getSandboxStats(id).catch(() => null),
+        api.getSandboxAccessEvents(id).catch(() => []),
       ])
       setSandbox(sandboxValue)
       setLogs(logsValue)
@@ -110,6 +90,7 @@ export function SandboxDetailPage() {
       setDiskGb(String(sandboxValue.disk_gb))
       setAutoSuspendEnabled(sandboxValue.auto_suspend_seconds > 0)
       setAutoSuspendSeconds(String(sandboxValue.auto_suspend_seconds > 0 ? sandboxValue.auto_suspend_seconds : 900))
+      setTemplateName(`${sandboxValue.name}-template`)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load sandbox")
     }
@@ -168,6 +149,12 @@ export function SandboxDetailPage() {
       {error ? (
         <Card>
           <CardContent className="pt-6 text-sm text-destructive">{error}</CardContent>
+        </Card>
+      ) : null}
+
+      {notice ? (
+        <Card>
+          <CardContent className="pt-6 text-sm text-foreground">{notice}</CardContent>
         </Card>
       ) : null}
 
@@ -277,6 +264,44 @@ export function SandboxDetailPage() {
             }}
           >
             Save Lifecycle
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Templates</CardTitle>
+          <CardDescription>Capture this sandbox into a reusable template. Kindling will stop it if needed, snapshot it, then make it available from the Sandboxes page.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
+          <div className="space-y-2">
+            <Label htmlFor="sandbox-template-name">Template Name</Label>
+            <Input
+              id="sandbox-template-name"
+              value={templateName}
+              onChange={(e) => setTemplateName(e.target.value)}
+              placeholder={`${sandbox.name}-template`}
+            />
+            <p className="text-xs text-muted-foreground">
+              {sandbox.observed_state === "running"
+                ? "The sandbox is running now, so capture will stop it before creating the snapshot."
+                : "Stopped sandboxes usually become ready faster because they can be snapshotted immediately."}
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setError(null)
+              setNotice(null)
+              void api.createSandboxTemplate(id, { name: templateName.trim() || undefined }).then((template) => {
+                setNotice(`Template capture started for ${template.name}. It will show up on the Sandboxes page as it moves to ready.`)
+                void load()
+              }).catch((err: unknown) => {
+                setError(err instanceof Error ? err.message : "Failed to start template capture")
+              })
+            }}
+          >
+            Capture Template
           </Button>
         </CardContent>
       </Card>

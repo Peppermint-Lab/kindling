@@ -13,6 +13,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/auth"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	kruntime "github.com/kindlingvm/kindling/internal/runtime"
+	"github.com/kindlingvm/kindling/internal/sandbox"
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
@@ -138,6 +139,18 @@ func normalizeSandboxBaseImageRef(v string) (string, error) {
 	return trimmed, nil
 }
 
+func resolveSandboxHostGroup(requested string, template *queries.SandboxTemplate) string {
+	if trimmed := strings.TrimSpace(requested); trimmed != "" {
+		return trimmed
+	}
+	if template != nil {
+		if trimmed := strings.TrimSpace(template.HostGroup); trimmed != "" {
+			return trimmed
+		}
+	}
+	return sandbox.HostGroupLinux
+}
+
 func sandboxTemplateToOut(tpl queries.SandboxTemplate) sandboxTemplateOut {
 	return sandboxTemplateOut{
 		ID:              pguuid.ToString(tpl.ID),
@@ -211,10 +224,6 @@ func (a *API) createSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hostGroup := strings.TrimSpace(req.HostGroup)
-	if hostGroup == "" {
-		hostGroup = "linux-sandbox"
-	}
 	desiredState := strings.TrimSpace(req.DesiredState)
 	if desiredState == "" {
 		desiredState = "running"
@@ -243,17 +252,15 @@ func (a *API) createSandbox(w http.ResponseWriter, r *http.Request) {
 		}
 		templateID = id
 		template = &tpl
-		if hostGroup == "" {
-			hostGroup = tpl.HostGroup
-		}
 	}
+	hostGroup := resolveSandboxHostGroup(req.HostGroup, template)
 
 	baseImageRef := strings.TrimSpace(req.BaseImageRef)
 	if template != nil && baseImageRef == "" {
 		baseImageRef = template.BaseImageRef
 	}
 	if baseImageRef == "" {
-		baseImageRef = "docker.io/library/alpine:latest"
+		baseImageRef = sandbox.DefaultBaseImageRef
 	}
 	vcpu := req.Vcpu
 	if template != nil && vcpu <= 0 {

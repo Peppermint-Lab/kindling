@@ -598,6 +598,16 @@ DO $$ BEGIN
     END IF;
 END $$;
 
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'sandboxes' AND column_name = 'ssh_host_public_key'
+    ) THEN
+        ALTER TABLE sandboxes ADD COLUMN ssh_host_public_key TEXT NOT NULL DEFAULT '';
+    END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS sandbox_published_ports (
     id              UUID PRIMARY KEY,
     sandbox_id      UUID NOT NULL REFERENCES sandboxes(id) ON DELETE CASCADE,

@@ -128,6 +128,25 @@ export type Sandbox = {
   published_ports?: SandboxPublishedPort[]
 }
 
+export type SandboxTemplate = {
+  id: string
+  name: string
+  host_group: string
+  backend?: string
+  arch?: string
+  source_sandbox_id?: string | null
+  server_id?: string | null
+  base_image_ref: string
+  snapshot_ref?: string
+  vcpu: number
+  memory_mb: number
+  disk_gb: number
+  status: string
+  failure_message?: string
+  created_at?: string | null
+  updated_at?: string | null
+}
+
 export type SandboxAccessEvent = {
   id: string
   sandbox_id: string
@@ -681,6 +700,22 @@ export type ProjectDomain = {
 
 export const api = {
   listSandboxes: () => request<Sandbox[]>("/api/sandboxes"),
+  createSandbox: (data: {
+    name: string
+    host_group?: string
+    base_image_ref?: string
+    template_id?: string
+    vcpu?: number
+    memory_mb?: number
+    disk_gb?: number
+    git_repo?: string
+    git_ref?: string
+    auto_suspend_seconds?: number
+    expires_at?: string
+    published_http_port?: number
+    desired_state?: "running" | "stopped"
+  }) =>
+    request<Sandbox>("/api/sandboxes", { method: "POST", body: JSON.stringify(data) }),
   getSandbox: (id: string) => request<Sandbox>(`/api/sandboxes/${id}`),
   updateSandbox: (id: string, data: {
     auto_suspend_seconds?: number
@@ -705,6 +740,13 @@ export const api = {
   getSandboxLogs: (id: string) => request<string[]>(`/api/sandboxes/${id}/logs`),
   getSandboxStats: (id: string) => request<Record<string, unknown>>(`/api/sandboxes/${id}/stats`),
   getSandboxAccessEvents: (id: string) => request<SandboxAccessEvent[]>(`/api/sandboxes/${id}/access-events`),
+  listSandboxTemplates: () => request<SandboxTemplate[]>("/api/sandbox-templates"),
+  createSandboxTemplate: (id: string, data?: { name?: string }) =>
+    request<SandboxTemplate>(`/api/sandboxes/${id}/template`, { method: "POST", body: JSON.stringify(data ?? {}) }),
+  cloneSandboxTemplate: (id: string, data?: { name?: string }) =>
+    request<Sandbox>(`/api/sandbox-templates/${id}/clone`, { method: "POST", body: JSON.stringify(data ?? {}) }),
+  deleteSandboxTemplate: (id: string) =>
+    request<SandboxTemplate>(`/api/sandbox-templates/${id}`, { method: "DELETE" }),
   listUserSSHKeys: () => request<UserSSHKey[]>("/api/me/ssh-keys"),
   createUserSSHKey: (data: { name?: string; public_key: string }) =>
     request<UserSSHKey>("/api/me/ssh-keys", { method: "POST", body: JSON.stringify(data) }),
