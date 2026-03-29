@@ -13,10 +13,13 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/kindlingvm/kindling/internal/shellwire"
 	"golang.org/x/term"
@@ -50,6 +53,10 @@ func newLocalAPI(socketPath string) *localAPIClient {
 }
 
 func (a *localAPIClient) do(ctx context.Context, method, path string, body, out any) error {
+	if err := a.ensureDaemon(ctx); err != nil {
+		return err
+	}
+
 	var reqBody io.Reader
 	if body != nil {
 		data, _ := json.Marshal(body)
@@ -247,6 +254,10 @@ func (a *localAPIClient) RunShell(ctx context.Context, id string, argv []string,
 }
 
 func (a *localAPIClient) openShell(ctx context.Context, id string, argv []string, cwd string, env []string) (io.ReadWriteCloser, error) {
+	if err := a.ensureDaemon(ctx); err != nil {
+		return nil, err
+	}
+
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", a.socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("connect to kindling-mac daemon (is it running?): %w", err)
@@ -287,4 +298,75 @@ func (a *localAPIClient) openShell(ctx context.Context, id string, argv []string
 		return nil, fmt.Errorf("open shell: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
 	}
 	return &localUpgradedConn{Conn: conn, reader: reader}, nil
+}
+
+func (a *localAPIClient) ensureDaemon(ctx context.Context) error {
+	if a.socketReachable() {
+		return nil
+	}
+
+	kindlingMacBin, err := kindlingMacBinary()
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.CommandContext(ctx, kindlingMacBin)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("start kindling-mac: %s", msg)
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	if err := a.waitForSocket(waitCtx); err != nil {
+		return fmt.Errorf("start kindling-mac: %w", err)
+	}
+	return nil
+}
+
+func kindlingMacBinary() (string, error) {
+	if path := os.Getenv("KINDLING_MAC_BIN"); path != "" {
+		return path, nil
+	}
+
+	if exePath, err := os.Executable(); err == nil {
+		sibling := filepath.Join(filepath.Dir(exePath), "kindling-mac")
+		if info, err := os.Stat(sibling); err == nil && !info.IsDir() {
+			return sibling, nil
+		}
+	}
+
+	path, err := exec.LookPath("kindling-mac")
+	if err != nil {
+		return "", fmt.Errorf("kindling-mac is not installed or not on PATH")
+	}
+	return path, nil
+}
+
+func (a *localAPIClient) socketReachable() bool {
+	conn, err := net.DialTimeout("unix", a.socketPath, 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+func (a *localAPIClient) waitForSocket(ctx context.Context) error {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if a.socketReachable() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timed out waiting for kindling-mac daemon")
+		case <-ticker.C:
+		}
+	}
 }

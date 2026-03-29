@@ -14,8 +14,8 @@ func cliLocalCmd() *cobra.Command {
 		Short: "Manage local Linux VMs on macOS via the kindling-mac daemon",
 		Long: `Connect to the kindling-mac daemon to manage local Linux microVMs.
 
-On first run, start the daemon: kindling-mac
-Or install as a login item for automatic startup.
+If the daemon is not already running, local commands will try to start it automatically.
+You can also start it yourself with: kindling-mac
 
 The daemon manages two kinds of VMs:
   box   — a persistent Linux VM for day-to-day development (like WSL)
