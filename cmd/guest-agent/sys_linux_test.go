@@ -73,8 +73,6 @@ func TestSplitBlockDevicePartition(t *testing.T) {
 }
 
 func TestGrowPersistentVolumeFilesystemUsesGrowpartForPartitions(t *testing.T) {
-	t.Parallel()
-
 	tmp := t.TempDir()
 	growpartLog := filepath.Join(tmp, "growpart.log")
 	resizeLog := filepath.Join(tmp, "resize2fs.log")
@@ -96,8 +94,6 @@ func TestGrowPersistentVolumeFilesystemUsesGrowpartForPartitions(t *testing.T) {
 }
 
 func TestGrowPersistentVolumeFilesystemSkipsGrowpartForWholeDisk(t *testing.T) {
-	t.Parallel()
-
 	tmp := t.TempDir()
 	growpartLog := filepath.Join(tmp, "growpart.log")
 	resizeLog := filepath.Join(tmp, "resize2fs.log")

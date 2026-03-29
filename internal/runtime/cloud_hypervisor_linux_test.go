@@ -77,8 +77,6 @@ func TestCloudHypervisorDiskArgsAddsPersistentVolumeAsSecondDisk(t *testing.T) {
 }
 
 func TestEnsurePersistentVolumeSizeResizesQcow2(t *testing.T) {
-	t.Parallel()
-
 	tmp := t.TempDir()
 	logPath := filepath.Join(tmp, "qemu-img.log")
 	writeRuntimeExecutable(t, filepath.Join(tmp, "qemu-img"), "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  printf '{\"virtual-size\":1073741824}'\n  exit 0\nfi\nprintf '%s %s %s\\n' \"$1\" \"$2\" \"$3\" > \""+logPath+"\"\n")
