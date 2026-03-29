@@ -234,7 +234,11 @@ export function PipelinesPage() {
                     >
                       <div className="min-w-0 w-56 shrink-0">
                         <p className="text-sm font-medium truncate">{job.project_name || "Unknown project"}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">{sourceLabel(job.source)}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {job.source === "github_actions_runner" && job.external_repo
+                            ? `${sourceLabel(job.source)} • ${job.external_repo}`
+                            : sourceLabel(job.source)}
+                        </p>
                       </div>
 
                       <div className="min-w-0 flex-1">
@@ -249,6 +253,12 @@ export function PipelinesPage() {
                           <span>{job.execution_backend || "Pending backend"}</span>
                           <span>•</span>
                           <span>{job.require_microvm ? "MicroVM required" : "Host fallback allowed"}</span>
+                          {job.runner_name ? (
+                            <>
+                              <span>•</span>
+                              <span className="font-mono">{job.runner_name}</span>
+                            </>
+                          ) : null}
                           {job.exit_code != null ? (
                             <>
                               <span>•</span>

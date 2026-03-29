@@ -46,18 +46,31 @@ func TestCIJobToOutIncludesExecutionFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	labels, err := json.Marshal([]string{"self-hosted", "kindling", "linux", "x64"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	out := ciJobToOut(queries.CiJob{
-		ID:               pguuid.ToPgtype(uuid.New()),
-		ProjectID:        pguuid.ToPgtype(uuid.New()),
-		Status:           "running",
-		Source:           "local_workflow_run",
-		WorkflowName:     "deploy-prod",
-		WorkflowFile:     ".github/workflows/deploy-prod.yml",
-		SelectedJobID:    "deploy",
-		EventName:        "workflow_dispatch",
-		InputValues:      inputs,
-		RequireMicrovm:   true,
-		ExecutionBackend: "apple_vz",
+		ID:                     pguuid.ToPgtype(uuid.New()),
+		ProjectID:              pguuid.ToPgtype(uuid.New()),
+		Status:                 "running",
+		Source:                 "github_actions_runner",
+		WorkflowName:           "deploy-prod",
+		WorkflowFile:           ".github/workflows/deploy-prod.yml",
+		SelectedJobID:          "deploy",
+		EventName:              "workflow_dispatch",
+		InputValues:            inputs,
+		ProviderConnectionID:   pguuid.ToPgtype(uuid.New()),
+		ExternalRepo:           "kindlingvm/kindling",
+		ExternalInstallationID: 42,
+		ExternalWorkflowJobID:  101,
+		ExternalWorkflowRunID:  202,
+		ExternalRunAttempt:     2,
+		ExternalHtmlUrl:        "https://github.com/kindlingvm/kindling/actions/runs/202/job/101",
+		RunnerLabels:           labels,
+		RunnerName:             "kindling-202-101",
+		RequireMicrovm:         true,
+		ExecutionBackend:       "apple_vz",
 	})
 	if !out.RequireMicroVM {
 		t.Fatal("expected require_microvm to be true")
@@ -67,6 +80,15 @@ func TestCIJobToOutIncludesExecutionFields(t *testing.T) {
 	}
 	if out.Inputs["env"] != "prod" {
 		t.Fatalf("expected inputs to round-trip, got %#v", out.Inputs)
+	}
+	if out.ExternalRepo != "kindlingvm/kindling" {
+		t.Fatalf("expected external repo, got %q", out.ExternalRepo)
+	}
+	if len(out.RunnerLabels) != 4 {
+		t.Fatalf("expected runner labels to round-trip, got %#v", out.RunnerLabels)
+	}
+	if out.RunnerName != "kindling-202-101" {
+		t.Fatalf("expected runner name, got %q", out.RunnerName)
 	}
 }
 

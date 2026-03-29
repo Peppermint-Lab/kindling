@@ -167,6 +167,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	var ciSvc interface {
 		Cancel(context.Context, uuid.UUID) error
 		CreateLocalWorkflowJob(context.Context, ci.CreateJobRequest) (queries.CiJob, error)
+		HandleGitHubWorkflowJobEvent(context.Context, ci.GitHubWorkflowJobEvent) (ci.GitHubWorkflowJobHandleResult, error)
 	}
 	if components.worker {
 		w, werr := setupWorker(ctx, q, db, serverID, cfgMgr, snap, notifyRouteChange)

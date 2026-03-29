@@ -508,7 +508,7 @@ func (q *Queries) CIJobArtifactsByJobID(ctx context.Context, ciJobID pgtype.UUID
 const cIJobClaimLease = `-- name: CIJobClaimLease :one
 UPDATE ci_jobs SET processing_by = $2, updated_at = NOW()
 WHERE id = $1 AND status = 'queued' AND (processing_by IS NULL OR processing_by = $2)
-RETURNING id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, require_microvm, execution_backend, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at
+RETURNING id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, provider_connection_id, external_repo, external_installation_id, external_workflow_job_id, external_workflow_run_id, external_run_attempt, external_html_url, runner_labels, runner_name, require_microvm, execution_backend, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at
 `
 
 type CIJobClaimLeaseParams struct {
@@ -530,6 +530,15 @@ func (q *Queries) CIJobClaimLease(ctx context.Context, arg CIJobClaimLeaseParams
 		&i.EventName,
 		&i.InputValues,
 		&i.InputArchivePath,
+		&i.ProviderConnectionID,
+		&i.ExternalRepo,
+		&i.ExternalInstallationID,
+		&i.ExternalWorkflowJobID,
+		&i.ExternalWorkflowRunID,
+		&i.ExternalRunAttempt,
+		&i.ExternalHtmlUrl,
+		&i.RunnerLabels,
+		&i.RunnerName,
 		&i.RequireMicrovm,
 		&i.ExecutionBackend,
 		&i.WorkspaceDir,
@@ -552,7 +561,7 @@ INSERT INTO ci_jobs (
   event_name, input_values, input_archive_path, require_microvm, workspace_dir, error_message
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-RETURNING id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, require_microvm, execution_backend, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at
+RETURNING id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, provider_connection_id, external_repo, external_installation_id, external_workflow_job_id, external_workflow_run_id, external_run_attempt, external_html_url, runner_labels, runner_name, require_microvm, execution_backend, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at
 `
 
 type CIJobCreateParams struct {
@@ -600,6 +609,113 @@ func (q *Queries) CIJobCreate(ctx context.Context, arg CIJobCreateParams) (CiJob
 		&i.EventName,
 		&i.InputValues,
 		&i.InputArchivePath,
+		&i.ProviderConnectionID,
+		&i.ExternalRepo,
+		&i.ExternalInstallationID,
+		&i.ExternalWorkflowJobID,
+		&i.ExternalWorkflowRunID,
+		&i.ExternalRunAttempt,
+		&i.ExternalHtmlUrl,
+		&i.RunnerLabels,
+		&i.RunnerName,
+		&i.RequireMicrovm,
+		&i.ExecutionBackend,
+		&i.WorkspaceDir,
+		&i.ProcessingBy,
+		&i.ExitCode,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CanceledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const cIJobCreateGitHubRunner = `-- name: CIJobCreateGitHubRunner :one
+INSERT INTO ci_jobs (
+  id, project_id, status, source, workflow_name, workflow_file, selected_job_id,
+  event_name, input_values, input_archive_path, provider_connection_id, external_repo,
+  external_installation_id, external_workflow_job_id, external_workflow_run_id, external_run_attempt,
+  external_html_url, runner_labels, runner_name, require_microvm, workspace_dir, error_message
+)
+VALUES (
+  $1, $2, $3, 'github_actions_runner', $4, $5, $6, $7, $8, $9, $10, $11,
+  $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+)
+RETURNING id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, provider_connection_id, external_repo, external_installation_id, external_workflow_job_id, external_workflow_run_id, external_run_attempt, external_html_url, runner_labels, runner_name, require_microvm, execution_backend, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at
+`
+
+type CIJobCreateGitHubRunnerParams struct {
+	ID                     pgtype.UUID `json:"id"`
+	ProjectID              pgtype.UUID `json:"project_id"`
+	Status                 string      `json:"status"`
+	WorkflowName           string      `json:"workflow_name"`
+	WorkflowFile           string      `json:"workflow_file"`
+	SelectedJobID          string      `json:"selected_job_id"`
+	EventName              string      `json:"event_name"`
+	InputValues            []byte      `json:"input_values"`
+	InputArchivePath       string      `json:"input_archive_path"`
+	ProviderConnectionID   pgtype.UUID `json:"provider_connection_id"`
+	ExternalRepo           string      `json:"external_repo"`
+	ExternalInstallationID int64       `json:"external_installation_id"`
+	ExternalWorkflowJobID  int64       `json:"external_workflow_job_id"`
+	ExternalWorkflowRunID  int64       `json:"external_workflow_run_id"`
+	ExternalRunAttempt     int32       `json:"external_run_attempt"`
+	ExternalHtmlUrl        string      `json:"external_html_url"`
+	RunnerLabels           []byte      `json:"runner_labels"`
+	RunnerName             string      `json:"runner_name"`
+	RequireMicrovm         bool        `json:"require_microvm"`
+	WorkspaceDir           string      `json:"workspace_dir"`
+	ErrorMessage           string      `json:"error_message"`
+}
+
+func (q *Queries) CIJobCreateGitHubRunner(ctx context.Context, arg CIJobCreateGitHubRunnerParams) (CiJob, error) {
+	row := q.db.QueryRow(ctx, cIJobCreateGitHubRunner,
+		arg.ID,
+		arg.ProjectID,
+		arg.Status,
+		arg.WorkflowName,
+		arg.WorkflowFile,
+		arg.SelectedJobID,
+		arg.EventName,
+		arg.InputValues,
+		arg.InputArchivePath,
+		arg.ProviderConnectionID,
+		arg.ExternalRepo,
+		arg.ExternalInstallationID,
+		arg.ExternalWorkflowJobID,
+		arg.ExternalWorkflowRunID,
+		arg.ExternalRunAttempt,
+		arg.ExternalHtmlUrl,
+		arg.RunnerLabels,
+		arg.RunnerName,
+		arg.RequireMicrovm,
+		arg.WorkspaceDir,
+		arg.ErrorMessage,
+	)
+	var i CiJob
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Status,
+		&i.Source,
+		&i.WorkflowName,
+		&i.WorkflowFile,
+		&i.SelectedJobID,
+		&i.EventName,
+		&i.InputValues,
+		&i.InputArchivePath,
+		&i.ProviderConnectionID,
+		&i.ExternalRepo,
+		&i.ExternalInstallationID,
+		&i.ExternalWorkflowJobID,
+		&i.ExternalWorkflowRunID,
+		&i.ExternalRunAttempt,
+		&i.ExternalHtmlUrl,
+		&i.RunnerLabels,
+		&i.RunnerName,
 		&i.RequireMicrovm,
 		&i.ExecutionBackend,
 		&i.WorkspaceDir,
@@ -616,7 +732,7 @@ func (q *Queries) CIJobCreate(ctx context.Context, arg CIJobCreateParams) (CiJob
 }
 
 const cIJobFindByProjectID = `-- name: CIJobFindByProjectID :many
-SELECT id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, require_microvm, execution_backend, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at FROM ci_jobs WHERE project_id = $1 ORDER BY created_at DESC
+SELECT id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, provider_connection_id, external_repo, external_installation_id, external_workflow_job_id, external_workflow_run_id, external_run_attempt, external_html_url, runner_labels, runner_name, require_microvm, execution_backend, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at FROM ci_jobs WHERE project_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) CIJobFindByProjectID(ctx context.Context, projectID pgtype.UUID) ([]CiJob, error) {
@@ -639,6 +755,15 @@ func (q *Queries) CIJobFindByProjectID(ctx context.Context, projectID pgtype.UUI
 			&i.EventName,
 			&i.InputValues,
 			&i.InputArchivePath,
+			&i.ProviderConnectionID,
+			&i.ExternalRepo,
+			&i.ExternalInstallationID,
+			&i.ExternalWorkflowJobID,
+			&i.ExternalWorkflowRunID,
+			&i.ExternalRunAttempt,
+			&i.ExternalHtmlUrl,
+			&i.RunnerLabels,
+			&i.RunnerName,
 			&i.RequireMicrovm,
 			&i.ExecutionBackend,
 			&i.WorkspaceDir,
@@ -662,7 +787,7 @@ func (q *Queries) CIJobFindByProjectID(ctx context.Context, projectID pgtype.UUI
 }
 
 const cIJobFindRecentWithProjectForOrg = `-- name: CIJobFindRecentWithProjectForOrg :many
-SELECT j.id, j.project_id, j.status, j.source, j.workflow_name, j.workflow_file, j.selected_job_id, j.event_name, j.input_values, j.input_archive_path, j.require_microvm, j.execution_backend, j.workspace_dir, j.processing_by, j.exit_code, j.error_message, j.started_at, j.finished_at, j.canceled_at, j.created_at, j.updated_at, p.name AS project_name
+SELECT j.id, j.project_id, j.status, j.source, j.workflow_name, j.workflow_file, j.selected_job_id, j.event_name, j.input_values, j.input_archive_path, j.provider_connection_id, j.external_repo, j.external_installation_id, j.external_workflow_job_id, j.external_workflow_run_id, j.external_run_attempt, j.external_html_url, j.runner_labels, j.runner_name, j.require_microvm, j.execution_backend, j.workspace_dir, j.processing_by, j.exit_code, j.error_message, j.started_at, j.finished_at, j.canceled_at, j.created_at, j.updated_at, p.name AS project_name
 FROM ci_jobs j
 JOIN projects p ON p.id = j.project_id
 WHERE p.org_id = $1
@@ -676,28 +801,37 @@ type CIJobFindRecentWithProjectForOrgParams struct {
 }
 
 type CIJobFindRecentWithProjectForOrgRow struct {
-	ID               pgtype.UUID        `json:"id"`
-	ProjectID        pgtype.UUID        `json:"project_id"`
-	Status           string             `json:"status"`
-	Source           string             `json:"source"`
-	WorkflowName     string             `json:"workflow_name"`
-	WorkflowFile     string             `json:"workflow_file"`
-	SelectedJobID    string             `json:"selected_job_id"`
-	EventName        string             `json:"event_name"`
-	InputValues      []byte             `json:"input_values"`
-	InputArchivePath string             `json:"input_archive_path"`
-	RequireMicrovm   bool               `json:"require_microvm"`
-	ExecutionBackend string             `json:"execution_backend"`
-	WorkspaceDir     string             `json:"workspace_dir"`
-	ProcessingBy     pgtype.UUID        `json:"processing_by"`
-	ExitCode         pgtype.Int4        `json:"exit_code"`
-	ErrorMessage     string             `json:"error_message"`
-	StartedAt        pgtype.Timestamptz `json:"started_at"`
-	FinishedAt       pgtype.Timestamptz `json:"finished_at"`
-	CanceledAt       pgtype.Timestamptz `json:"canceled_at"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
-	ProjectName      string             `json:"project_name"`
+	ID                     pgtype.UUID        `json:"id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	Status                 string             `json:"status"`
+	Source                 string             `json:"source"`
+	WorkflowName           string             `json:"workflow_name"`
+	WorkflowFile           string             `json:"workflow_file"`
+	SelectedJobID          string             `json:"selected_job_id"`
+	EventName              string             `json:"event_name"`
+	InputValues            []byte             `json:"input_values"`
+	InputArchivePath       string             `json:"input_archive_path"`
+	ProviderConnectionID   pgtype.UUID        `json:"provider_connection_id"`
+	ExternalRepo           string             `json:"external_repo"`
+	ExternalInstallationID int64              `json:"external_installation_id"`
+	ExternalWorkflowJobID  int64              `json:"external_workflow_job_id"`
+	ExternalWorkflowRunID  int64              `json:"external_workflow_run_id"`
+	ExternalRunAttempt     int32              `json:"external_run_attempt"`
+	ExternalHtmlUrl        string             `json:"external_html_url"`
+	RunnerLabels           []byte             `json:"runner_labels"`
+	RunnerName             string             `json:"runner_name"`
+	RequireMicrovm         bool               `json:"require_microvm"`
+	ExecutionBackend       string             `json:"execution_backend"`
+	WorkspaceDir           string             `json:"workspace_dir"`
+	ProcessingBy           pgtype.UUID        `json:"processing_by"`
+	ExitCode               pgtype.Int4        `json:"exit_code"`
+	ErrorMessage           string             `json:"error_message"`
+	StartedAt              pgtype.Timestamptz `json:"started_at"`
+	FinishedAt             pgtype.Timestamptz `json:"finished_at"`
+	CanceledAt             pgtype.Timestamptz `json:"canceled_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	ProjectName            string             `json:"project_name"`
 }
 
 func (q *Queries) CIJobFindRecentWithProjectForOrg(ctx context.Context, arg CIJobFindRecentWithProjectForOrgParams) ([]CIJobFindRecentWithProjectForOrgRow, error) {
@@ -720,6 +854,15 @@ func (q *Queries) CIJobFindRecentWithProjectForOrg(ctx context.Context, arg CIJo
 			&i.EventName,
 			&i.InputValues,
 			&i.InputArchivePath,
+			&i.ProviderConnectionID,
+			&i.ExternalRepo,
+			&i.ExternalInstallationID,
+			&i.ExternalWorkflowJobID,
+			&i.ExternalWorkflowRunID,
+			&i.ExternalRunAttempt,
+			&i.ExternalHtmlUrl,
+			&i.RunnerLabels,
+			&i.RunnerName,
 			&i.RequireMicrovm,
 			&i.ExecutionBackend,
 			&i.WorkspaceDir,
@@ -743,8 +886,51 @@ func (q *Queries) CIJobFindRecentWithProjectForOrg(ctx context.Context, arg CIJo
 	return items, nil
 }
 
+const cIJobFirstByExternalWorkflowJobID = `-- name: CIJobFirstByExternalWorkflowJobID :one
+SELECT id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, provider_connection_id, external_repo, external_installation_id, external_workflow_job_id, external_workflow_run_id, external_run_attempt, external_html_url, runner_labels, runner_name, require_microvm, execution_backend, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at FROM ci_jobs
+WHERE source = 'github_actions_runner' AND external_workflow_job_id = $1
+`
+
+func (q *Queries) CIJobFirstByExternalWorkflowJobID(ctx context.Context, externalWorkflowJobID int64) (CiJob, error) {
+	row := q.db.QueryRow(ctx, cIJobFirstByExternalWorkflowJobID, externalWorkflowJobID)
+	var i CiJob
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Status,
+		&i.Source,
+		&i.WorkflowName,
+		&i.WorkflowFile,
+		&i.SelectedJobID,
+		&i.EventName,
+		&i.InputValues,
+		&i.InputArchivePath,
+		&i.ProviderConnectionID,
+		&i.ExternalRepo,
+		&i.ExternalInstallationID,
+		&i.ExternalWorkflowJobID,
+		&i.ExternalWorkflowRunID,
+		&i.ExternalRunAttempt,
+		&i.ExternalHtmlUrl,
+		&i.RunnerLabels,
+		&i.RunnerName,
+		&i.RequireMicrovm,
+		&i.ExecutionBackend,
+		&i.WorkspaceDir,
+		&i.ProcessingBy,
+		&i.ExitCode,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CanceledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const cIJobFirstByID = `-- name: CIJobFirstByID :one
-SELECT id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, require_microvm, execution_backend, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at FROM ci_jobs WHERE id = $1
+SELECT id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, provider_connection_id, external_repo, external_installation_id, external_workflow_job_id, external_workflow_run_id, external_run_attempt, external_html_url, runner_labels, runner_name, require_microvm, execution_backend, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at FROM ci_jobs WHERE id = $1
 `
 
 func (q *Queries) CIJobFirstByID(ctx context.Context, id pgtype.UUID) (CiJob, error) {
@@ -761,6 +947,15 @@ func (q *Queries) CIJobFirstByID(ctx context.Context, id pgtype.UUID) (CiJob, er
 		&i.EventName,
 		&i.InputValues,
 		&i.InputArchivePath,
+		&i.ProviderConnectionID,
+		&i.ExternalRepo,
+		&i.ExternalInstallationID,
+		&i.ExternalWorkflowJobID,
+		&i.ExternalWorkflowRunID,
+		&i.ExternalRunAttempt,
+		&i.ExternalHtmlUrl,
+		&i.RunnerLabels,
+		&i.RunnerName,
 		&i.RequireMicrovm,
 		&i.ExecutionBackend,
 		&i.WorkspaceDir,
@@ -777,7 +972,7 @@ func (q *Queries) CIJobFirstByID(ctx context.Context, id pgtype.UUID) (CiJob, er
 }
 
 const cIJobFirstByIDAndOrg = `-- name: CIJobFirstByIDAndOrg :one
-SELECT j.id, j.project_id, j.status, j.source, j.workflow_name, j.workflow_file, j.selected_job_id, j.event_name, j.input_values, j.input_archive_path, j.require_microvm, j.execution_backend, j.workspace_dir, j.processing_by, j.exit_code, j.error_message, j.started_at, j.finished_at, j.canceled_at, j.created_at, j.updated_at
+SELECT j.id, j.project_id, j.status, j.source, j.workflow_name, j.workflow_file, j.selected_job_id, j.event_name, j.input_values, j.input_archive_path, j.provider_connection_id, j.external_repo, j.external_installation_id, j.external_workflow_job_id, j.external_workflow_run_id, j.external_run_attempt, j.external_html_url, j.runner_labels, j.runner_name, j.require_microvm, j.execution_backend, j.workspace_dir, j.processing_by, j.exit_code, j.error_message, j.started_at, j.finished_at, j.canceled_at, j.created_at, j.updated_at
 FROM ci_jobs j
 JOIN projects p ON p.id = j.project_id
 WHERE j.id = $1 AND p.org_id = $2
@@ -802,6 +997,15 @@ func (q *Queries) CIJobFirstByIDAndOrg(ctx context.Context, arg CIJobFirstByIDAn
 		&i.EventName,
 		&i.InputValues,
 		&i.InputArchivePath,
+		&i.ProviderConnectionID,
+		&i.ExternalRepo,
+		&i.ExternalInstallationID,
+		&i.ExternalWorkflowJobID,
+		&i.ExternalWorkflowRunID,
+		&i.ExternalRunAttempt,
+		&i.ExternalHtmlUrl,
+		&i.RunnerLabels,
+		&i.RunnerName,
 		&i.RequireMicrovm,
 		&i.ExecutionBackend,
 		&i.WorkspaceDir,

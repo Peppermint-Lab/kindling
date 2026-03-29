@@ -1108,6 +1108,15 @@ CREATE TABLE IF NOT EXISTS ci_jobs (
     event_name         TEXT NOT NULL DEFAULT '',
     input_values       JSONB NOT NULL DEFAULT '{}'::jsonb,
     input_archive_path TEXT NOT NULL DEFAULT '',
+    provider_connection_id UUID REFERENCES org_provider_connections(id) ON DELETE SET NULL,
+    external_repo      TEXT NOT NULL DEFAULT '',
+    external_installation_id BIGINT NOT NULL DEFAULT 0,
+    external_workflow_job_id BIGINT NOT NULL DEFAULT 0,
+    external_workflow_run_id BIGINT NOT NULL DEFAULT 0,
+    external_run_attempt INT NOT NULL DEFAULT 0,
+    external_html_url  TEXT NOT NULL DEFAULT '',
+    runner_labels      JSONB NOT NULL DEFAULT '[]'::jsonb,
+    runner_name        TEXT NOT NULL DEFAULT '',
     require_microvm    BOOLEAN NOT NULL DEFAULT true,
     execution_backend  TEXT NOT NULL DEFAULT '',
     workspace_dir      TEXT NOT NULL DEFAULT '',
@@ -1126,6 +1135,33 @@ ALTER TABLE ci_jobs
 
 ALTER TABLE ci_jobs
     ADD COLUMN IF NOT EXISTS execution_backend TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE ci_jobs
+    ADD COLUMN IF NOT EXISTS provider_connection_id UUID REFERENCES org_provider_connections(id) ON DELETE SET NULL;
+
+ALTER TABLE ci_jobs
+    ADD COLUMN IF NOT EXISTS external_repo TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE ci_jobs
+    ADD COLUMN IF NOT EXISTS external_installation_id BIGINT NOT NULL DEFAULT 0;
+
+ALTER TABLE ci_jobs
+    ADD COLUMN IF NOT EXISTS external_workflow_job_id BIGINT NOT NULL DEFAULT 0;
+
+ALTER TABLE ci_jobs
+    ADD COLUMN IF NOT EXISTS external_workflow_run_id BIGINT NOT NULL DEFAULT 0;
+
+ALTER TABLE ci_jobs
+    ADD COLUMN IF NOT EXISTS external_run_attempt INT NOT NULL DEFAULT 0;
+
+ALTER TABLE ci_jobs
+    ADD COLUMN IF NOT EXISTS external_html_url TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE ci_jobs
+    ADD COLUMN IF NOT EXISTS runner_labels JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+ALTER TABLE ci_jobs
+    ADD COLUMN IF NOT EXISTS runner_name TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS ci_job_logs (
     id          UUID PRIMARY KEY,
@@ -1347,6 +1383,10 @@ CREATE INDEX IF NOT EXISTS idx_builds_project_id ON builds(project_id);
 CREATE INDEX IF NOT EXISTS idx_builds_status ON builds(status);
 CREATE INDEX IF NOT EXISTS idx_ci_jobs_project_id ON ci_jobs(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ci_jobs_status ON ci_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_ci_jobs_external_workflow_job_id ON ci_jobs(external_workflow_job_id) WHERE external_workflow_job_id <> 0;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ci_jobs_github_external_job_unique
+    ON ci_jobs(source, external_workflow_job_id)
+    WHERE source = 'github_actions_runner' AND external_workflow_job_id <> 0;
 CREATE INDEX IF NOT EXISTS idx_deployments_project_id ON deployments(project_id);
 CREATE INDEX IF NOT EXISTS idx_build_logs_build_id ON build_logs(build_id);
 CREATE INDEX IF NOT EXISTS idx_ci_job_logs_job_id ON ci_job_logs(ci_job_id, created_at);

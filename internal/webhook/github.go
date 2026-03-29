@@ -19,8 +19,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/kindlingvm/kindling/internal/ci"
 	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/githubactions"
+	"github.com/kindlingvm/kindling/internal/githubapi"
 	"github.com/kindlingvm/kindling/internal/preview"
 	"github.com/kindlingvm/kindling/internal/reconciler"
 )
@@ -28,18 +31,34 @@ import (
 // Handler handles GitHub webhook requests.
 type Handler struct {
 	q                    *queries.Queries
+	cfg                  decryptor
 	deploymentReconciler *reconciler.Scheduler
+	ciJobReconciler      *reconciler.Scheduler
+	ciJobService         ciWorkflowJobHandler
+}
+
+type decryptor interface {
+	DecryptBytes([]byte) ([]byte, error)
+}
+
+type ciWorkflowJobHandler interface {
+	HandleGitHubWorkflowJobEvent(context.Context, ci.GitHubWorkflowJobEvent) (ci.GitHubWorkflowJobHandleResult, error)
 }
 
 // NewHandler creates a new webhook handler.
-func NewHandler(q *queries.Queries) *Handler {
-	return &Handler{q: q}
+func NewHandler(q *queries.Queries, cfg decryptor) *Handler {
+	return &Handler{q: q, cfg: cfg}
 }
 
 // SetDeploymentReconciler configures the deployment reconciler used for
 // immediate preview cleanup work after close/delete lifecycle changes.
 func (h *Handler) SetDeploymentReconciler(r *reconciler.Scheduler) {
 	h.deploymentReconciler = r
+}
+
+func (h *Handler) SetCIJobRuntime(r *reconciler.Scheduler, svc ciWorkflowJobHandler) {
+	h.ciJobReconciler = r
+	h.ciJobService = svc
 }
 
 // pushEvent is the relevant subset of GitHub's push event payload.
@@ -78,6 +97,29 @@ type prBody struct {
 
 type repo struct {
 	FullName string `json:"full_name"`
+}
+
+type workflowJobEvent struct {
+	Action       string `json:"action"`
+	Repository   repo   `json:"repository"`
+	Organization struct {
+		Login string `json:"login"`
+	} `json:"organization"`
+	Installation struct {
+		ID int64 `json:"id"`
+	} `json:"installation"`
+	WorkflowJob struct {
+		ID           int64    `json:"id"`
+		RunID        int64    `json:"run_id"`
+		RunAttempt   int32    `json:"run_attempt"`
+		HTMLURL      string   `json:"html_url"`
+		Status       string   `json:"status"`
+		Conclusion   string   `json:"conclusion"`
+		Name         string   `json:"name"`
+		WorkflowName string   `json:"workflow_name"`
+		Event        string   `json:"event"`
+		Labels       []string `json:"labels"`
+	} `json:"workflow_job"`
 }
 
 func previewBaseDomain(ctx context.Context, q *queries.Queries) string {
@@ -189,10 +231,109 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handlePush(w, r, body)
 	case "pull_request":
 		h.handlePullRequest(w, r, body)
+	case "workflow_job":
+		h.handleWorkflowJob(w, r, body)
 	default:
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, "ignored event: %s", event)
 	}
+}
+
+func (h *Handler) handleWorkflowJob(w http.ResponseWriter, r *http.Request, body []byte) {
+	if h.ciJobService == nil {
+		http.Error(w, "ci workflow job handler unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	var event workflowJobEvent
+	if err := json.Unmarshal(body, &event); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	secret, err := h.workflowJobWebhookSecret(r.Context(), event)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "ignored: repository not connected to Kindling")
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if strings.TrimSpace(secret) == "" {
+		http.Error(w, "github actions runner webhook secret is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	sig := r.Header.Get("X-Hub-Signature-256")
+	if !verifySignature(body, sig, secret) {
+		http.Error(w, "invalid signature", http.StatusUnauthorized)
+		return
+	}
+
+	result, err := h.ciJobService.HandleGitHubWorkflowJobEvent(r.Context(), ci.GitHubWorkflowJobEvent{
+		Action:         strings.TrimSpace(event.Action),
+		RepoFullName:   githubapi.NormalizeRepo(event.Repository.FullName),
+		OrgLogin:       strings.TrimSpace(event.Organization.Login),
+		WorkflowName:   strings.TrimSpace(event.WorkflowJob.WorkflowName),
+		JobName:        strings.TrimSpace(event.WorkflowJob.Name),
+		EventName:      strings.TrimSpace(event.WorkflowJob.Event),
+		WorkflowJobID:  event.WorkflowJob.ID,
+		WorkflowRunID:  event.WorkflowJob.RunID,
+		RunAttempt:     event.WorkflowJob.RunAttempt,
+		HTMLURL:        strings.TrimSpace(event.WorkflowJob.HTMLURL),
+		Labels:         event.WorkflowJob.Labels,
+		InstallationID: event.Installation.ID,
+		Conclusion:     strings.TrimSpace(event.WorkflowJob.Conclusion),
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if result.Ignored {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "ignored: %s", result.Reason)
+		return
+	}
+	if result.ShouldSchedule && result.Job != nil && h.ciJobReconciler != nil {
+		h.ciJobReconciler.ScheduleNow(uuid.UUID(result.Job.ID.Bytes))
+	}
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprint(w, "ok")
+}
+
+func (h *Handler) workflowJobWebhookSecret(ctx context.Context, event workflowJobEvent) (string, error) {
+	project, err := h.q.ProjectFindByGitHubRepo(ctx, githubapi.NormalizeRepo(event.Repository.FullName))
+	if err != nil {
+		return "", err
+	}
+	rows, err := h.q.OrgProviderConnectionListByOrg(ctx, project.OrgID)
+	if err != nil {
+		return "", err
+	}
+	owner := strings.TrimSpace(event.Organization.Login)
+	if owner == "" {
+		owner = strings.TrimSpace(strings.SplitN(githubapi.NormalizeRepo(event.Repository.FullName), "/", 2)[0])
+	}
+	integrations := make([]githubactions.Integration, 0, len(rows))
+	for _, row := range rows {
+		if strings.TrimSpace(strings.ToLower(row.Provider)) != "github" || h.cfg == nil {
+			continue
+		}
+		plain, err := h.cfg.DecryptBytes(row.CredentialsCiphertext)
+		if err != nil {
+			continue
+		}
+		integration, err := githubactions.IntegrationFromConnection(row, plain)
+		if err != nil {
+			continue
+		}
+		integrations = append(integrations, integration)
+	}
+	integration, ok := githubactions.ResolveIntegrationForOwner(integrations, owner)
+	if !ok {
+		return "", pgx.ErrNoRows
+	}
+	return strings.TrimSpace(integration.Credentials.WebhookSecret), nil
 }
 
 func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request, body []byte) {

@@ -116,7 +116,7 @@ func setupWorker(
 		Reconcile: bldr.ReconcileBuild,
 	})
 
-	ciSvc := ciworker.NewJobService(q, serverID)
+	ciSvc := ciworker.NewJobService(q, cfgMgr, serverID)
 	ciJobReconciler := reconciler.New(reconciler.Config{
 		Name:      "ci_job",
 		Reconcile: ciSvc.Reconcile,

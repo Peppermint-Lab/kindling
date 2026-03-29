@@ -148,14 +148,16 @@ func startAPIServer(
 	ciJobCanceller interface {
 		Cancel(context.Context, uuid.UUID) error
 		CreateLocalWorkflowJob(context.Context, ci.CreateJobRequest) (queries.CiJob, error)
+		HandleGitHubWorkflowJobEvent(context.Context, ci.GitHubWorkflowJobEvent) (ci.GitHubWorkflowJobHandleResult, error)
 	},
 	listenAddr string,
 ) error {
 	api := rpc.NewAPI(q, cfgMgr, dashboardEvents)
 	api.SetDeploymentReconciler(deploymentReconciler)
 	api.SetCIJobRuntime(ciJobReconciler, ciJobCanceller)
-	webhookHandler := webhook.NewHandler(q)
+	webhookHandler := webhook.NewHandler(q, cfgMgr)
 	webhookHandler.SetDeploymentReconciler(deploymentReconciler)
+	webhookHandler.SetCIJobRuntime(ciJobReconciler, ciJobCanceller)
 
 	apiMux := http.NewServeMux()
 	apiMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {

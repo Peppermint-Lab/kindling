@@ -67,6 +67,10 @@ function isTerminalCIJob(status: CIJob["status"]): boolean {
   return status === "successful" || status === "failed" || status === "canceled"
 }
 
+function isGitHubRunnerJob(job: CIJob): boolean {
+  return job.source === "github_actions_runner"
+}
+
 export function CIJobDetailPage() {
   const { id } = useParams<{ id: string }>()
   const [job, setJob] = useState<CIJob | null>(null)
@@ -200,7 +204,11 @@ export function CIJobDetailPage() {
             <Surface>
               <SurfaceHeader>
                 <SurfaceTitle>Execution</SurfaceTitle>
-                <SurfaceDescription>Workflow, runtime backend, and final outcome for this job.</SurfaceDescription>
+                <SurfaceDescription>
+                  {isGitHubRunnerJob(job)
+                    ? "GitHub-owned workflow execution plus Kindling runner provisioning details."
+                    : "Workflow, runtime backend, and final outcome for this job."}
+                </SurfaceDescription>
               </SurfaceHeader>
               <SurfaceBody className="space-y-5 text-sm">
                 {job.error_message ? <PageErrorBanner message={job.error_message} /> : null}
@@ -226,6 +234,38 @@ export function CIJobDetailPage() {
                   <MetadataItem label="Workflow file" span="full">
                     <span className="font-mono text-xs break-all">{job.workflow_file || "—"}</span>
                   </MetadataItem>
+                  {isGitHubRunnerJob(job) ? (
+                    <>
+                      <MetadataItem label="Repository">{job.external_repo || "—"}</MetadataItem>
+                      <MetadataItem label="Runner name">{job.runner_name || "—"}</MetadataItem>
+                      <MetadataItem label="Workflow run">
+                        {job.external_workflow_run_id != null ? <span className="font-mono">{job.external_workflow_run_id}</span> : "—"}
+                      </MetadataItem>
+                      <MetadataItem label="Workflow job">
+                        {job.external_workflow_job_id != null ? <span className="font-mono">{job.external_workflow_job_id}</span> : "—"}
+                      </MetadataItem>
+                      <MetadataItem label="Labels" span="full">
+                        {job.runner_labels && job.runner_labels.length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {job.runner_labels.map((label) => (
+                              <span key={label} className="font-mono text-xs rounded bg-muted px-2 py-1">{label}</span>
+                            ))}
+                          </div>
+                        ) : (
+                          "—"
+                        )}
+                      </MetadataItem>
+                      <MetadataItem label="GitHub run" span="full">
+                        {job.external_html_url ? (
+                          <a href={job.external_html_url} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-4">
+                            Open in GitHub
+                          </a>
+                        ) : (
+                          "—"
+                        )}
+                      </MetadataItem>
+                    </>
+                  ) : null}
                   <MetadataItem label="Inputs" span="full">
                     {job.inputs && Object.keys(job.inputs).length > 0 ? (
                       <div className="space-y-2">
@@ -249,11 +289,23 @@ export function CIJobDetailPage() {
             <Surface>
               <SurfaceHeader>
                 <SurfaceTitle>Logs</SurfaceTitle>
-                <SurfaceDescription>Captured line-by-line job output.</SurfaceDescription>
+                <SurfaceDescription>
+                  {isGitHubRunnerJob(job)
+                    ? "Kindling-side provisioning and runner bootstrap logs. Step logs stay in GitHub."
+                    : "Captured line-by-line job output."}
+                </SurfaceDescription>
               </SurfaceHeader>
               <SurfaceBody>
                 {logs.length === 0 ? (
-                  <EmptyState title="No logs yet" description="Logs will appear here once the job starts emitting output." className="py-12" />
+                  <EmptyState
+                    title="No logs yet"
+                    description={
+                      isGitHubRunnerJob(job)
+                        ? "Provisioning logs will appear here once Kindling starts the GitHub runner."
+                        : "Logs will appear here once the job starts emitting output."
+                    }
+                    className="py-12"
+                  />
                 ) : (
                   <div className="rounded-lg border bg-muted/20">
                     <div className="max-h-[32rem] overflow-auto p-4 font-mono text-xs leading-6">
@@ -276,7 +328,11 @@ export function CIJobDetailPage() {
             <Surface>
               <SurfaceHeader>
                 <SurfaceTitle>Artifacts</SurfaceTitle>
-                <SurfaceDescription>Files registered for this job.</SurfaceDescription>
+                <SurfaceDescription>
+                  {isGitHubRunnerJob(job)
+                    ? "Kindling-managed artifacts only. GitHub Actions artifacts remain in GitHub."
+                    : "Files registered for this job."}
+                </SurfaceDescription>
               </SurfaceHeader>
               <SurfaceBody>
                 {artifacts.length === 0 ? (

@@ -12,33 +12,41 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/githubactions"
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 type JobService struct {
 	q          *queries.Queries
+	cfg        *config.Manager
 	serverID   uuid.UUID
 	resolver   WorkflowResolver
 	compiler   WorkflowCompiler
 	selection  RunnerSelection
 	publish    func(uuid.UUID)
 	publishJob func(uuid.UUID)
+	ghClient   githubactions.Client
+	ghRunner   GitHubRunnerProvisioner
 
 	mu      sync.Mutex
 	running map[uuid.UUID]context.CancelFunc
 }
 
-func NewJobService(q *queries.Queries, serverID uuid.UUID) *JobService {
+func NewJobService(q *queries.Queries, cfg *config.Manager, serverID uuid.UUID) *JobService {
 	return &JobService{
 		q:        q,
+		cfg:      cfg,
 		serverID: serverID,
 		resolver: NewFSWorkflowResolver(),
 		compiler: NewStaticWorkflowCompiler(),
 		selection: RunnerSelection{
 			RequireMicroVM: true,
 		},
-		running: map[uuid.UUID]context.CancelFunc{},
+		ghClient: githubactions.NewHTTPClient(nil, ""),
+		ghRunner: newDefaultGitHubRunnerProvisioner(),
+		running:  map[uuid.UUID]context.CancelFunc{},
 	}
 }
 
@@ -48,6 +56,18 @@ func (s *JobService) SetDashboardPublisher(fn func(uuid.UUID)) {
 
 func (s *JobService) SetJobDashboardPublisher(fn func(uuid.UUID)) {
 	s.publishJob = fn
+}
+
+func (s *JobService) SetGitHubRunnerClient(client githubactions.Client) {
+	if client != nil {
+		s.ghClient = client
+	}
+}
+
+func (s *JobService) SetGitHubRunnerProvisioner(p GitHubRunnerProvisioner) {
+	if p != nil {
+		s.ghRunner = p
+	}
 }
 
 type CreateJobRequest struct {
@@ -137,6 +157,9 @@ func (s *JobService) Reconcile(ctx context.Context, jobID uuid.UUID) error {
 	job, err := s.q.CIJobFirstByID(ctx, pguuid.ToPgtype(jobID))
 	if err != nil {
 		return fmt.Errorf("fetch ci job: %w", err)
+	}
+	if job.Source == "github_actions_runner" {
+		return s.reconcileGitHubRunnerJob(ctx, job)
 	}
 	if isTerminalStatus(job.Status) {
 		return nil

@@ -52,7 +52,7 @@ func newPreviewHarness(t *testing.T) *previewHarness {
 
 	q := queries.New(db.Pool)
 	api := rpc.NewAPI(q, nil, nil)
-	webhookHandler := webhook.NewHandler(q)
+	webhookHandler := webhook.NewHandler(q, nil)
 	mux := http.NewServeMux()
 	api.Register(mux)
 	mux.Handle("POST /webhooks/github", webhookHandler)
@@ -174,9 +174,9 @@ func TestPreviewLifecycle_WebhookAndAPIControls(t *testing.T) {
 
 	body := getOK(t, h.client, h.server.URL+"/api/projects/"+projectIDStr+"/previews")
 	var previews []struct {
-		ID              string `json:"id"`
-		LifecycleState  string `json:"lifecycle_state"`
-		HeadSHA         string `json:"head_sha"`
+		ID               string `json:"id"`
+		LifecycleState   string `json:"lifecycle_state"`
+		HeadSHA          string `json:"head_sha"`
 		LatestDeployment struct {
 			ID string `json:"id"`
 		} `json:"latest_deployment"`

@@ -2047,6 +2047,18 @@ export function ProjectDetailPage() {
                                   <span>{job.execution_backend || "pending backend"}</span>
                                   <span>•</span>
                                   <span>{job.require_microvm ? "MicroVM required" : "Host fallback allowed"}</span>
+                                  {job.source === "github_actions_runner" && job.external_repo ? (
+                                    <>
+                                      <span>•</span>
+                                      <span>{job.external_repo}</span>
+                                    </>
+                                  ) : null}
+                                  {job.runner_name ? (
+                                    <>
+                                      <span>•</span>
+                                      <span className="font-mono">{job.runner_name}</span>
+                                    </>
+                                  ) : null}
                                   {job.exit_code != null ? (
                                     <>
                                       <span>•</span>

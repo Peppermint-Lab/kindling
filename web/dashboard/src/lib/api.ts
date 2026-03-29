@@ -310,6 +310,15 @@ export type CIJob = {
   inputs?: Record<string, string>
   require_microvm: boolean
   execution_backend?: string
+  provider_connection_id?: string
+  external_repo?: string
+  external_installation_id?: number
+  external_workflow_job_id?: number
+  external_workflow_run_id?: number
+  external_run_attempt?: number
+  external_html_url?: string
+  runner_labels?: string[]
+  runner_name?: string
   exit_code?: number | null
   error_message?: string
   started_at?: string | null

@@ -1078,8 +1078,25 @@ INSERT INTO ci_jobs (
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 RETURNING *;
 
+-- name: CIJobCreateGitHubRunner :one
+INSERT INTO ci_jobs (
+  id, project_id, status, source, workflow_name, workflow_file, selected_job_id,
+  event_name, input_values, input_archive_path, provider_connection_id, external_repo,
+  external_installation_id, external_workflow_job_id, external_workflow_run_id, external_run_attempt,
+  external_html_url, runner_labels, runner_name, require_microvm, workspace_dir, error_message
+)
+VALUES (
+  $1, $2, $3, 'github_actions_runner', $4, $5, $6, $7, $8, $9, $10, $11,
+  $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+)
+RETURNING *;
+
 -- name: CIJobFirstByID :one
 SELECT * FROM ci_jobs WHERE id = $1;
+
+-- name: CIJobFirstByExternalWorkflowJobID :one
+SELECT * FROM ci_jobs
+WHERE source = 'github_actions_runner' AND external_workflow_job_id = $1;
 
 -- name: CIJobFirstByIDAndOrg :one
 SELECT j.*

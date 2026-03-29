@@ -20,25 +20,34 @@ import (
 )
 
 type ciJobOut struct {
-	ID               string            `json:"id"`
-	ProjectID        string            `json:"project_id"`
-	ProjectName      string            `json:"project_name,omitempty"`
-	Status           string            `json:"status"`
-	Source           string            `json:"source"`
-	WorkflowName     string            `json:"workflow_name"`
-	WorkflowFile     string            `json:"workflow_file"`
-	SelectedJobID    string            `json:"selected_job_id,omitempty"`
-	EventName        string            `json:"event_name,omitempty"`
-	Inputs           map[string]string `json:"inputs,omitempty"`
-	RequireMicroVM   bool              `json:"require_microvm"`
-	ExecutionBackend string            `json:"execution_backend,omitempty"`
-	ExitCode         *int32            `json:"exit_code,omitempty"`
-	ErrorMessage     string            `json:"error_message,omitempty"`
-	StartedAt        *string           `json:"started_at,omitempty"`
-	FinishedAt       *string           `json:"finished_at,omitempty"`
-	CanceledAt       *string           `json:"canceled_at,omitempty"`
-	CreatedAt        *string           `json:"created_at,omitempty"`
-	UpdatedAt        *string           `json:"updated_at,omitempty"`
+	ID                     string            `json:"id"`
+	ProjectID              string            `json:"project_id"`
+	ProjectName            string            `json:"project_name,omitempty"`
+	Status                 string            `json:"status"`
+	Source                 string            `json:"source"`
+	WorkflowName           string            `json:"workflow_name"`
+	WorkflowFile           string            `json:"workflow_file"`
+	SelectedJobID          string            `json:"selected_job_id,omitempty"`
+	EventName              string            `json:"event_name,omitempty"`
+	Inputs                 map[string]string `json:"inputs,omitempty"`
+	RequireMicroVM         bool              `json:"require_microvm"`
+	ExecutionBackend       string            `json:"execution_backend,omitempty"`
+	ProviderConnectionID   string            `json:"provider_connection_id,omitempty"`
+	ExternalRepo           string            `json:"external_repo,omitempty"`
+	ExternalInstallationID int64             `json:"external_installation_id,omitempty"`
+	ExternalWorkflowJobID  int64             `json:"external_workflow_job_id,omitempty"`
+	ExternalWorkflowRunID  int64             `json:"external_workflow_run_id,omitempty"`
+	ExternalRunAttempt     int32             `json:"external_run_attempt,omitempty"`
+	ExternalHTMLURL        string            `json:"external_html_url,omitempty"`
+	RunnerLabels           []string          `json:"runner_labels,omitempty"`
+	RunnerName             string            `json:"runner_name,omitempty"`
+	ExitCode               *int32            `json:"exit_code,omitempty"`
+	ErrorMessage           string            `json:"error_message,omitempty"`
+	StartedAt              *string           `json:"started_at,omitempty"`
+	FinishedAt             *string           `json:"finished_at,omitempty"`
+	CanceledAt             *string           `json:"canceled_at,omitempty"`
+	CreatedAt              *string           `json:"created_at,omitempty"`
+	UpdatedAt              *string           `json:"updated_at,omitempty"`
 }
 
 type ciJobArtifactOut struct {
@@ -65,30 +74,45 @@ type ciWorkflowJobOut struct {
 func ciJobToOut(job queries.CiJob) ciJobOut {
 	var inputs map[string]string
 	_ = json.Unmarshal(job.InputValues, &inputs)
+	var labels []string
+	_ = json.Unmarshal(job.RunnerLabels, &labels)
 	var exitCode *int32
 	if job.ExitCode.Valid {
 		v := job.ExitCode.Int32
 		exitCode = &v
 	}
+	providerConnectionID := ""
+	if job.ProviderConnectionID.Valid {
+		providerConnectionID = pguuid.ToString(job.ProviderConnectionID)
+	}
 	return ciJobOut{
-		ID:               pguuid.ToString(job.ID),
-		ProjectID:        pguuid.ToString(job.ProjectID),
-		Status:           job.Status,
-		Source:           job.Source,
-		WorkflowName:     job.WorkflowName,
-		WorkflowFile:     job.WorkflowFile,
-		SelectedJobID:    job.SelectedJobID,
-		EventName:        job.EventName,
-		Inputs:           inputs,
-		RequireMicroVM:   job.RequireMicrovm,
-		ExecutionBackend: strings.TrimSpace(job.ExecutionBackend),
-		ExitCode:         exitCode,
-		ErrorMessage:     strings.TrimSpace(job.ErrorMessage),
-		StartedAt:        rpcutil.FormatTS(job.StartedAt),
-		FinishedAt:       rpcutil.FormatTS(job.FinishedAt),
-		CanceledAt:       rpcutil.FormatTS(job.CanceledAt),
-		CreatedAt:        rpcutil.FormatTS(job.CreatedAt),
-		UpdatedAt:        rpcutil.FormatTS(job.UpdatedAt),
+		ID:                     pguuid.ToString(job.ID),
+		ProjectID:              pguuid.ToString(job.ProjectID),
+		Status:                 job.Status,
+		Source:                 job.Source,
+		WorkflowName:           job.WorkflowName,
+		WorkflowFile:           job.WorkflowFile,
+		SelectedJobID:          job.SelectedJobID,
+		EventName:              job.EventName,
+		Inputs:                 inputs,
+		RequireMicroVM:         job.RequireMicrovm,
+		ExecutionBackend:       strings.TrimSpace(job.ExecutionBackend),
+		ProviderConnectionID:   providerConnectionID,
+		ExternalRepo:           strings.TrimSpace(job.ExternalRepo),
+		ExternalInstallationID: job.ExternalInstallationID,
+		ExternalWorkflowJobID:  job.ExternalWorkflowJobID,
+		ExternalWorkflowRunID:  job.ExternalWorkflowRunID,
+		ExternalRunAttempt:     job.ExternalRunAttempt,
+		ExternalHTMLURL:        strings.TrimSpace(job.ExternalHtmlUrl),
+		RunnerLabels:           labels,
+		RunnerName:             strings.TrimSpace(job.RunnerName),
+		ExitCode:               exitCode,
+		ErrorMessage:           strings.TrimSpace(job.ErrorMessage),
+		StartedAt:              rpcutil.FormatTS(job.StartedAt),
+		FinishedAt:             rpcutil.FormatTS(job.FinishedAt),
+		CanceledAt:             rpcutil.FormatTS(job.CanceledAt),
+		CreatedAt:              rpcutil.FormatTS(job.CreatedAt),
+		UpdatedAt:              rpcutil.FormatTS(job.UpdatedAt),
 	}
 }
 
@@ -100,27 +124,36 @@ func ciJobToOutWithProjectName(job queries.CiJob, projectName string) ciJobOut {
 
 func ciJobListRowToOut(row queries.CIJobFindRecentWithProjectForOrgRow) ciJobOut {
 	return ciJobToOutWithProjectName(queries.CiJob{
-		ID:               row.ID,
-		ProjectID:        row.ProjectID,
-		Status:           row.Status,
-		Source:           row.Source,
-		WorkflowName:     row.WorkflowName,
-		WorkflowFile:     row.WorkflowFile,
-		SelectedJobID:    row.SelectedJobID,
-		EventName:        row.EventName,
-		InputValues:      row.InputValues,
-		InputArchivePath: row.InputArchivePath,
-		RequireMicrovm:   row.RequireMicrovm,
-		ExecutionBackend: row.ExecutionBackend,
-		WorkspaceDir:     row.WorkspaceDir,
-		ProcessingBy:     row.ProcessingBy,
-		ExitCode:         row.ExitCode,
-		ErrorMessage:     row.ErrorMessage,
-		StartedAt:        row.StartedAt,
-		FinishedAt:       row.FinishedAt,
-		CanceledAt:       row.CanceledAt,
-		CreatedAt:        row.CreatedAt,
-		UpdatedAt:        row.UpdatedAt,
+		ID:                     row.ID,
+		ProjectID:              row.ProjectID,
+		Status:                 row.Status,
+		Source:                 row.Source,
+		WorkflowName:           row.WorkflowName,
+		WorkflowFile:           row.WorkflowFile,
+		SelectedJobID:          row.SelectedJobID,
+		EventName:              row.EventName,
+		InputValues:            row.InputValues,
+		InputArchivePath:       row.InputArchivePath,
+		ProviderConnectionID:   row.ProviderConnectionID,
+		ExternalRepo:           row.ExternalRepo,
+		ExternalInstallationID: row.ExternalInstallationID,
+		ExternalWorkflowJobID:  row.ExternalWorkflowJobID,
+		ExternalWorkflowRunID:  row.ExternalWorkflowRunID,
+		ExternalRunAttempt:     row.ExternalRunAttempt,
+		ExternalHtmlUrl:        row.ExternalHtmlUrl,
+		RunnerLabels:           row.RunnerLabels,
+		RunnerName:             row.RunnerName,
+		RequireMicrovm:         row.RequireMicrovm,
+		ExecutionBackend:       row.ExecutionBackend,
+		WorkspaceDir:           row.WorkspaceDir,
+		ProcessingBy:           row.ProcessingBy,
+		ExitCode:               row.ExitCode,
+		ErrorMessage:           row.ErrorMessage,
+		StartedAt:              row.StartedAt,
+		FinishedAt:             row.FinishedAt,
+		CanceledAt:             row.CanceledAt,
+		CreatedAt:              row.CreatedAt,
+		UpdatedAt:              row.UpdatedAt,
 	}, row.ProjectName)
 }
 

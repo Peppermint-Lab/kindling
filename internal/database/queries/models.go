@@ -57,27 +57,36 @@ type CertmagicDatum struct {
 }
 
 type CiJob struct {
-	ID               pgtype.UUID        `json:"id"`
-	ProjectID        pgtype.UUID        `json:"project_id"`
-	Status           string             `json:"status"`
-	Source           string             `json:"source"`
-	WorkflowName     string             `json:"workflow_name"`
-	WorkflowFile     string             `json:"workflow_file"`
-	SelectedJobID    string             `json:"selected_job_id"`
-	EventName        string             `json:"event_name"`
-	InputValues      []byte             `json:"input_values"`
-	InputArchivePath string             `json:"input_archive_path"`
-	RequireMicrovm   bool               `json:"require_microvm"`
-	ExecutionBackend string             `json:"execution_backend"`
-	WorkspaceDir     string             `json:"workspace_dir"`
-	ProcessingBy     pgtype.UUID        `json:"processing_by"`
-	ExitCode         pgtype.Int4        `json:"exit_code"`
-	ErrorMessage     string             `json:"error_message"`
-	StartedAt        pgtype.Timestamptz `json:"started_at"`
-	FinishedAt       pgtype.Timestamptz `json:"finished_at"`
-	CanceledAt       pgtype.Timestamptz `json:"canceled_at"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	ID                     pgtype.UUID        `json:"id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	Status                 string             `json:"status"`
+	Source                 string             `json:"source"`
+	WorkflowName           string             `json:"workflow_name"`
+	WorkflowFile           string             `json:"workflow_file"`
+	SelectedJobID          string             `json:"selected_job_id"`
+	EventName              string             `json:"event_name"`
+	InputValues            []byte             `json:"input_values"`
+	InputArchivePath       string             `json:"input_archive_path"`
+	ProviderConnectionID   pgtype.UUID        `json:"provider_connection_id"`
+	ExternalRepo           string             `json:"external_repo"`
+	ExternalInstallationID int64              `json:"external_installation_id"`
+	ExternalWorkflowJobID  int64              `json:"external_workflow_job_id"`
+	ExternalWorkflowRunID  int64              `json:"external_workflow_run_id"`
+	ExternalRunAttempt     int32              `json:"external_run_attempt"`
+	ExternalHtmlUrl        string             `json:"external_html_url"`
+	RunnerLabels           []byte             `json:"runner_labels"`
+	RunnerName             string             `json:"runner_name"`
+	RequireMicrovm         bool               `json:"require_microvm"`
+	ExecutionBackend       string             `json:"execution_backend"`
+	WorkspaceDir           string             `json:"workspace_dir"`
+	ProcessingBy           pgtype.UUID        `json:"processing_by"`
+	ExitCode               pgtype.Int4        `json:"exit_code"`
+	ErrorMessage           string             `json:"error_message"`
+	StartedAt              pgtype.Timestamptz `json:"started_at"`
+	FinishedAt             pgtype.Timestamptz `json:"finished_at"`
+	CanceledAt             pgtype.Timestamptz `json:"canceled_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
 
 type CiJobArtifact struct {
