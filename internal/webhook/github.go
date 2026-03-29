@@ -260,13 +260,8 @@ func (h *Handler) handleWorkflowJob(w http.ResponseWriter, r *http.Request, body
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if strings.TrimSpace(secret) == "" {
-		http.Error(w, "github actions runner webhook secret is not configured", http.StatusServiceUnavailable)
-		return
-	}
 	sig := r.Header.Get("X-Hub-Signature-256")
-	if !verifySignature(body, sig, secret) {
-		http.Error(w, "invalid signature", http.StatusUnauthorized)
+	if !enforceSignature(w, body, sig, secret) {
 		return
 	}
 
@@ -362,12 +357,9 @@ func (h *Handler) handlePush(w http.ResponseWriter, r *http.Request, body []byte
 		return
 	}
 
-	if project.GithubWebhookSecret != "" {
-		sig := r.Header.Get("X-Hub-Signature-256")
-		if !verifySignature(body, sig, project.GithubWebhookSecret) {
-			http.Error(w, "invalid signature", http.StatusUnauthorized)
-			return
-		}
+	sig := r.Header.Get("X-Hub-Signature-256")
+	if !enforceSignature(w, body, sig, project.GithubWebhookSecret) {
+		return
 	}
 
 	services, err := h.q.ServiceListByProjectID(r.Context(), project.ID)
@@ -470,12 +462,9 @@ func (h *Handler) handlePullRequest(w http.ResponseWriter, r *http.Request, body
 		return
 	}
 
-	if project.GithubWebhookSecret != "" {
-		sig := r.Header.Get("X-Hub-Signature-256")
-		if !verifySignature(body, sig, project.GithubWebhookSecret) {
-			http.Error(w, "invalid signature", http.StatusUnauthorized)
-			return
-		}
+	sig := r.Header.Get("X-Hub-Signature-256")
+	if !enforceSignature(w, body, sig, project.GithubWebhookSecret) {
+		return
 	}
 
 	ctx := r.Context()
@@ -705,6 +694,44 @@ func (h *Handler) handlePullRequestSync(w http.ResponseWriter, ctx context.Conte
 	})
 }
 
+// enforceSignature validates the webhook HMAC-SHA256 signature. It writes an
+// error response and returns false when verification fails:
+//   - 401 if the project has no configured webhook secret (blank/empty)
+//   - 401 if X-Hub-Signature-256 is missing, has the wrong prefix, or non-hex digest
+//   - 403 if the signature is well-formed but the HMAC does not match
+//
+// Returns true only when the signature is present, well-formed, and correct.
+func enforceSignature(w http.ResponseWriter, body []byte, signature, secret string) bool {
+	if strings.TrimSpace(secret) == "" {
+		http.Error(w, "webhook secret not configured", http.StatusUnauthorized)
+		return false
+	}
+	if signature == "" {
+		http.Error(w, "missing X-Hub-Signature-256", http.StatusUnauthorized)
+		return false
+	}
+	if !strings.HasPrefix(signature, "sha256=") {
+		http.Error(w, "invalid signature prefix", http.StatusUnauthorized)
+		return false
+	}
+	hexDigest := strings.TrimPrefix(signature, "sha256=")
+	sig, err := hex.DecodeString(hexDigest)
+	if err != nil {
+		http.Error(w, "malformed signature hex", http.StatusUnauthorized)
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	expected := mac.Sum(nil)
+	if !hmac.Equal(sig, expected) {
+		http.Error(w, "signature mismatch", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+// verifySignature is a legacy helper retained for backward compatibility.
+// New code should use enforceSignature instead.
 func verifySignature(payload []byte, signature, secret string) bool {
 	if !strings.HasPrefix(signature, "sha256=") {
 		return false
