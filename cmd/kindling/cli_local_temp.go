@@ -119,7 +119,7 @@ func cliLocalTempExecCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&cwdFlag, "cwd", "/app", "Working directory")
+	cmd.Flags().StringVar(&cwdFlag, "cwd", "/", "Working directory")
 	cmd.Flags().StringArrayVar(&envFlags, "env", nil, "Environment variables (KEY=value)")
 	return cmd
 }

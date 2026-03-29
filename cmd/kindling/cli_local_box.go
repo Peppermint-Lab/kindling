@@ -96,7 +96,7 @@ func cliLocalBoxShellCmd() *cobra.Command {
 			if id == "" {
 				return fmt.Errorf("box not configured")
 			}
-			return api.RunShell(cmd.Context(), id, []string{"sh"}, "/app", nil)
+			return api.RunShell(cmd.Context(), id, []string{"sh"}, "/", nil)
 		},
 	}
 }

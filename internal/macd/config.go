@@ -13,9 +13,9 @@ import (
 
 // Config represents ~/.kindling-mac.yaml.
 type Config struct {
-	Box  BoxGroupConfig  `yaml:"box"`
-	Temp TempGroupConfig `yaml:"temp"`
-	Daemon DaemonConfig      `yaml:"daemon"`
+	Box    BoxGroupConfig  `yaml:"box"`
+	Temp   TempGroupConfig `yaml:"temp"`
+	Daemon DaemonConfig    `yaml:"daemon"`
 }
 
 type BoxGroupConfig struct {
@@ -42,11 +42,12 @@ type SharedFolderConfig struct {
 }
 
 type DaemonConfig struct {
-	SocketPath     string `yaml:"socket_path"`
-	StateDB        string `yaml:"state_db"`
-	GuestAgentPath string `yaml:"guest_agent_path"`
-	KernelPath     string `yaml:"kernel_path"`
-	InitramfsPath  string `yaml:"initramfs_path"`
+	SocketPath        string `yaml:"socket_path"`
+	StateDB           string `yaml:"state_db"`
+	GuestAgentPath    string `yaml:"guest_agent_path"`
+	KernelPath        string `yaml:"kernel_path"`
+	InitramfsPath     string `yaml:"initramfs_path"`
+	RootfsArchivePath string `yaml:"rootfs_archive_path"`
 }
 
 // DefaultConfig returns a config with sensible defaults for ~/.kindling-mac.yaml.
@@ -71,11 +72,12 @@ func DefaultConfig() *Config {
 			Rosetta:       false,
 		},
 		Daemon: DaemonConfig{
-			SocketPath:     filepath.Join(kindlingMacDir, "kindling-mac.sock"),
-			StateDB:        filepath.Join(kindlingMacDir, "state.db"),
-			GuestAgentPath: filepath.Join(kindlingMacDir, "guest-agent"),
-			KernelPath:     filepath.Join(kindlingMacDir, "vmlinuz"),
-			InitramfsPath:  filepath.Join(kindlingMacDir, "initramfs.cpio.gz"),
+			SocketPath:        filepath.Join(kindlingMacDir, "kindling-mac.sock"),
+			StateDB:           filepath.Join(kindlingMacDir, "state.db"),
+			GuestAgentPath:    filepath.Join(kindlingMacDir, "guest-agent"),
+			KernelPath:        filepath.Join(kindlingMacDir, "vmlinuz"),
+			InitramfsPath:     filepath.Join(kindlingMacDir, "initramfs.cpio.gz"),
+			RootfsArchivePath: filepath.Join(kindlingMacDir, "rootfs.tar.gz"),
 		},
 	}
 }
@@ -113,6 +115,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if cfg.Daemon.InitramfsPath == "" {
 		cfg.Daemon.InitramfsPath = filepath.Join(userHomeDir(), ".kindling-mac", "initramfs.cpio.gz")
+	}
+	if cfg.Daemon.RootfsArchivePath == "" {
+		cfg.Daemon.RootfsArchivePath = filepath.Join(userHomeDir(), ".kindling-mac", "rootfs.tar.gz")
 	}
 
 	return &cfg, nil

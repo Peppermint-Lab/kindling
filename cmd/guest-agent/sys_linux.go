@@ -25,6 +25,10 @@ func mountGuestBootstrap() {
 	syscall.Mount("proc", "/proc", "proc", 0, "")
 	syscall.Mount("sysfs", "/sys", "sysfs", 0, "")
 	syscall.Mount("devtmpfs", "/dev", "devtmpfs", 0, "")
+	os.MkdirAll("/dev/pts", 0o755)
+	os.MkdirAll("/dev/shm", 0o1777)
+	syscall.Mount("devpts", "/dev/pts", "devpts", 0, "")
+	syscall.Mount("tmpfs", "/dev/shm", "tmpfs", 0, "")
 	syscall.Mount("tmpfs", "/tmp", "tmpfs", 0, "")
 }
 
@@ -85,6 +89,10 @@ func chrootIntoApp(cfg *ConfigResponse) {
 	syscall.Mount("proc", "/proc", "proc", 0, "")
 	syscall.Mount("sysfs", "/sys", "sysfs", 0, "")
 	syscall.Mount("devtmpfs", "/dev", "devtmpfs", 0, "")
+	os.MkdirAll("/dev/pts", 0o755)
+	os.MkdirAll("/dev/shm", 0o1777)
+	syscall.Mount("devpts", "/dev/pts", "devpts", 0, "")
+	syscall.Mount("tmpfs", "/dev/shm", "tmpfs", 0, "")
 	syscall.Mount("tmpfs", "/tmp", "tmpfs", 0, "")
 }
 

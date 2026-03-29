@@ -3,6 +3,8 @@
 package macd
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -193,9 +195,16 @@ func (m *Manager) startVM(ctx context.Context, vm *VM, hostGroup string) (*local
 		return nil, fmt.Errorf("create rootfs dir: %w", err)
 	}
 
-	// Create a placeholder so the directory is not empty.
-	if err := os.WriteFile(filepath.Join(rootfsDir, ".kindling"), []byte{}, 0644); err != nil {
-		return nil, fmt.Errorf("create rootfs marker: %w", err)
+	if err := seedRootFS(rootfsDir, m.cfg.Daemon.RootfsArchivePath); err != nil {
+		return nil, fmt.Errorf("seed rootfs: %w", err)
+	}
+	if empty, err := dirEmpty(rootfsDir); err != nil {
+		return nil, fmt.Errorf("check rootfs dir: %w", err)
+	} else if empty {
+		// Create a placeholder so the directory is not empty.
+		if err := os.WriteFile(filepath.Join(rootfsDir, ".kindling"), []byte{}, 0644); err != nil {
+			return nil, fmt.Errorf("create rootfs marker: %w", err)
+		}
 	}
 
 	return m.bootVM(ctx, vm, hostGroup, cfg, kernelPath, initramfsPath, rootfsDir)
@@ -350,7 +359,7 @@ func (m *Manager) bootVM(ctx context.Context, vm *VM, hostGroup string, cfg Grou
 		return nil, fmt.Errorf("create vm: %w", err)
 	}
 
-	runCtx, cancel := context.WithCancel(ctx)
+	runCtx, cancel := context.WithCancel(context.Background())
 	lvm := &localVM{
 		id:        vm.ID,
 		name:      vm.Name,
@@ -402,7 +411,7 @@ func (m *Manager) bootVM(ctx context.Context, vm *VM, hostGroup string, cfg Grou
 	// Wait for guest to become ready.
 	select {
 	case <-lvm.readyCh:
-	case <-runCtx.Done():
+	case <-ctx.Done():
 		cancel()
 		return nil, fmt.Errorf("start cancelled")
 	case <-time.After(guestReadyTimeout):
@@ -471,6 +480,110 @@ func expandPath(p string) (string, error) {
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+func dirEmpty(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	_, err = f.Readdirnames(1)
+	if err == io.EOF {
+		return true, nil
+	}
+	return false, err
+}
+
+func seedRootFS(rootfsDir, archivePath string) error {
+	if strings.TrimSpace(archivePath) == "" {
+		return nil
+	}
+	empty, err := dirEmpty(rootfsDir)
+	if err != nil {
+		return err
+	}
+	if !empty {
+		return nil
+	}
+	archivePath = os.ExpandEnv(archivePath)
+	if strings.HasPrefix(archivePath, "~/") {
+		home, _ := os.UserHomeDir()
+		archivePath = filepath.Join(home, archivePath[2:])
+	}
+	if _, err := os.Stat(archivePath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return extractTarGz(rootfsDir, archivePath)
+}
+
+func extractTarGz(destDir, archivePath string) error {
+	f, err := os.Open(archivePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	gzr, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer gzr.Close()
+
+	tr := tar.NewReader(gzr)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		name := strings.TrimPrefix(filepath.Clean(hdr.Name), string(filepath.Separator))
+		if name == "." || name == "" {
+			continue
+		}
+		target := filepath.Join(destDir, name)
+		rel, err := filepath.Rel(destDir, target)
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(rel, "..") {
+			return fmt.Errorf("invalid rootfs archive path: %s", hdr.Name)
+		}
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, os.FileMode(hdr.Mode)); err != nil {
+				return err
+			}
+		case tar.TypeSymlink:
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return err
+			}
+			_ = os.Remove(target)
+			if err := os.Symlink(hdr.Linkname, target); err != nil {
+				return err
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return err
+			}
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(hdr.Mode))
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(out, tr); err != nil {
+				out.Close()
+				return err
+			}
+			if err := out.Close(); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func (lvm *localVM) handleVsockConn(conn net.Conn) {
@@ -604,7 +717,7 @@ func (m *Manager) Exec(ctx context.Context, id string, argv []string, cwd string
 	defer conn.Close()
 
 	if cwd == "" {
-		cwd = "/app"
+		cwd = "/"
 	}
 
 	return execGuestHTTP(ctx, conn, argv, cwd, extraEnv)
@@ -625,7 +738,7 @@ func (m *Manager) OpenShell(ctx context.Context, id string, argv []string, cwd s
 		return nil, fmt.Errorf("vsock connect: %w", err)
 	}
 	if cwd == "" {
-		cwd = "/app"
+		cwd = "/"
 	}
 	if len(argv) == 0 {
 		argv = []string{"sh"}

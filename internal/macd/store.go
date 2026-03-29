@@ -16,17 +16,17 @@ type Store struct {
 
 // VM represents a local microVM.
 type VM struct {
-	ID        string
-	Name      string
-	HostGroup string // "box" or "temp"
-	Status    string // "running", "stopped", "suspended"
-	Arch      string
-	VCPUs     int
-	MemoryMB  int
-	DiskMB    int
-	CreatedAt time.Time
-	Template  string // parent template id, empty if not a clone
-	HostPort  int    // localhost TCP port when running (0 if stopped)
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	HostGroup string    `json:"host_group"` // "box" or "temp"
+	Status    string    `json:"status"`     // "running", "stopped", "suspended"
+	Arch      string    `json:"arch"`
+	VCPUs     int       `json:"vcpus"`
+	MemoryMB  int       `json:"memory_mb"`
+	DiskMB    int       `json:"disk_mb"`
+	CreatedAt time.Time `json:"created_at"`
+	Template  string    `json:"template"`  // parent template id, empty if not a clone
+	HostPort  int       `json:"host_port"` // localhost TCP port when running (0 if stopped)
 }
 
 // NewStore opens (and creates if missing) the SQLite database at path.
@@ -222,11 +222,11 @@ func (s *Store) ListTemplates(hostGroup string) ([]Template, error) {
 
 // Template represents a VM template.
 type Template struct {
-	ID        string
-	Name      string
-	HostGroup string
-	CreatedAt time.Time
-	SizeMB    int
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	HostGroup string    `json:"host_group"`
+	CreatedAt time.Time `json:"created_at"`
+	SizeMB    int       `json:"size_mb"`
 }
 
 // CreateTemplate inserts a new template record.

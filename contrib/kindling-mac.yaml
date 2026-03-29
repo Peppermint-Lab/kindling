@@ -28,3 +28,4 @@ daemon:
   guest_agent_path: "~/.kindling-mac/guest-agent"
   kernel_path: "~/.kindling-mac/vmlinuz"
   initramfs_path: "~/.kindling-mac/initramfs.cpio.gz"
+  rootfs_archive_path: "~/.kindling-mac/rootfs.tar.gz"

@@ -89,7 +89,11 @@ func main() {
 	setHostname(cfg.Hostname)
 
 	// Chroot into the container rootfs if available.
-	chrootIntoApp(cfg)
+	if isLocalShellMode(cfg.Mode) && !localRootFSAvailable() {
+		log.Printf("skipping chroot for %s mode", cfg.Mode)
+	} else {
+		chrootIntoApp(cfg)
+	}
 
 	// Start log streaming to host.
 	logWriter := startLogStream()
@@ -102,6 +106,15 @@ func main() {
 	appCmd := startApp(cfg.Env, logWriter)
 	appRef.set(appCmd)
 	if appCmd == nil {
+		if isLocalShellMode(cfg.Mode) {
+			log.Printf("no application found in %s mode, enabling shell-only guest", cfg.Mode)
+			if err := notifyReady(); err != nil {
+				log.Printf("warning: ready notification failed: %v", err)
+			} else {
+				log.Printf("notified host ready (shell-only mode)")
+			}
+			select {} // keep control/stats servers alive for interactive use
+		}
 		log.Println("no application found, idling")
 		select {} // block forever
 	}
@@ -245,6 +258,20 @@ func renderResolvConf(cfg *ConfigResponse) string {
 		b.WriteString("nameserver 1.1.1.1\n")
 	}
 	return b.String()
+}
+
+func isLocalShellMode(mode string) bool {
+	switch strings.TrimSpace(mode) {
+	case "box", "temp":
+		return true
+	default:
+		return false
+	}
+}
+
+func localRootFSAvailable() bool {
+	_, err := os.Stat("/app/bin/sh")
+	return err == nil
 }
 
 func startLogStream() io.Writer {

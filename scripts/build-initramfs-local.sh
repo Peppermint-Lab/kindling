@@ -11,9 +11,11 @@ if command -v gcpio >/dev/null 2>&1; then
   CPIO=gcpio
 elif cpio --version 2>&1 | grep -q GNU; then
   CPIO=cpio
+elif cpio --help 2>&1 | grep -q -- '--format .*newc'; then
+  CPIO=cpio
 else
-  echo "error: GNU cpio is required for initramfs (newc format)." >&2
-  echo "  macOS: brew install gnu-cpio  # then ensure gcpio is on PATH" >&2
+  echo "error: cpio with newc format support is required for initramfs." >&2
+  echo "  macOS: install GNU cpio or use BSD cpio with --format newc support" >&2
   echo "  Or use prebuilt: make initramfs-download" >&2
   exit 1
 fi
