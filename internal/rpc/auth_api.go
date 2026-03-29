@@ -291,48 +291,39 @@ func bootstrapRequestAllowed(r *http.Request) bool {
 		}
 	}
 
-	ip, ok := bootstrapClientIP(r)
-	return ok && ip.IsLoopback()
+	peer, ok := parseRequestIP(r.RemoteAddr)
+	if !ok {
+		return false
+	}
+
+	// Non-loopback peers are never allowed without a token.
+	if !peer.IsLoopback() {
+		return false
+	}
+
+	// Peer is loopback. If ANY proxy header is present the request
+	// arrived through the edge proxy (which forwards external traffic
+	// to the API on 127.0.0.1:8080). In that case, require a token
+	// regardless of what X-Forwarded-For says — XFF can be spoofed
+	// by the external client since the edge proxy doesn't yet
+	// sanitize it.
+	if hasProxyHeaders(r) {
+		return false
+	}
+
+	// Direct loopback connection (no proxy headers) — allow.
+	return true
 }
 
+// bootstrapClientIP returns the effective client IP for bootstrap logging
+// and diagnostics. It never trusts X-Forwarded-For; all bootstrap
+// authorization decisions are made by bootstrapRequestAllowed above using
+// the peer IP and proxy-header presence only.
 func bootstrapClientIP(r *http.Request) (net.IP, bool) {
 	peer, ok := parseRequestIP(r.RemoteAddr)
 	if !ok {
 		return nil, false
 	}
-
-	// When the peer is not loopback, use the peer IP directly.
-	if !peer.IsLoopback() {
-		return peer, true
-	}
-
-	// Peer is loopback. Distinguish direct local connections from
-	// edge-proxied traffic by checking for proxy headers.
-	// The edge proxy runs on the same host, forwarding external requests
-	// to the API on 127.0.0.1:8080. Without this check, all proxied
-	// external requests would be treated as local loopback.
-	if hasProxyHeaders(r) {
-		// Request came through a proxy. Use X-Forwarded-For as the
-		// effective client IP so external attackers cannot bootstrap
-		// without a token.
-		xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
-		if xff == "" {
-			// Proxy headers present but no XFF — fail closed.
-			return nil, false
-		}
-		// Take the first (leftmost) IP from X-Forwarded-For.
-		if idx := strings.IndexByte(xff, ','); idx >= 0 {
-			xff = strings.TrimSpace(xff[:idx])
-		}
-		ip := net.ParseIP(xff)
-		if ip == nil {
-			// Malformed XFF — fail closed.
-			return nil, false
-		}
-		return ip, true
-	}
-
-	// Direct loopback connection (no proxy headers) — allow as local.
 	return peer, true
 }
 

@@ -24,9 +24,9 @@ func TestBootstrapRequestAllowedRejectsProxiedLoopbackWithExternalXFF(t *testing
 	req.RemoteAddr = "127.0.0.1:1234"
 	req.Header.Set("X-Forwarded-For", "203.0.113.5")
 
-	// After the security fix: when peer is loopback and proxy headers
-	// are present, the forwarded IP (203.0.113.5) is used as effective
-	// client IP. Since it's not loopback, bootstrap is rejected.
+	// When peer is loopback and proxy headers are present (XFF set),
+	// bootstrap is always rejected without a token — XFF is never
+	// trusted for bootstrap authorization.
 	if bootstrapRequestAllowed(req) {
 		t.Fatal("expected edge-proxied request with non-loopback XFF to be rejected")
 	}
