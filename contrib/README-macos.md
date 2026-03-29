@@ -5,17 +5,7 @@ Run Linux microVMs directly on your Mac using Apple's Virtualization Framework â
 ## Quick Start
 
 ```bash
-# Download source from GitHub
-curl -fsSL https://github.com/Peppermint-Lab/kindling/archive/refs/heads/main.tar.gz -o kindling-main.tar.gz
-tar -xzf kindling-main.tar.gz
-cd kindling-main
-
-# Build the CLI and macOS daemon
-make build kindling-mac
-
-# Install the binaries somewhere on PATH
-sudo install -m 0755 bin/kindling /usr/local/bin/kindling
-sudo install -m 0755 bin/kindling-mac /usr/local/bin/kindling-mac
+curl -fsSL https://raw.githubusercontent.com/Peppermint-Lab/kindling/main/contrib/install-kindling-mac.sh | bash
 
 # Start the daemon
 kindling-mac
@@ -58,6 +48,8 @@ kindling local box shell
 - **temp**: Ephemeral disposable VMs for agents, CI, and short-lived tasks. Fast to start, deleted when stopped.
 
 ## Setup
+
+The installer above handles the default build/install path. If you want to do it manually or customize the paths, use the steps below.
 
 ### 1. Download the kernel, initramfs, and rootfs
 
