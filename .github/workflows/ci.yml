@@ -12,7 +12,9 @@ concurrency:
 
 jobs:
   go:
-    runs-on: ubuntu-latest
+    # First-stage Kindling runner rollout. Keep the dashboard job on GitHub-hosted
+    # runners until the self-hosted path has baked in.
+    runs-on: [self-hosted, kindling, linux, x64]
     steps:
       - uses: actions/checkout@v4
 
