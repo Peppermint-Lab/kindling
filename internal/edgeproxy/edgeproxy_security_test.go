@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // headerEchoHandler writes back all received request headers as JSON so tests
@@ -438,5 +439,52 @@ func TestReverseProxy_NoForwardingHeaders(t *testing.T) {
 	xri := hdrs["X-Real-Ip"]
 	if len(xri) != 1 || xri[0] != "203.0.113.42" {
 		t.Fatalf("expected X-Real-IP=[203.0.113.42], got %v", xri)
+	}
+}
+
+// ---------- VAL-HEADERS-004: HTTPS write timeout is 30 seconds ----------
+
+func TestHTTPSWriteTimeout_Default30Seconds(t *testing.T) {
+	t.Parallel()
+
+	// The constant must be exactly 30 seconds.
+	if defaultHTTPSWriteTimeout != 30*time.Second {
+		t.Fatalf("defaultHTTPSWriteTimeout = %v, want 30s", defaultHTTPSWriteTimeout)
+	}
+}
+
+func TestHTTPSWriteTimeout_AppliedToService(t *testing.T) {
+	t.Parallel()
+
+	// When ColdStartTimeout is small enough that cold+margin ≤ 30s,
+	// the service should use the 30s default.
+	cfg := Config{
+		ColdStartTimeout: 10 * time.Second,
+	}
+	svc, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if svc.httpsWriteTimeout != 30*time.Second {
+		t.Fatalf("httpsWriteTimeout = %v, want 30s", svc.httpsWriteTimeout)
+	}
+}
+
+func TestHTTPSWriteTimeout_ExpandsForLargeColdStart(t *testing.T) {
+	t.Parallel()
+
+	// When cold start + margin exceeds 30s, the timeout should expand.
+	cfg := Config{
+		ColdStartTimeout: 2 * time.Minute,
+	}
+	svc, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	expected := 2*time.Minute + coldStartMargin
+	if svc.httpsWriteTimeout != expected {
+		t.Fatalf("httpsWriteTimeout = %v, want %v", svc.httpsWriteTimeout, expected)
 	}
 }
