@@ -374,11 +374,40 @@ func runCommandStep(ctx context.Context, repoRoot string, step CompiledStep, env
 	return outputs, nil, err
 }
 
+// hostEnvAllowlist defines the only host environment variables that are
+// permitted to pass through to CI job environments. This prevents leaking
+// secrets (DATABASE_URL, *_TOKEN, KINDLING_MASTER_KEY, etc.) from the host
+// process into CI steps. The list is intentionally closed: any new host
+// variable must be explicitly added here.
+var hostEnvAllowlist = map[string]bool{
+	"PATH":   true,
+	"HOME":   true,
+	"LANG":   true,
+	"USER":   true,
+	"SHELL":  true,
+	"TERM":   true,
+	"TMPDIR": true,
+}
+
 func buildBaseEnv(overrides map[string]string) map[string]string {
-	out := map[string]string{}
-	for _, kv := range os.Environ() {
-		if i := strings.IndexByte(kv, '='); i > 0 {
-			out[kv[:i]] = kv[i+1:]
+	return buildBaseEnvFrom(os.Environ(), overrides)
+}
+
+// buildBaseEnvFrom constructs a sanitized base environment for CI jobs.
+// Only variables in the hostEnvAllowlist are copied from the host
+// environment (hostPairs). Workflow/job/step overrides are then merged
+// on top, allowing explicit declarations to set any variable (including
+// those not on the allowlist).
+func buildBaseEnvFrom(hostPairs []string, overrides map[string]string) map[string]string {
+	out := make(map[string]string, len(hostEnvAllowlist)+len(overrides))
+	for _, kv := range hostPairs {
+		i := strings.IndexByte(kv, '=')
+		if i <= 0 {
+			continue
+		}
+		key := kv[:i]
+		if hostEnvAllowlist[key] {
+			out[key] = kv[i+1:]
 		}
 	}
 	mergeEnv(out, overrides)
