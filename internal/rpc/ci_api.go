@@ -280,10 +280,6 @@ func (a *API) createProjectCIJob(w http.ResponseWriter, r *http.Request) {
 		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "project not found")
 		return
 	}
-	if a.ciJobService == nil {
-		rpcutil.WriteAPIError(w, http.StatusServiceUnavailable, "ci_unavailable", "ci worker service unavailable")
-		return
-	}
 	var req struct {
 		Workflow       string            `json:"workflow"`
 		Job            string            `json:"job"`
@@ -317,7 +313,7 @@ func (a *API) createProjectCIJob(w http.ResponseWriter, r *http.Request) {
 	if eventName == "" {
 		eventName = "workflow_dispatch"
 	}
-	job, err := a.ciJobService.CreateLocalWorkflowJob(r.Context(), ci.CreateJobRequest{
+	createReq := ci.CreateJobRequest{
 		ProjectID:      uuid.UUID(projectID.Bytes),
 		WorkflowRef:    req.Workflow,
 		JobID:          req.Job,
@@ -325,10 +321,26 @@ func (a *API) createProjectCIJob(w http.ResponseWriter, r *http.Request) {
 		Inputs:         req.Inputs,
 		ArchiveBase64:  req.ArchiveBase64,
 		RequireMicroVM: req.RequireMicroVM == nil || *req.RequireMicroVM,
-	})
+	}
+	var job queries.CiJob
+	if a.ciJobService != nil {
+		job, err = a.ciJobService.CreateLocalWorkflowJob(r.Context(), createReq)
+	} else {
+		job, err = ci.CreateQueuedWorkflowJob(r.Context(), a.q, createReq)
+	}
 	if err != nil {
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "create_ci_job", err)
 		return
+	}
+	if a.dashboardEvents != nil {
+		projectUUID := uuid.UUID(job.ProjectID.Bytes)
+		jobUUID := uuid.UUID(job.ID.Bytes)
+		a.dashboardEvents.PublishMany(
+			TopicCIJobs,
+			TopicProject(projectUUID),
+			TopicProjectCIJobs(projectUUID),
+			TopicCIJob(jobUUID),
+		)
 	}
 	if a.ciJobReconciler != nil {
 		a.ciJobReconciler.ScheduleNow(uuid.UUID(job.ID.Bytes))

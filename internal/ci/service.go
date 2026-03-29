@@ -60,13 +60,13 @@ type CreateJobRequest struct {
 	RequireMicroVM bool
 }
 
-func (s *JobService) CreateLocalWorkflowJob(ctx context.Context, req CreateJobRequest) (queries.CiJob, error) {
+func CreateQueuedWorkflowJob(ctx context.Context, q *queries.Queries, req CreateJobRequest) (queries.CiJob, error) {
 	inputsJSON, err := json.Marshal(req.Inputs)
 	if err != nil {
 		return queries.CiJob{}, err
 	}
 	jobID := uuid.New()
-	job, err := s.q.CIJobCreate(ctx, queries.CIJobCreateParams{
+	job, err := q.CIJobCreate(ctx, queries.CIJobCreateParams{
 		ID:               pguuid.ToPgtype(jobID),
 		ProjectID:        pguuid.ToPgtype(req.ProjectID),
 		Status:           "queued",
@@ -93,7 +93,7 @@ func (s *JobService) CreateLocalWorkflowJob(ctx context.Context, req CreateJobRe
 		if err := SaveArchiveFromBase64(req.ArchiveBase64, archivePath); err != nil {
 			return queries.CiJob{}, err
 		}
-		if err := s.q.CIJobUpdateInputArchivePath(ctx, queries.CIJobUpdateInputArchivePathParams{
+		if err := q.CIJobUpdateInputArchivePath(ctx, queries.CIJobUpdateInputArchivePathParams{
 			ID:               pguuid.ToPgtype(jobID),
 			InputArchivePath: archivePath,
 		}); err != nil {
@@ -101,8 +101,16 @@ func (s *JobService) CreateLocalWorkflowJob(ctx context.Context, req CreateJobRe
 		}
 		job.InputArchivePath = archivePath
 	}
+	return job, nil
+}
+
+func (s *JobService) CreateLocalWorkflowJob(ctx context.Context, req CreateJobRequest) (queries.CiJob, error) {
+	job, err := CreateQueuedWorkflowJob(ctx, s.q, req)
+	if err != nil {
+		return queries.CiJob{}, err
+	}
 	s.publishProject(req.ProjectID)
-	s.publishCIJob(jobID)
+	s.publishCIJob(uuid.UUID(job.ID.Bytes))
 	return job, nil
 }
 
