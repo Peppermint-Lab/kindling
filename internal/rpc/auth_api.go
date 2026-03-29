@@ -525,12 +525,16 @@ func (a *API) authChangePassword(w http.ResponseWriter, r *http.Request) {
 			UserID:    auth.PgUUID(p.UserID),
 			TokenHash: currentTokenHash,
 		}); err != nil {
-			slog.Warn("failed to revoke other sessions after password change", "error", err, "user_id", p.UserID)
+			slog.Error("failed to revoke other sessions after password change", "error", err, "user_id", p.UserID)
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "session_revocation_failed", err)
+			return
 		}
 	} else {
 		// Fallback: cannot identify current session token, revoke all sessions.
 		if err := a.q.UserSessionDeleteAllForUser(r.Context(), auth.PgUUID(p.UserID)); err != nil {
-			slog.Warn("failed to revoke sessions after password change", "error", err, "user_id", p.UserID)
+			slog.Error("failed to revoke sessions after password change", "error", err, "user_id", p.UserID)
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "session_revocation_failed", err)
+			return
 		}
 	}
 
