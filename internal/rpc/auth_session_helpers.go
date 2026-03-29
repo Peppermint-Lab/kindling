@@ -16,11 +16,12 @@ const disabledPasswordHash = "!"
 
 func organizationFromCreateRow(row queries.OrganizationCreateRow) queries.Organization {
 	return queries.Organization{
-		ID:        row.ID,
-		Name:      row.Name,
-		Slug:      row.Slug,
-		CreatedAt: row.CreatedAt,
-		UpdatedAt: row.UpdatedAt,
+		ID:          row.ID,
+		Name:        row.Name,
+		Slug:        row.Slug,
+		EmailDomain: row.EmailDomain,
+		CreatedAt:   row.CreatedAt,
+		UpdatedAt:   row.UpdatedAt,
 	}
 }
 

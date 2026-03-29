@@ -28,9 +28,22 @@ CREATE TABLE IF NOT EXISTS organizations (
     id          UUID PRIMARY KEY,
     name        TEXT NOT NULL,
     slug        TEXT NOT NULL UNIQUE,
+    email_domain TEXT NOT NULL DEFAULT '',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'organizations' AND column_name = 'email_domain'
+    ) THEN
+        ALTER TABLE organizations ADD COLUMN email_domain TEXT NOT NULL DEFAULT '';
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_organizations_email_domain
+    ON organizations(email_domain) WHERE email_domain <> '';
 
 CREATE TABLE IF NOT EXISTS org_networks (
     organization_id UUID PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
@@ -124,9 +137,33 @@ CREATE TABLE IF NOT EXISTS organization_memberships (
     organization_id   UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role              TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'member')),
+    status            TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'pending', 'rejected')),
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (organization_id, user_id)
 );
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'organization_memberships' AND column_name = 'status'
+    ) THEN
+        ALTER TABLE organization_memberships ADD COLUMN status TEXT NOT NULL DEFAULT 'active';
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE organization_memberships DROP CONSTRAINT IF EXISTS organization_memberships_status_check;
+EXCEPTION WHEN undefined_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'organization_memberships_status_check'
+    ) THEN
+        ALTER TABLE organization_memberships ADD CONSTRAINT organization_memberships_status_check
+            CHECK (status IN ('active', 'pending', 'rejected'));
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS teams (
     id                UUID PRIMARY KEY,

@@ -185,6 +185,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/me/ssh-keys", a.listUserSSHKeys)
 	mux.HandleFunc("POST /api/me/ssh-keys", a.createUserSSHKey)
 	mux.HandleFunc("DELETE /api/me/ssh-keys/{key_id}", a.deleteUserSSHKey)
+
+	// Pending membership management (org admin only)
+	a.registerPendingMemberRoutes(mux)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
