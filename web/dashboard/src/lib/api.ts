@@ -738,7 +738,7 @@ export const api = {
   unpublishSandboxHTTP: (id: string) =>
     request<Sandbox>(`/api/sandboxes/${id}/unpublish-http`, { method: "POST", body: JSON.stringify({}) }),
   getSandboxLogs: (id: string) => request<string[]>(`/api/sandboxes/${id}/logs`),
-  getSandboxStats: (id: string) => request<Record<string, unknown>>(`/api/sandboxes/${id}/stats`),
+  getSandboxStats: (id: string) => request<Record<string, unknown> | null>(`/api/sandboxes/${id}/stats`),
   getSandboxAccessEvents: (id: string) => request<SandboxAccessEvent[]>(`/api/sandboxes/${id}/access-events`),
   listSandboxTemplates: () => request<SandboxTemplate[]>("/api/sandbox-templates"),
   createSandboxTemplate: (id: string, data?: { name?: string }) =>

@@ -64,6 +64,22 @@ func TestSandboxDeleteCanBypassReconciler(t *testing.T) {
 	}
 }
 
+func TestSandboxRuntimeObservabilityReady(t *testing.T) {
+	t.Parallel()
+
+	if !sandboxRuntimeObservabilityReady(queries.Sandbox{ObservedState: "running"}) {
+		t.Fatal("expected running sandbox to expose logs and stats")
+	}
+
+	if sandboxRuntimeObservabilityReady(queries.Sandbox{ObservedState: "pending"}) {
+		t.Fatal("expected pending sandbox to skip logs and stats")
+	}
+
+	if sandboxRuntimeObservabilityReady(queries.Sandbox{ObservedState: "stopped"}) {
+		t.Fatal("expected stopped sandbox to skip logs and stats")
+	}
+}
+
 func uuidMustParse(raw string) uuid.UUID {
 	id, err := uuid.Parse(raw)
 	if err != nil {

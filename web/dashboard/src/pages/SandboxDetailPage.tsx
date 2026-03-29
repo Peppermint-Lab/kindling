@@ -72,9 +72,10 @@ export function SandboxDetailPage() {
     setError(null)
     try {
       const sandboxValue = await api.getSandbox(id)
+      const canLoadObservability = sandboxValue.observed_state === "running"
       const [logsValue, statsValue, eventsValue] = await Promise.all([
-        api.getSandboxLogs(id).catch(() => []),
-        api.getSandboxStats(id).catch(() => null),
+        canLoadObservability ? api.getSandboxLogs(id).catch(() => []) : Promise.resolve([]),
+        canLoadObservability ? api.getSandboxStats(id).catch(() => null) : Promise.resolve(null),
         api.getSandboxAccessEvents(id).catch(() => []),
       ])
       setSandbox(sandboxValue)
@@ -443,7 +444,9 @@ export function SandboxDetailPage() {
             <CardTitle>Stats</CardTitle>
           </CardHeader>
           <CardContent>
-            <pre className="overflow-auto rounded-md bg-muted/50 p-4 font-mono text-xs whitespace-pre-wrap">{JSON.stringify(stats, null, 2)}</pre>
+            <pre className="overflow-auto rounded-md bg-muted/50 p-4 font-mono text-xs whitespace-pre-wrap">
+              {stats ? JSON.stringify(stats, null, 2) : "No stats yet."}
+            </pre>
           </CardContent>
         </Card>
       </div>

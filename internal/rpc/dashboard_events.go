@@ -198,10 +198,8 @@ func (a *API) streamDashboardEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeAPIError(w, http.StatusInternalServerError, "streaming_unsupported", "response does not support flushing")
-		return
+	flush := func() error {
+		return http.NewResponseController(w).Flush()
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -223,15 +221,16 @@ func (a *API) streamDashboardEvents(w http.ResponseWriter, r *http.Request) {
 		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, b); err != nil {
 			return fmt.Errorf("write dashboard event %s: %w", name, err)
 		}
-		flusher.Flush()
-		return nil
+		return flush()
 	}
 
 	// Initial comment so proxies flush early.
 	if _, err := w.Write([]byte(": connected\n\n")); err != nil {
 		return
 	}
-	flusher.Flush()
+	if err := flush(); err != nil {
+		return
+	}
 
 	for {
 		select {
@@ -241,7 +240,9 @@ func (a *API) streamDashboardEvents(w http.ResponseWriter, r *http.Request) {
 			if _, err := w.Write([]byte(": ping\n\n")); err != nil {
 				return
 			}
-			flusher.Flush()
+			if err := flush(); err != nil {
+				return
+			}
 		case ev, ok := <-ch:
 			if !ok {
 				return

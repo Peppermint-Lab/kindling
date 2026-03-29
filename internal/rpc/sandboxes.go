@@ -143,6 +143,10 @@ func sandboxDeleteCanBypassReconciler(sb queries.Sandbox) bool {
 	return !sb.VmID.Valid
 }
 
+func sandboxRuntimeObservabilityReady(sb queries.Sandbox) bool {
+	return strings.EqualFold(strings.TrimSpace(sb.ObservedState), "running")
+}
+
 func resolveSandboxHostGroup(requested string, template *queries.SandboxTemplate) string {
 	if trimmed := strings.TrimSpace(requested); trimmed != "" {
 		return trimmed
@@ -904,6 +908,10 @@ func (a *API) sandboxLogs(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !sandboxRuntimeObservabilityReady(sb) {
+		writeJSON(w, http.StatusOK, []string{})
+		return
+	}
 	if a.proxySandboxHTTPRequest(w, r, sb) {
 		return
 	}
@@ -913,6 +921,10 @@ func (a *API) sandboxLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	logs, err := rt.Logs(r.Context(), uuid.UUID(sb.ID.Bytes))
 	if err != nil {
+		if errors.Is(err, kruntime.ErrInstanceNotRunning) {
+			writeJSON(w, http.StatusOK, []string{})
+			return
+		}
 		writeAPIErrorFromErr(w, http.StatusConflict, "sandbox_logs", err)
 		return
 	}
@@ -931,6 +943,10 @@ func (a *API) sandboxStats(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !sandboxRuntimeObservabilityReady(sb) {
+		writeJSON(w, http.StatusOK, nil)
+		return
+	}
 	if a.proxySandboxHTTPRequest(w, r, sb) {
 		return
 	}
@@ -940,6 +956,10 @@ func (a *API) sandboxStats(w http.ResponseWriter, r *http.Request) {
 	}
 	stats, err := rt.ResourceStats(r.Context(), uuid.UUID(sb.ID.Bytes))
 	if err != nil {
+		if errors.Is(err, kruntime.ErrInstanceNotRunning) {
+			writeJSON(w, http.StatusOK, nil)
+			return
+		}
 		writeAPIErrorFromErr(w, http.StatusConflict, "sandbox_stats", err)
 		return
 	}
