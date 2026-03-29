@@ -124,11 +124,13 @@ func TestPromoteDeployment_ReusesHistoricalProductionRevision(t *testing.T) {
 		t.Fatalf("active running: %v", err)
 	}
 
-	resp, err := h.client.Post(
-		h.server.URL+"/api/deployments/"+uuid.UUID(targetDep.ID.Bytes).String()+"/promote",
-		"application/json",
-		bytes.NewReader([]byte("{}")),
-	)
+	req, err := http.NewRequest(http.MethodPost, h.server.URL+"/api/deployments/"+uuid.UUID(targetDep.ID.Bytes).String()+"/promote", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", h.server.URL)
+	resp, err := h.client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,11 +165,13 @@ func TestPromoteDeployment_ReusesHistoricalProductionRevision(t *testing.T) {
 		t.Fatalf("unexpected promote response: %+v", created)
 	}
 
-	invalidResp, err := h.client.Post(
-		h.server.URL+"/api/deployments/"+uuid.UUID(activeDep.ID.Bytes).String()+"/promote",
-		"application/json",
-		bytes.NewReader([]byte("{}")),
-	)
+	invalidReq, err := http.NewRequest(http.MethodPost, h.server.URL+"/api/deployments/"+uuid.UUID(activeDep.ID.Bytes).String()+"/promote", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidReq.Header.Set("Content-Type", "application/json")
+	invalidReq.Header.Set("Origin", h.server.URL)
+	invalidResp, err := h.client.Do(invalidReq)
 	if err != nil {
 		t.Fatal(err)
 	}
