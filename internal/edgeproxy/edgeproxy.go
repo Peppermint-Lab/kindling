@@ -560,22 +560,35 @@ func (s *Service) waitForBackend(ctx context.Context, host string) (Route, bool)
 	return Route{}, false
 }
 
-func (s *Service) proxyControlPlane(w http.ResponseWriter, r *http.Request, host string) {
-	proxy := httputil.NewSingleHostReverseProxy(s.cfg.APIBackend)
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		originalDirector(req)
-		req.Host = r.Host
-		if req.Header.Get("X-Forwarded-For") == "" {
-			req.Header.Set("X-Forwarded-For", r.RemoteAddr)
-		}
-		req.Header.Set("X-Forwarded-Proto", "https")
-		req.Header.Set("X-Forwarded-Host", r.Host)
-		req.Header.Set("X-Real-IP", r.RemoteAddr)
+// stripPort removes the port portion from an address (e.g. "1.2.3.4:5678" → "1.2.3.4").
+// If no port is present the address is returned as-is.
+func stripPort(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr // no port or already bare IP
 	}
-	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		slog.Warn("control plane proxy error", "host", host, "error", err)
-		http.Error(w, "Bad Gateway", http.StatusBadGateway)
+	return host
+}
+
+func (s *Service) proxyControlPlane(w http.ResponseWriter, r *http.Request, host string) {
+	target := s.cfg.APIBackend
+	clientIP := stripPort(r.RemoteAddr)
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(target)
+			pr.Out.Host = r.Host
+			// Edge-generated forwarding headers only — client-supplied headers
+			// are already stripped by Rewrite (it removes Forwarded, X-Forwarded-*
+			// from Out before calling this function).
+			pr.Out.Header.Set("X-Forwarded-For", clientIP)
+			pr.Out.Header.Set("X-Forwarded-Proto", "https")
+			pr.Out.Header.Set("X-Forwarded-Host", r.Host)
+			pr.Out.Header.Set("X-Real-IP", clientIP)
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			slog.Warn("control plane proxy error", "host", host, "error", err)
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+		},
 	}
 	proxy.ServeHTTP(w, r)
 }
@@ -600,14 +613,18 @@ func (s *Service) reverseProxy(w http.ResponseWriter, r *http.Request, host stri
 	}
 	mw := &meteredResponseWriter{ResponseWriter: w}
 
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		originalDirector(req)
-		req.Host = r.Host
-		req.Header.Set("X-Forwarded-For", r.RemoteAddr)
-		req.Header.Set("X-Forwarded-Proto", "https")
-		req.Header.Set("X-Real-IP", r.RemoteAddr)
+	clientIP := stripPort(r.RemoteAddr)
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(target)
+			pr.Out.Host = r.Host
+			// Edge-generated forwarding headers only — client-supplied headers
+			// are already stripped by Rewrite (it removes Forwarded, X-Forwarded-*
+			// from Out before calling this function).
+			pr.Out.Header.Set("X-Forwarded-For", clientIP)
+			pr.Out.Header.Set("X-Forwarded-Proto", "https")
+			pr.Out.Header.Set("X-Real-IP", clientIP)
+		},
 	}
 	projID := route.ProjectID
 	depID := route.DeploymentID
