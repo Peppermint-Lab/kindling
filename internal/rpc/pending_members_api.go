@@ -1,9 +1,11 @@
 package rpc
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
 
@@ -53,12 +55,16 @@ func (a *API) approvePendingMember(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_user_id", "invalid user ID")
 		return
 	}
-	membership, err := a.q.OrganizationMembershipUpdateStatus(r.Context(), queries.OrganizationMembershipUpdateStatusParams{
+	membership, err := a.q.OrganizationMembershipUpdatePendingStatus(r.Context(), queries.OrganizationMembershipUpdatePendingStatusParams{
 		OrganizationID: p.OrganizationID,
 		UserID:         userID,
 		Status:         "active",
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeAPIError(w, http.StatusConflict, "not_pending", "membership is not in pending state")
+			return
+		}
 		writeAPIErrorFromErr(w, http.StatusNotFound, "approve_member", err)
 		return
 	}
@@ -82,12 +88,16 @@ func (a *API) rejectPendingMember(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_user_id", "invalid user ID")
 		return
 	}
-	membership, err := a.q.OrganizationMembershipUpdateStatus(r.Context(), queries.OrganizationMembershipUpdateStatusParams{
+	membership, err := a.q.OrganizationMembershipUpdatePendingStatus(r.Context(), queries.OrganizationMembershipUpdatePendingStatusParams{
 		OrganizationID: p.OrganizationID,
 		UserID:         userID,
 		Status:         "rejected",
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeAPIError(w, http.StatusConflict, "not_pending", "membership is not in pending state")
+			return
+		}
 		writeAPIErrorFromErr(w, http.StatusNotFound, "reject_member", err)
 		return
 	}

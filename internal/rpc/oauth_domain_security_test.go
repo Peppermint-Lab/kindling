@@ -343,6 +343,22 @@ func (f *fakeOAuthDBTX) QueryRow(_ context.Context, sql string, args ...interfac
 		f.store.addMembership(m)
 		return &membershipRow{membership: &m}
 	}
+	// OrganizationMembershipUpdatePendingStatus (must be checked before the generic UpdateStatus)
+	if strings.Contains(sql, "UPDATE organization_memberships") && strings.Contains(sql, "status = 'pending'") {
+		orgID := args[0].(pgtype.UUID)
+		userID := args[1].(pgtype.UUID)
+		newStatus := args[2].(string)
+		f.store.mu.Lock()
+		defer f.store.mu.Unlock()
+		for i, m := range f.store.memberships {
+			if m.OrganizationID == orgID && m.UserID == userID && m.Status == "pending" {
+				f.store.memberships[i].Status = newStatus
+				updated := f.store.memberships[i]
+				return &membershipRow{membership: &updated}
+			}
+		}
+		return &errRow{err: pgx.ErrNoRows}
+	}
 	// OrganizationMembershipUpdateStatus
 	if strings.Contains(sql, "UPDATE organization_memberships") && strings.Contains(sql, "status") {
 		orgID := args[0].(pgtype.UUID)
