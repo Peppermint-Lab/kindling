@@ -50,6 +50,7 @@ import {
 } from "lucide-react"
 import { DeploymentReachability } from "@/components/deployment-reachability"
 import { phaseLabel, phaseVariant } from "@/lib/deploy-badge"
+import { deploymentPromotionConfirmMessage } from "@/lib/deployment-promotion"
 import { upsertProjectSecretInList } from "@/lib/project-secrets"
 import { selectLatestRunningDeployment } from "@/lib/deployment-reachability"
 import {
@@ -205,6 +206,7 @@ export function ProjectDetailPage() {
 
   const [previews, setPreviews] = useState<PreviewEnvironment[]>([])
   const [previewsLoading, setPreviewsLoading] = useState(false)
+  const [deploymentActionId, setDeploymentActionId] = useState<string | null>(null)
   const [previewActionId, setPreviewActionId] = useState<string | null>(null)
   const [previewActionKind, setPreviewActionKind] = useState<"redeploy" | "delete" | null>(null)
 
@@ -509,6 +511,21 @@ export function ProjectDetailPage() {
       setError(e instanceof APIError ? e.message : "Delete failed")
     } finally {
       setDeleting(false)
+    }
+  }
+
+  const handlePromoteDeployment = async (deployment: Deployment) => {
+    if (!deployment.can_promote_to_production) return
+    if (!window.confirm(deploymentPromotionConfirmMessage(deployment))) return
+    setDeploymentActionId(deployment.id)
+    setError(null)
+    try {
+      const next = await api.promoteDeployment(deployment.id)
+      navigate(`/deployments/${next.id}`)
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not promote deployment")
+    } finally {
+      setDeploymentActionId(null)
     }
   }
 
@@ -1756,17 +1773,37 @@ export function ProjectDetailPage() {
                 <ul className="divide-y">
                   {pagedDeployments.map((dep) => (
                     <li key={dep.id}>
-                      <Link to={`/deployments/${dep.id}`} className="list-row group">
-                        <div className="flex flex-wrap items-center gap-2 min-w-0">
-                          <Badge variant={phaseVariant(dep.phase)}>{phaseLabel(dep.phase)}</Badge>
-                          <span className="font-mono text-sm">{dep.github_commit ? dep.github_commit.slice(0, 8) : "manual"}</span>
-                          {dep.build_status && <span className="text-xs text-muted-foreground hidden sm:inline">Build: {dep.build_status}</span>}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-muted-foreground shrink-0">{dep.created_at ? new Date(dep.created_at).toLocaleString() : ""}</span>
-                          <ChevronRightIcon className="size-4 text-muted-foreground/40 shrink-0 transition-transform group-hover:translate-x-0.5" />
-                        </div>
-                      </Link>
+                      <div className="flex items-center gap-2 pr-3">
+                        <Link to={`/deployments/${dep.id}`} className="list-row group min-w-0 flex-1 pr-0">
+                          <div className="flex min-w-0 flex-col gap-1">
+                            <div className="flex flex-wrap items-center gap-2 min-w-0">
+                              <Badge variant={phaseVariant(dep.phase)}>{phaseLabel(dep.phase)}</Badge>
+                              <span className="font-mono text-sm">{dep.github_commit ? dep.github_commit.slice(0, 8) : "manual"}</span>
+                              {dep.build_status ? <span className="hidden text-xs text-muted-foreground sm:inline">Build: {dep.build_status}</span> : null}
+                            </div>
+                            {dep.promoted_from_deployment_id ? (
+                              <span className="font-mono text-xs text-muted-foreground">
+                                Rollback of {dep.promoted_from_deployment_id.slice(0, 8)}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground shrink-0">{dep.created_at ? new Date(dep.created_at).toLocaleString() : ""}</span>
+                            <ChevronRightIcon className="size-4 text-muted-foreground/40 shrink-0 transition-transform group-hover:translate-x-0.5" />
+                          </div>
+                        </Link>
+                        {dep.can_promote_to_production ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={deploymentActionId === dep.id}
+                            onClick={() => void handlePromoteDeployment(dep)}
+                          >
+                            {deploymentActionId === dep.id ? "Promoting…" : "Promote"}
+                          </Button>
+                        ) : null}
+                      </div>
                     </li>
                   ))}
                 </ul>

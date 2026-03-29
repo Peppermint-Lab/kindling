@@ -54,3 +54,14 @@ func TestProjectQueriesIncludeBuildOnlyOnRootChanges(t *testing.T) {
 		t.Fatalf("ProjectUpdateBuildOnlyOnRootChanges should update build_only_on_root_changes, got:\n%s", projectUpdateBuildOnlyOnRootChanges)
 	}
 }
+
+func TestDeploymentCreateSupportsPromotionProvenance(t *testing.T) {
+	t.Parallel()
+
+	if !strings.Contains(deploymentCreate, "promoted_from_deployment_id") {
+		t.Fatalf("DeploymentCreate should persist promotion provenance, got:\n%s", deploymentCreate)
+	}
+	if !strings.Contains(deploymentCreate, "build_id") || !strings.Contains(deploymentCreate, "image_id") {
+		t.Fatalf("DeploymentCreate should accept reusable build/image IDs, got:\n%s", deploymentCreate)
+	}
+}

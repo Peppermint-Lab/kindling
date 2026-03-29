@@ -69,25 +69,26 @@ type ClusterSetting struct {
 }
 
 type Deployment struct {
-	ID                   pgtype.UUID        `json:"id"`
-	ProjectID            pgtype.UUID        `json:"project_id"`
-	ServiceID            pgtype.UUID        `json:"service_id"`
-	BuildID              pgtype.UUID        `json:"build_id"`
-	ImageID              pgtype.UUID        `json:"image_id"`
-	VmID                 pgtype.UUID        `json:"vm_id"`
-	GithubCommit         string             `json:"github_commit"`
-	GithubBranch         string             `json:"github_branch"`
-	DeploymentKind       string             `json:"deployment_kind"`
-	PreviewEnvironmentID pgtype.UUID        `json:"preview_environment_id"`
-	PreviewLastRequestAt pgtype.Timestamptz `json:"preview_last_request_at"`
-	PreviewScaledToZero  bool               `json:"preview_scaled_to_zero"`
-	RunningAt            pgtype.Timestamptz `json:"running_at"`
-	StoppedAt            pgtype.Timestamptz `json:"stopped_at"`
-	FailedAt             pgtype.Timestamptz `json:"failed_at"`
-	DeletedAt            pgtype.Timestamptz `json:"deleted_at"`
-	WakeRequestedAt      pgtype.Timestamptz `json:"wake_requested_at"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	ID                       pgtype.UUID        `json:"id"`
+	ProjectID                pgtype.UUID        `json:"project_id"`
+	ServiceID                pgtype.UUID        `json:"service_id"`
+	BuildID                  pgtype.UUID        `json:"build_id"`
+	ImageID                  pgtype.UUID        `json:"image_id"`
+	VmID                     pgtype.UUID        `json:"vm_id"`
+	PromotedFromDeploymentID pgtype.UUID        `json:"promoted_from_deployment_id"`
+	GithubCommit             string             `json:"github_commit"`
+	GithubBranch             string             `json:"github_branch"`
+	DeploymentKind           string             `json:"deployment_kind"`
+	PreviewEnvironmentID     pgtype.UUID        `json:"preview_environment_id"`
+	PreviewLastRequestAt     pgtype.Timestamptz `json:"preview_last_request_at"`
+	PreviewScaledToZero      bool               `json:"preview_scaled_to_zero"`
+	RunningAt                pgtype.Timestamptz `json:"running_at"`
+	StoppedAt                pgtype.Timestamptz `json:"stopped_at"`
+	FailedAt                 pgtype.Timestamptz `json:"failed_at"`
+	DeletedAt                pgtype.Timestamptz `json:"deleted_at"`
+	WakeRequestedAt          pgtype.Timestamptz `json:"wake_requested_at"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
 }
 
 type DeploymentInstance struct {

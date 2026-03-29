@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Link, useParams } from "react-router-dom"
+import { Link, useNavigate, useParams } from "react-router-dom"
 import {
   api,
   APIError,
@@ -23,6 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { DeploymentReachability } from "@/components/deployment-reachability"
 import { phaseLabel, phaseVariant } from "@/lib/deploy-badge"
 import { selectLatestRunningDeployment } from "@/lib/deployment-reachability"
+import { deploymentPromotionConfirmMessage } from "@/lib/deployment-promotion"
 import { sortServiceSecrets, upsertServiceSecretInList } from "@/lib/project-secrets"
 import {
   EmptyState,
@@ -72,6 +73,7 @@ function endpointHealthLabel(endpoint: ServiceEndpoint): string {
 
 export function ServiceDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const { session } = useAuth()
   const [service, setService] = useState<Service | null>(null)
   const [deployments, setDeployments] = useState<Deployment[]>([])
@@ -86,6 +88,7 @@ export function ServiceDetailPage() {
 
   const [commitSha, setCommitSha] = useState("")
   const [deploying, setDeploying] = useState(false)
+  const [deploymentActionId, setDeploymentActionId] = useState<string | null>(null)
 
   const [newDomainName, setNewDomainName] = useState("")
   const [domainSaving, setDomainSaving] = useState(false)
@@ -217,6 +220,24 @@ export function ServiceDetailPage() {
       setDeploying(false)
     }
   }, [commitSha, id])
+
+  const handlePromoteDeployment = useCallback(
+    async (deployment: Deployment) => {
+      if (!deployment.can_promote_to_production) return
+      if (!window.confirm(deploymentPromotionConfirmMessage(deployment))) return
+      setDeploymentActionId(deployment.id)
+      setError(null)
+      try {
+        const next = await api.promoteDeployment(deployment.id)
+        navigate(`/deployments/${next.id}`)
+      } catch (e) {
+        setError(e instanceof APIError ? e.message : "Could not promote deployment")
+      } finally {
+        setDeploymentActionId(null)
+      }
+    },
+    [navigate],
+  )
 
   const handleCreateDomain = useCallback(async () => {
     if (!id) return
@@ -782,17 +803,34 @@ export function ServiceDetailPage() {
                 ) : (
                   <div className="space-y-2">
                     {deployments.slice(0, 10).map((deployment) => (
-                      <Link
-                        key={deployment.id}
-                        to={`/deployments/${deployment.id}`}
-                        className="flex items-center justify-between gap-3 rounded-xl border p-3 hover:bg-muted/40 transition-colors"
-                      >
-                        <div className="min-w-0">
-                          <p className="font-mono text-sm truncate">{deployment.github_commit}</p>
-                          <p className="text-xs text-muted-foreground truncate">{deployment.id}</p>
-                        </div>
-                        <Badge variant={phaseVariant(deployment.phase)}>{phaseLabel(deployment.phase)}</Badge>
-                      </Link>
+                      <div key={deployment.id} className="flex items-center gap-2">
+                        <Link
+                          to={`/deployments/${deployment.id}`}
+                          className="flex min-w-0 flex-1 items-center justify-between gap-3 rounded-xl border p-3 transition-colors hover:bg-muted/40"
+                        >
+                          <div className="min-w-0">
+                            <p className="font-mono text-sm truncate">{deployment.github_commit}</p>
+                            <p className="text-xs text-muted-foreground truncate">{deployment.id}</p>
+                            {deployment.promoted_from_deployment_id ? (
+                              <p className="font-mono text-xs text-muted-foreground truncate">
+                                Rollback of {deployment.promoted_from_deployment_id.slice(0, 8)}
+                              </p>
+                            ) : null}
+                          </div>
+                          <Badge variant={phaseVariant(deployment.phase)}>{phaseLabel(deployment.phase)}</Badge>
+                        </Link>
+                        {deployment.can_promote_to_production ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={deploymentActionId === deployment.id}
+                            onClick={() => void handlePromoteDeployment(deployment)}
+                          >
+                            {deploymentActionId === deployment.id ? "Promoting…" : "Promote"}
+                          </Button>
+                        ) : null}
+                      </div>
                     ))}
                   </div>
                 )}

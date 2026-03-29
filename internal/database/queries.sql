@@ -1071,8 +1071,19 @@ SELECT * FROM build_logs WHERE build_id = $1 ORDER BY created_at;
 -- Deployments --
 
 -- name: DeploymentCreate :one
-INSERT INTO deployments (id, project_id, service_id, github_commit, github_branch, deployment_kind, preview_environment_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO deployments (
+  id,
+  project_id,
+  service_id,
+  build_id,
+  image_id,
+  promoted_from_deployment_id,
+  github_commit,
+  github_branch,
+  deployment_kind,
+  preview_environment_id
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING *;
 
 -- name: DeploymentFirstByID :one
@@ -1198,6 +1209,7 @@ SELECT
     d.build_id,
     d.image_id,
     d.vm_id,
+    d.promoted_from_deployment_id,
     d.github_commit,
     d.github_branch,
     d.deployment_kind,
@@ -1228,6 +1240,7 @@ SELECT
     d.build_id,
     d.image_id,
     d.vm_id,
+    d.promoted_from_deployment_id,
     d.github_commit,
     d.github_branch,
     d.deployment_kind,

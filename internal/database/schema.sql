@@ -583,6 +583,7 @@ CREATE TABLE IF NOT EXISTS deployments (
     build_id            UUID REFERENCES builds(id),
     image_id            UUID REFERENCES images(id),
     vm_id               UUID REFERENCES vms(id),
+    promoted_from_deployment_id UUID REFERENCES deployments(id) ON DELETE SET NULL,
     github_commit       TEXT NOT NULL DEFAULT '',
     github_branch       TEXT NOT NULL DEFAULT '',
     deployment_kind     TEXT NOT NULL DEFAULT 'production'
@@ -606,6 +607,15 @@ DO $$ BEGIN
         WHERE table_schema = 'public' AND table_name = 'deployments' AND column_name = 'service_id'
     ) THEN
         ALTER TABLE deployments ADD COLUMN service_id UUID REFERENCES services(id) ON DELETE CASCADE;
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'deployments' AND column_name = 'promoted_from_deployment_id'
+    ) THEN
+        ALTER TABLE deployments ADD COLUMN promoted_from_deployment_id UUID REFERENCES deployments(id) ON DELETE SET NULL;
     END IF;
 END $$;
 

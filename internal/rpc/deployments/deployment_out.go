@@ -20,34 +20,36 @@ import (
 
 // DeploymentOut is the JSON shape for deployment resources (API v0.2).
 type DeploymentOut struct {
-	ID                   string                     `json:"id"`
-	ProjectID            string                     `json:"project_id"`
-	ServiceID            *string                    `json:"service_id,omitempty"`
-	BuildID              *string                    `json:"build_id,omitempty"`
-	ImageID              *string                    `json:"image_id,omitempty"`
-	VmID                 *string                    `json:"vm_id,omitempty"`
-	GithubCommit         string                     `json:"github_commit"`
-	RunningAt            *string                    `json:"running_at"`
-	StoppedAt            *string                    `json:"stopped_at"`
-	FailedAt             *string                    `json:"failed_at"`
-	CreatedAt            *string                    `json:"created_at"`
-	UpdatedAt            *string                    `json:"updated_at"`
-	BuildStatus          string                     `json:"build_status,omitempty"`
-	Phase                string                     `json:"phase"`
-	DesiredInstanceCount int                        `json:"desired_instance_count,omitempty"`
-	MinInstanceCount     int                        `json:"min_instance_count,omitempty"`
-	MaxInstanceCount     int                        `json:"max_instance_count,omitempty"`
-	RunningInstanceCount int                        `json:"running_instance_count,omitempty"`
-	ScaledToZero         bool                       `json:"scaled_to_zero,omitempty"`
-	ScaleToZeroEnabled   bool                       `json:"scale_to_zero_enabled,omitempty"`
-	WakeRequestedAt      *string                    `json:"wake_requested_at,omitempty"`
-	DeploymentKind       string                     `json:"deployment_kind,omitempty"`
-	GithubBranch         string                     `json:"github_branch,omitempty"`
-	PreviewEnvironmentID *string                    `json:"preview_environment_id,omitempty"`
-	BlockedReason        string                     `json:"blocked_reason,omitempty"`
-	ServiceName          string                     `json:"service_name,omitempty"`
-	PersistentVolume     *DeploymentVolumeOut       `json:"persistent_volume,omitempty"`
-	Reachable            *DeploymentReachabilityOut `json:"reachable,omitempty"`
+	ID                       string                     `json:"id"`
+	ProjectID                string                     `json:"project_id"`
+	ServiceID                *string                    `json:"service_id,omitempty"`
+	BuildID                  *string                    `json:"build_id,omitempty"`
+	ImageID                  *string                    `json:"image_id,omitempty"`
+	VmID                     *string                    `json:"vm_id,omitempty"`
+	PromotedFromDeploymentID *string                    `json:"promoted_from_deployment_id,omitempty"`
+	GithubCommit             string                     `json:"github_commit"`
+	RunningAt                *string                    `json:"running_at"`
+	StoppedAt                *string                    `json:"stopped_at"`
+	FailedAt                 *string                    `json:"failed_at"`
+	CreatedAt                *string                    `json:"created_at"`
+	UpdatedAt                *string                    `json:"updated_at"`
+	BuildStatus              string                     `json:"build_status,omitempty"`
+	Phase                    string                     `json:"phase"`
+	DesiredInstanceCount     int                        `json:"desired_instance_count,omitempty"`
+	MinInstanceCount         int                        `json:"min_instance_count,omitempty"`
+	MaxInstanceCount         int                        `json:"max_instance_count,omitempty"`
+	RunningInstanceCount     int                        `json:"running_instance_count,omitempty"`
+	ScaledToZero             bool                       `json:"scaled_to_zero,omitempty"`
+	ScaleToZeroEnabled       bool                       `json:"scale_to_zero_enabled,omitempty"`
+	WakeRequestedAt          *string                    `json:"wake_requested_at,omitempty"`
+	DeploymentKind           string                     `json:"deployment_kind,omitempty"`
+	GithubBranch             string                     `json:"github_branch,omitempty"`
+	PreviewEnvironmentID     *string                    `json:"preview_environment_id,omitempty"`
+	BlockedReason            string                     `json:"blocked_reason,omitempty"`
+	CanPromoteToProduction   bool                       `json:"can_promote_to_production,omitempty"`
+	ServiceName              string                     `json:"service_name,omitempty"`
+	PersistentVolume         *DeploymentVolumeOut       `json:"persistent_volume,omitempty"`
+	Reachable                *DeploymentReachabilityOut `json:"reachable,omitempty"`
 }
 
 // DeploymentListItemOut extends DeploymentOut with project name.
@@ -169,21 +171,22 @@ func DeploymentToOut(dep queries.Deployment, build *queries.Build, reachable *De
 		bs = build.Status
 	}
 	out := DeploymentOut{
-		ID:           pguuid.ToString(dep.ID),
-		ProjectID:    pguuid.ToString(dep.ProjectID),
-		ServiceID:    rpcutil.OptionalUUIDString(dep.ServiceID),
-		BuildID:      rpcutil.OptionalUUIDString(dep.BuildID),
-		ImageID:      rpcutil.OptionalUUIDString(dep.ImageID),
-		VmID:         rpcutil.OptionalUUIDString(dep.VmID),
-		GithubCommit: dep.GithubCommit,
-		RunningAt:    rpcutil.FormatTS(dep.RunningAt),
-		StoppedAt:    rpcutil.FormatTS(dep.StoppedAt),
-		FailedAt:     rpcutil.FormatTS(dep.FailedAt),
-		CreatedAt:    rpcutil.FormatTS(dep.CreatedAt),
-		UpdatedAt:    rpcutil.FormatTS(dep.UpdatedAt),
-		BuildStatus:  bs,
-		Phase:        DeploymentPhase(dep, build),
-		Reachable:    reachable,
+		ID:                       pguuid.ToString(dep.ID),
+		ProjectID:                pguuid.ToString(dep.ProjectID),
+		ServiceID:                rpcutil.OptionalUUIDString(dep.ServiceID),
+		BuildID:                  rpcutil.OptionalUUIDString(dep.BuildID),
+		ImageID:                  rpcutil.OptionalUUIDString(dep.ImageID),
+		VmID:                     rpcutil.OptionalUUIDString(dep.VmID),
+		PromotedFromDeploymentID: rpcutil.OptionalUUIDString(dep.PromotedFromDeploymentID),
+		GithubCommit:             dep.GithubCommit,
+		RunningAt:                rpcutil.FormatTS(dep.RunningAt),
+		StoppedAt:                rpcutil.FormatTS(dep.StoppedAt),
+		FailedAt:                 rpcutil.FormatTS(dep.FailedAt),
+		CreatedAt:                rpcutil.FormatTS(dep.CreatedAt),
+		UpdatedAt:                rpcutil.FormatTS(dep.UpdatedAt),
+		BuildStatus:              bs,
+		Phase:                    DeploymentPhase(dep, build),
+		Reachable:                reachable,
 	}
 	kind := strings.TrimSpace(dep.DeploymentKind)
 	if kind == "" {
@@ -208,6 +211,7 @@ func (h *Handler) ToOutCtx(ctx context.Context, dep queries.Deployment) Deployme
 	}
 	out := DeploymentToOut(dep, build, h.reachability(ctx, dep))
 	out.WakeRequestedAt = rpcutil.FormatTS(dep.WakeRequestedAt)
+	out.CanPromoteToProduction = h.canPromoteToProduction(ctx, dep)
 	var service *queries.Service
 	if proj, err := h.Q.ProjectFirstByID(ctx, dep.ProjectID); err == nil {
 		out.MinInstanceCount = int(proj.MinInstanceCount)
@@ -251,26 +255,27 @@ func (h *Handler) ToOutCtx(ctx context.Context, dep queries.Deployment) Deployme
 // ListRowForOrgToOutCtx converts an org-scoped deployment row.
 func (h *Handler) ListRowForOrgToOutCtx(ctx context.Context, row queries.DeploymentFindRecentWithProjectForOrgRow) DeploymentListItemOut {
 	return h.ListRowToOutCtx(ctx, queries.DeploymentFindRecentWithProjectRow{
-		ID:                   row.ID,
-		ProjectID:            row.ProjectID,
-		BuildID:              row.BuildID,
-		ImageID:              row.ImageID,
-		VmID:                 row.VmID,
-		GithubCommit:         row.GithubCommit,
-		GithubBranch:         row.GithubBranch,
-		DeploymentKind:       row.DeploymentKind,
-		PreviewEnvironmentID: row.PreviewEnvironmentID,
-		PreviewLastRequestAt: row.PreviewLastRequestAt,
-		PreviewScaledToZero:  row.PreviewScaledToZero,
-		RunningAt:            row.RunningAt,
-		StoppedAt:            row.StoppedAt,
-		FailedAt:             row.FailedAt,
-		DeletedAt:            row.DeletedAt,
-		WakeRequestedAt:      row.WakeRequestedAt,
-		CreatedAt:            row.CreatedAt,
-		UpdatedAt:            row.UpdatedAt,
-		ProjectName:          row.ProjectName,
-		BuildStatus:          row.BuildStatus,
+		ID:                       row.ID,
+		ProjectID:                row.ProjectID,
+		BuildID:                  row.BuildID,
+		ImageID:                  row.ImageID,
+		VmID:                     row.VmID,
+		PromotedFromDeploymentID: row.PromotedFromDeploymentID,
+		GithubCommit:             row.GithubCommit,
+		GithubBranch:             row.GithubBranch,
+		DeploymentKind:           row.DeploymentKind,
+		PreviewEnvironmentID:     row.PreviewEnvironmentID,
+		PreviewLastRequestAt:     row.PreviewLastRequestAt,
+		PreviewScaledToZero:      row.PreviewScaledToZero,
+		RunningAt:                row.RunningAt,
+		StoppedAt:                row.StoppedAt,
+		FailedAt:                 row.FailedAt,
+		DeletedAt:                row.DeletedAt,
+		WakeRequestedAt:          row.WakeRequestedAt,
+		CreatedAt:                row.CreatedAt,
+		UpdatedAt:                row.UpdatedAt,
+		ProjectName:              row.ProjectName,
+		BuildStatus:              row.BuildStatus,
 	})
 }
 
@@ -285,28 +290,30 @@ func (h *Handler) ListRowToOutCtx(ctx context.Context, row queries.DeploymentFin
 		buildPtr = &queries.Build{Status: st}
 	}
 	dep := queries.Deployment{
-		ID:                   row.ID,
-		ProjectID:            row.ProjectID,
-		ServiceID:            row.ServiceID,
-		BuildID:              row.BuildID,
-		ImageID:              row.ImageID,
-		VmID:                 row.VmID,
-		GithubCommit:         row.GithubCommit,
-		GithubBranch:         row.GithubBranch,
-		DeploymentKind:       row.DeploymentKind,
-		PreviewEnvironmentID: row.PreviewEnvironmentID,
-		PreviewLastRequestAt: row.PreviewLastRequestAt,
-		PreviewScaledToZero:  row.PreviewScaledToZero,
-		RunningAt:            row.RunningAt,
-		StoppedAt:            row.StoppedAt,
-		FailedAt:             row.FailedAt,
-		DeletedAt:            row.DeletedAt,
-		WakeRequestedAt:      row.WakeRequestedAt,
-		CreatedAt:            row.CreatedAt,
-		UpdatedAt:            row.UpdatedAt,
+		ID:                       row.ID,
+		ProjectID:                row.ProjectID,
+		ServiceID:                row.ServiceID,
+		BuildID:                  row.BuildID,
+		ImageID:                  row.ImageID,
+		VmID:                     row.VmID,
+		PromotedFromDeploymentID: row.PromotedFromDeploymentID,
+		GithubCommit:             row.GithubCommit,
+		GithubBranch:             row.GithubBranch,
+		DeploymentKind:           row.DeploymentKind,
+		PreviewEnvironmentID:     row.PreviewEnvironmentID,
+		PreviewLastRequestAt:     row.PreviewLastRequestAt,
+		PreviewScaledToZero:      row.PreviewScaledToZero,
+		RunningAt:                row.RunningAt,
+		StoppedAt:                row.StoppedAt,
+		FailedAt:                 row.FailedAt,
+		DeletedAt:                row.DeletedAt,
+		WakeRequestedAt:          row.WakeRequestedAt,
+		CreatedAt:                row.CreatedAt,
+		UpdatedAt:                row.UpdatedAt,
 	}
 	out := DeploymentToOut(dep, buildPtr, h.reachability(ctx, dep))
 	out.WakeRequestedAt = rpcutil.FormatTS(dep.WakeRequestedAt)
+	out.CanPromoteToProduction = h.canPromoteToProduction(ctx, dep)
 	var service *queries.Service
 	if proj, err := h.Q.ProjectFirstByID(ctx, dep.ProjectID); err == nil {
 		out.MinInstanceCount = int(proj.MinInstanceCount)
@@ -483,6 +490,11 @@ func formatRuntimeURL(addr netip.Addr, port int) string {
 
 func boolPtr(v bool) *bool {
 	return &v
+}
+
+func (h *Handler) canPromoteToProduction(ctx context.Context, dep queries.Deployment) bool {
+	ok, err := h.promotableProductionDeployment(ctx, dep)
+	return err == nil && ok
 }
 
 // DeploymentPhase derives a coarse UI phase from deployment + optional build row.

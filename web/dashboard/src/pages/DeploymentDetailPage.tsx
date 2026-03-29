@@ -9,6 +9,7 @@ import {
   dashboardEventTopics,
   subscribeDashboardEvents,
 } from "@/lib/api"
+import { deploymentPromotionConfirmMessage } from "@/lib/deployment-promotion"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -66,7 +67,9 @@ export function DeploymentDetailPage() {
   const [activeTab, setActiveTab] = useState<"overview" | "logs">("overview")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
   const [live, setLive] = useState(false)
+  const [promoting, setPromoting] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const deploymentRef = useRef<Deployment | null>(null)
   deploymentRef.current = deployment
@@ -84,6 +87,7 @@ export function DeploymentDetailPage() {
 
     ;(async () => {
       setError(null)
+      setActionError(null)
       setLoading(true)
       stopPoll()
       setLive(false)
@@ -240,6 +244,7 @@ export function DeploymentDetailPage() {
                 {deployment.blocked_reason ? (
                   <PageErrorBanner message={deployment.blocked_reason} />
                 ) : null}
+                {actionError ? <PageErrorBanner message={actionError} /> : null}
                 <MetadataGrid>
                   <MetadataItem label="Commit">
                     <span className="font-mono text-sm break-all">
@@ -249,6 +254,11 @@ export function DeploymentDetailPage() {
                   <MetadataItem label="Created">
                     {deployment.created_at ? new Date(deployment.created_at).toLocaleString() : "—"}
                   </MetadataItem>
+                  {deployment.promoted_from_deployment_id ? (
+                    <MetadataItem label="Promoted from">
+                      <span className="font-mono text-xs break-all">{deployment.promoted_from_deployment_id}</span>
+                    </MetadataItem>
+                  ) : null}
                   {(deployment.desired_instance_count != null || deployment.running_instance_count != null) && (
                     <MetadataItem label="Instances">
                       <span className="font-mono text-sm">
@@ -300,15 +310,42 @@ export function DeploymentDetailPage() {
                   <DeploymentReachability reachable={deployment.reachable} />
                 </div>
                 <div className="flex flex-wrap gap-2 pt-1">
+                  {deployment.can_promote_to_production ? (
+                    <Button
+                      size="sm"
+                      disabled={promoting}
+                      onClick={async () => {
+                        if (!id || !window.confirm(deploymentPromotionConfirmMessage(deployment))) return
+                        setActionError(null)
+                        setPromoting(true)
+                        try {
+                          const next = await api.promoteDeployment(id)
+                          navigate(`/deployments/${next.id}`)
+                        } catch (e) {
+                          setActionError(e instanceof APIError ? e.message : "Could not promote deployment")
+                        } finally {
+                          setPromoting(false)
+                        }
+                      }}
+                    >
+                      <RotateCwIcon className={`mr-2 size-4 ${promoting ? "animate-spin" : ""}`} />
+                      {promoting ? "Promoting…" : "Rollback to this deploy"}
+                    </Button>
+                  ) : null}
                   {!terminal && (
                     <Button
                       size="sm"
                       variant="outline"
                       onClick={async () => {
                         if (!id) return
-                        await api.cancelDeployment(id)
-                        const d = await api.getDeployment(id)
-                        setDeployment(d)
+                        setActionError(null)
+                        try {
+                          await api.cancelDeployment(id)
+                          const d = await api.getDeployment(id)
+                          setDeployment(d)
+                        } catch (e) {
+                          setActionError(e instanceof APIError ? e.message : "Could not cancel deployment")
+                        }
                       }}
                     >
                       <XCircleIcon className="mr-2 size-4" /> Cancel

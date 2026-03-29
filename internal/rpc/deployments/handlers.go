@@ -1,6 +1,7 @@
 package deployments
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/reconciler"
@@ -35,6 +37,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/deployments/{id}/stream", h.streamDeployment)
 	mux.HandleFunc("POST /api/projects/{id}/deploy", h.triggerDeploy)
 	mux.HandleFunc("POST /api/services/{id}/deploy", h.triggerServiceDeploy)
+	mux.HandleFunc("POST /api/deployments/{id}/promote", h.promoteDeployment)
 	mux.HandleFunc("POST /api/deployments/{id}/cancel", h.cancelDeployment)
 }
 
@@ -224,13 +227,16 @@ func (h *Handler) triggerDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dep, err := h.Q.DeploymentCreate(r.Context(), queries.DeploymentCreateParams{
-		ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
-		ProjectID:            projectID,
-		ServiceID:            service.ID,
-		GithubCommit:         req.Commit,
-		GithubBranch:         req.Commit,
-		DeploymentKind:       "production",
-		PreviewEnvironmentID: pgtype.UUID{Valid: false},
+		ID:                       pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		ProjectID:                projectID,
+		ServiceID:                service.ID,
+		BuildID:                  pgtype.UUID{Valid: false},
+		ImageID:                  pgtype.UUID{Valid: false},
+		PromotedFromDeploymentID: pgtype.UUID{Valid: false},
+		GithubCommit:             req.Commit,
+		GithubBranch:             req.Commit,
+		DeploymentKind:           "production",
+		PreviewEnvironmentID:     pgtype.UUID{Valid: false},
 	})
 	if err != nil {
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "create_deployment", err)
@@ -272,19 +278,81 @@ func (h *Handler) triggerServiceDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dep, err := h.Q.DeploymentCreate(r.Context(), queries.DeploymentCreateParams{
-		ID:                   pgtype.UUID{Bytes: uuid.New(), Valid: true},
-		ProjectID:            service.ProjectID,
-		ServiceID:            service.ID,
-		GithubCommit:         req.Commit,
-		GithubBranch:         req.Commit,
-		DeploymentKind:       "production",
-		PreviewEnvironmentID: pgtype.UUID{Valid: false},
+		ID:                       pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		ProjectID:                service.ProjectID,
+		ServiceID:                service.ID,
+		BuildID:                  pgtype.UUID{Valid: false},
+		ImageID:                  pgtype.UUID{Valid: false},
+		PromotedFromDeploymentID: pgtype.UUID{Valid: false},
+		GithubCommit:             req.Commit,
+		GithubBranch:             req.Commit,
+		DeploymentKind:           "production",
+		PreviewEnvironmentID:     pgtype.UUID{Valid: false},
 	})
 	if err != nil {
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "create_service_deployment", err)
 		return
 	}
 	rpcutil.WriteJSON(w, http.StatusCreated, h.ToOutCtx(r.Context(), dep))
+}
+
+func (h *Handler) promoteDeployment(w http.ResponseWriter, r *http.Request) {
+	p, ok := rpcutil.MustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !rpcutil.RequireOrgAdmin(w, p) {
+		return
+	}
+	id, err := rpcutil.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_id", "invalid deployment id")
+		return
+	}
+	dep, err := h.Q.DeploymentFirstByID(r.Context(), id)
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "deployment not found")
+		return
+	}
+	if _, err := h.Q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+		ID:    dep.ProjectID,
+		OrgID: p.OrganizationID,
+	}); err != nil {
+		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "deployment not found")
+		return
+	}
+	ok, err = h.promotableProductionDeployment(r.Context(), dep)
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "promote_deployment", err)
+		return
+	}
+	if !ok {
+		rpcutil.WriteAPIError(w, http.StatusConflict, "invalid_state", "deployment cannot be promoted to production")
+		return
+	}
+	if !dep.BuildID.Valid || !dep.ImageID.Valid {
+		rpcutil.WriteAPIError(w, http.StatusConflict, "invalid_state", "deployment has no reusable build artifact")
+		return
+	}
+
+	newDep, err := h.Q.DeploymentCreate(r.Context(), queries.DeploymentCreateParams{
+		ID:                       pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		ProjectID:                dep.ProjectID,
+		ServiceID:                dep.ServiceID,
+		BuildID:                  dep.BuildID,
+		ImageID:                  dep.ImageID,
+		PromotedFromDeploymentID: dep.ID,
+		GithubCommit:             dep.GithubCommit,
+		GithubBranch:             dep.GithubBranch,
+		DeploymentKind:           "production",
+		PreviewEnvironmentID:     pgtype.UUID{Valid: false},
+	})
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "promote_deployment", err)
+		return
+	}
+
+	rpcutil.WriteJSON(w, http.StatusCreated, h.ToOutCtx(r.Context(), newDep))
 }
 
 func (h *Handler) cancelDeployment(w http.ResponseWriter, r *http.Request) {
@@ -319,6 +387,26 @@ func (h *Handler) cancelDeployment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rpcutil.WriteJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
+}
+
+func (h *Handler) promotableProductionDeployment(ctx context.Context, dep queries.Deployment) (bool, error) {
+	if dep.DeletedAt.Valid || dep.FailedAt.Valid {
+		return false, nil
+	}
+	if dep.DeploymentKind != "production" || !dep.ServiceID.Valid || !dep.RunningAt.Valid {
+		return false, nil
+	}
+	current, err := h.Q.DeploymentLatestRunningByServiceID(ctx, dep.ServiceID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return true, nil
+		}
+		return false, fmt.Errorf("load latest running deployment: %w", err)
+	}
+	if current.ID == dep.ID {
+		return false, nil
+	}
+	return true, nil
 }
 
 func terminalPhase(phase string) bool {

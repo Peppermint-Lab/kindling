@@ -220,6 +220,7 @@ export type Deployment = {
   build_id?: string | null
   image_id?: string | null
   vm_id?: string | null
+  promoted_from_deployment_id?: string | null
   github_commit: string
   deployment_kind?: string
   github_branch?: string
@@ -240,6 +241,7 @@ export type Deployment = {
   scale_to_zero_enabled?: boolean
   wake_requested_at?: string | null
   blocked_reason?: string
+  can_promote_to_production?: boolean
   persistent_volume?: DeploymentPersistentVolume | null
   reachable?: DeploymentReachability | null
 }
@@ -861,6 +863,12 @@ export const api = {
     request<Deployment>(`/api/services/${serviceId}/deploy`, {
       method: "POST",
       body: JSON.stringify({ commit }),
+    }),
+
+  promoteDeployment: (id: string) =>
+    request<Deployment>(`/api/deployments/${id}/promote`, {
+      method: "POST",
+      body: JSON.stringify({}),
     }),
 
   cancelDeployment: (id: string) =>
