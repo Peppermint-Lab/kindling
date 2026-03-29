@@ -96,13 +96,13 @@ func streamGuestHTTP(ctx context.Context, c net.Conn, argv []string, cwd string,
 	} else {
 		_ = c.SetDeadline(time.Now().Add(guestControlDefaultTimeout))
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost/exec-stream", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost/shell", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Connection", "Upgrade")
-	req.Header.Set("Upgrade", "kindling-shell")
+	req.Header.Set("Upgrade", "kindling-shell-v1")
 	if err := req.Write(c); err != nil {
 		return nil, err
 	}
@@ -115,6 +115,35 @@ func streamGuestHTTP(ctx context.Context, c net.Conn, argv []string, cwd string,
 		defer resp.Body.Close()
 		msg, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("guest stream: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+	}
+	_ = c.SetDeadline(time.Time{})
+	return &upgradedGuestConn{Conn: c, reader: reader}, nil
+}
+
+func tcpGuestHTTP(ctx context.Context, c net.Conn, port int) (io.ReadWriteCloser, error) {
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = c.SetDeadline(deadline)
+	} else {
+		_ = c.SetDeadline(time.Now().Add(guestControlDefaultTimeout))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost/tcp-connect?port="+url.QueryEscape(fmt.Sprintf("%d", port)), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "kindling-tcp-v1")
+	if err := req.Write(c); err != nil {
+		return nil, err
+	}
+	reader := bufio.NewReader(c)
+	resp, err := http.ReadResponse(reader, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		defer resp.Body.Close()
+		msg, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("guest tcp stream: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
 	}
 	_ = c.SetDeadline(time.Time{})
 	return &upgradedGuestConn{Conn: c, reader: reader}, nil

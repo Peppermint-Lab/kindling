@@ -50,8 +50,10 @@ type Snapshot struct {
 	ScaleToZeroIdleSeconds            int64
 	ServiceBaseDomain                 string
 	PreviewBaseDomain                 string
+	SandboxBaseDomain                 string
 	PreviewRetentionAfterCloseSeconds int64
 	PreviewIdleSeconds                int64
+	InterServerProxySharedKey         string
 
 	ServerRuntimeOverride              string
 	ServerAdvertiseHost                string
@@ -112,6 +114,7 @@ func LoadSnapshot(ctx context.Context, q *queries.Queries, serverID uuid.UUID, m
 	}
 	s.ServiceBaseDomain = strings.TrimSpace(settings[SettingServiceBaseDomain])
 	s.PreviewBaseDomain = strings.TrimSpace(settings[SettingPreviewBaseDomain])
+	s.SandboxBaseDomain = strings.TrimSpace(settings[SettingSandboxBaseDomain])
 	if v := strings.TrimSpace(settings[SettingPreviewRetentionAfterCloseSecs]); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
 			s.PreviewRetentionAfterCloseSeconds = n
@@ -147,6 +150,9 @@ func LoadSnapshot(ctx context.Context, q *queries.Queries, serverID uuid.UUID, m
 		return nil, err
 	}
 	if err := decryptSecretInto(ctx, q, masterKey, SecretVolumeBackupS3SecretAccessKey, &s.VolumeBackupS3SecretAccessKey); err != nil {
+		return nil, err
+	}
+	if err := decryptSecretInto(ctx, q, masterKey, SecretInterServerProxySharedKey, &s.InterServerProxySharedKey); err != nil {
 		return nil, err
 	}
 

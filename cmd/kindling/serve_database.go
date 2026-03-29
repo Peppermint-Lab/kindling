@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 
@@ -31,10 +34,15 @@ func seedAllSettings(ctx context.Context, q *queries.Queries, serverID uuid.UUID
 	if err := seedClusterSettingsFromServeFlags(ctx, q, opts); err != nil {
 		return fmt.Errorf("seed cluster settings: %w", err)
 	}
-	if components.worker || components.edge {
+	if components.worker || components.edge || components.api {
 		if err := seedAdvertiseHostIfUnset(ctx, q, serverID, opts); err != nil {
 			return fmt.Errorf("seed advertise host: %w", err)
 		}
+		if err := seedInternalAPIPort(ctx, q, serverID, opts.listenAddr); err != nil {
+			return fmt.Errorf("seed internal api port: %w", err)
+		}
+	}
+	if components.worker || components.edge {
 		if err := seedCloudHypervisorStateDirIfUnset(ctx, q, serverID); err != nil {
 			return fmt.Errorf("seed cloud hypervisor state dir: %w", err)
 		}
@@ -104,6 +112,66 @@ func seedCloudHypervisorStateDirIfUnset(ctx context.Context, q *queries.Queries,
 	return q.ServerSettingSeedCloudHypervisorStateDirIfUnset(ctx, queries.ServerSettingSeedCloudHypervisorStateDirIfUnsetParams{
 		ServerID:                pgtype.UUID{Bytes: serverID, Valid: true},
 		CloudHypervisorStateDir: stateDir,
+	})
+}
+
+func seedInternalAPIPort(ctx context.Context, q *queries.Queries, serverID uuid.UUID, listenAddr string) error {
+	port, err := parseListenPort(listenAddr)
+	if err != nil {
+		return err
+	}
+	return q.ServerSettingUpsertInternalAPIPort(ctx, queries.ServerSettingUpsertInternalAPIPortParams{
+		ServerID:        pgtype.UUID{Bytes: serverID, Valid: true},
+		InternalApiPort: int32(port),
+	})
+}
+
+func parseListenPort(listenAddr string) (int, error) {
+	listenAddr = strings.TrimSpace(listenAddr)
+	if listenAddr == "" {
+		return 8080, nil
+	}
+	_, portStr, err := net.SplitHostPort(listenAddr)
+	if err != nil {
+		if !strings.Contains(listenAddr, ":") {
+			portStr = listenAddr
+		} else if strings.HasPrefix(listenAddr, ":") {
+			portStr = strings.TrimPrefix(listenAddr, ":")
+		} else {
+			return 0, fmt.Errorf("parse listen port %q: %w", listenAddr, err)
+		}
+	}
+	portStr = strings.TrimSpace(portStr)
+	if portStr == "" {
+		return 8080, nil
+	}
+	var port int
+	if _, err := fmt.Sscanf(portStr, "%d", &port); err != nil || port <= 0 || port > 65535 {
+		return 0, fmt.Errorf("invalid listen port %q", listenAddr)
+	}
+	return port, nil
+}
+
+func ensureInterServerProxySecret(ctx context.Context, q *queries.Queries, cfgMgr *config.Manager) error {
+	if cfgMgr == nil {
+		return nil
+	}
+	if existing, err := q.ClusterSecretGet(ctx, config.SecretInterServerProxySharedKey); err == nil && len(existing) > 0 {
+		return nil
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("check inter-server proxy secret: %w", err)
+	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return fmt.Errorf("generate inter-server proxy secret: %w", err)
+	}
+	enc, err := cfgMgr.EncryptBytes([]byte(base64.RawURLEncoding.EncodeToString(raw)))
+	if err != nil {
+		return fmt.Errorf("encrypt inter-server proxy secret: %w", err)
+	}
+	return q.ClusterSecretUpsert(ctx, queries.ClusterSecretUpsertParams{
+		Key:        config.SecretInterServerProxySharedKey,
+		Ciphertext: enc,
 	})
 }
 

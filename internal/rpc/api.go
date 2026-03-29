@@ -171,14 +171,20 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/sandboxes/{id}/unpublish-http", a.unpublishSandboxHTTP)
 	mux.HandleFunc("POST /api/sandboxes/{id}/exec", a.execSandbox)
 	mux.HandleFunc("GET /api/sandboxes/{id}/shell", a.sandboxShell)
+	mux.HandleFunc("GET /api/sandboxes/{id}/shell/ws", a.sandboxShellWS)
+	mux.HandleFunc("GET /api/sandboxes/{id}/ssh/ws", a.sandboxSSHWS)
 	mux.HandleFunc("POST /api/sandboxes/{id}/copy-in", a.copyIntoSandbox)
 	mux.HandleFunc("GET /api/sandboxes/{id}/copy-out", a.copyOutOfSandbox)
 	mux.HandleFunc("GET /api/sandboxes/{id}/logs", a.sandboxLogs)
 	mux.HandleFunc("GET /api/sandboxes/{id}/stats", a.sandboxStats)
+	mux.HandleFunc("GET /api/sandboxes/{id}/access-events", a.listSandboxAccessEvents)
 	mux.HandleFunc("GET /api/sandbox-templates", a.listSandboxTemplates)
 	mux.HandleFunc("GET /api/sandbox-templates/{id}", a.getSandboxTemplate)
 	mux.HandleFunc("DELETE /api/sandbox-templates/{id}", a.deleteSandboxTemplate)
 	mux.HandleFunc("POST /api/sandbox-templates/{id}/clone", a.cloneSandboxTemplate)
+	mux.HandleFunc("GET /api/me/ssh-keys", a.listUserSSHKeys)
+	mux.HandleFunc("POST /api/me/ssh-keys", a.createUserSSHKey)
+	mux.HandleFunc("DELETE /api/me/ssh-keys/{key_id}", a.deleteUserSSHKey)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {

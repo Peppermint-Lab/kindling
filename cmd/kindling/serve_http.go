@@ -204,11 +204,14 @@ func startAPIServer(
 	// JSON decoding. Applied before rate limiting so oversized payloads
 	// are rejected as early as possible.
 	sizeLimitedAPI := bodyLimitMiddleware(maxJSONBodySize, rateLimitedAPI)
+	// Security response headers applied early so ALL responses (including
+	// 401, 403, 413, 429 errors from inner middleware) include them.
+	securedAPI := rpc.SecurityHeadersMiddleware(sizeLimitedAPI)
 	var handler http.Handler
 	if dashHostStr != "" {
-		handler = hostBasedHandler(corsMiddleware(corsOrigins, sizeLimitedAPI), dashboardSPAHandler(distDir), dashHostStr)
+		handler = hostBasedHandler(corsMiddleware(corsOrigins, securedAPI), dashboardSPAHandler(distDir), dashHostStr)
 	} else {
-		handler = corsMiddleware(corsOrigins, sizeLimitedAPI)
+		handler = corsMiddleware(corsOrigins, securedAPI)
 	}
 
 	srv := &http.Server{Addr: listenAddr, Handler: handler}

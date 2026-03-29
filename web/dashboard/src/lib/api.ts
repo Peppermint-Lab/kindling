@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8080"
+export const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8080"
 
 export class APIError extends Error {
   status: number
@@ -89,6 +89,63 @@ export type ServiceEndpoint = {
   public_hostname?: string
   last_healthy_at?: string | null
   last_unhealthy_at?: string | null
+}
+
+export type SandboxPublishedPort = {
+  target_port: number
+  protocol: "http"
+  visibility: "public"
+  public_hostname?: string
+}
+
+export type Sandbox = {
+  id: string
+  name: string
+  host_group: string
+  backend?: string
+  arch?: string
+  desired_state: string
+  observed_state: string
+  server_id?: string | null
+  vm_id?: string | null
+  template_id?: string | null
+  base_image_ref: string
+  vcpu: number
+  memory_mb: number
+  disk_gb: number
+  env?: Record<string, string>
+  git_repo?: string
+  git_ref?: string
+  auto_suspend_seconds: number
+  last_used_at?: string | null
+  expires_at?: string | null
+  published_http_port?: number | null
+  runtime_url?: string
+  failure_message?: string
+  created_at?: string | null
+  updated_at?: string | null
+  published_ports?: SandboxPublishedPort[]
+}
+
+export type SandboxAccessEvent = {
+  id: string
+  sandbox_id: string
+  user_id?: string
+  user_email?: string
+  display_name?: string
+  access_method: "shell_ws" | "ssh" | "exec" | "copy_in" | "copy_out"
+  event_type: "started" | "ended" | "failed"
+  exit_code?: number | null
+  error_summary?: string
+  created_at: string
+}
+
+export type UserSSHKey = {
+  id: string
+  name: string
+  public_key: string
+  created_at: string
+  updated_at: string
 }
 
 export type ProjectVolume = {
@@ -622,6 +679,25 @@ export type ProjectDomain = {
 }
 
 export const api = {
+  listSandboxes: () => request<Sandbox[]>("/api/sandboxes"),
+  getSandbox: (id: string) => request<Sandbox>(`/api/sandboxes/${id}`),
+  sandboxAction: (id: string, action: "start" | "stop" | "suspend" | "resume") =>
+    request<Sandbox>(`/api/sandboxes/${id}/${action}`, { method: "POST", body: JSON.stringify({}) }),
+  publishSandboxHTTP: (id: string, targetPort: number, hostname?: string) =>
+    request<Sandbox>(`/api/sandboxes/${id}/publish-http`, {
+      method: "POST",
+      body: JSON.stringify({ target_port: targetPort, hostname }),
+    }),
+  unpublishSandboxHTTP: (id: string) =>
+    request<Sandbox>(`/api/sandboxes/${id}/unpublish-http`, { method: "POST", body: JSON.stringify({}) }),
+  getSandboxLogs: (id: string) => request<string[]>(`/api/sandboxes/${id}/logs`),
+  getSandboxStats: (id: string) => request<Record<string, unknown>>(`/api/sandboxes/${id}/stats`),
+  getSandboxAccessEvents: (id: string) => request<SandboxAccessEvent[]>(`/api/sandboxes/${id}/access-events`),
+  listUserSSHKeys: () => request<UserSSHKey[]>("/api/me/ssh-keys"),
+  createUserSSHKey: (data: { name?: string; public_key: string }) =>
+    request<UserSSHKey>("/api/me/ssh-keys", { method: "POST", body: JSON.stringify(data) }),
+  deleteUserSSHKey: (id: string) =>
+    request<void>(`/api/me/ssh-keys/${id}`, { method: "DELETE" }),
   authBootstrapStatus: () =>
     request<{ needs_bootstrap: boolean; bootstrap_token_configured: boolean }>(
       "/api/auth/bootstrap-status"

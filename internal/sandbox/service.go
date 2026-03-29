@@ -281,6 +281,7 @@ func (s *Service) reconcileRunning(ctx context.Context, sb queries.Sandbox) erro
 				return s.resumeSandbox(ctx, sb, vm)
 			}
 			if vm.Status == "running" && s.Runtime.Healthy(ctx, uuid.UUID(sb.ID.Bytes)) {
+				_ = s.syncSandboxSSHAccess(ctx, sb)
 				_, err := s.Q.SandboxUpdateObservedState(ctx, queries.SandboxUpdateObservedStateParams{
 					ID:             sb.ID,
 					ObservedState:  "running",
@@ -337,7 +338,11 @@ func (s *Service) resumeSandbox(ctx context.Context, sb queries.Sandbox, vm quer
 		RuntimeUrl:     runtimeURL,
 		FailureMessage: "",
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	_ = s.syncSandboxSSHAccess(ctx, sb)
+	return nil
 }
 
 func (s *Service) startCold(ctx context.Context, sb queries.Sandbox) error {
@@ -369,7 +374,11 @@ func (s *Service) startCold(ctx context.Context, sb queries.Sandbox) error {
 		ObservedState: "running",
 		RuntimeUrl:    runtimeURL,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	_ = s.syncSandboxSSHAccess(ctx, sb)
+	return nil
 }
 
 func (s *Service) startClone(ctx context.Context, sb queries.Sandbox, tpl queries.SandboxTemplate) error {
@@ -401,7 +410,11 @@ func (s *Service) startClone(ctx context.Context, sb queries.Sandbox, tpl querie
 		ObservedState: "running",
 		RuntimeUrl:    runtimeURL,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	_ = s.syncSandboxSSHAccess(ctx, sb)
+	return nil
 }
 
 func (s *Service) reconcileDelete(ctx context.Context, sb queries.Sandbox) error {
@@ -590,6 +603,65 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func (s *Service) syncSandboxSSHAccess(ctx context.Context, sb queries.Sandbox) error {
+	access, ok := s.Runtime.(kruntime.GuestAccess)
+	if !ok {
+		return nil
+	}
+	rows, err := s.Q.OrgUserSSHKeysActive(ctx, sb.OrgID)
+	if err != nil {
+		return err
+	}
+	keys := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if key := strings.TrimSpace(row.PublicKey); key != "" {
+			keys = append(keys, key)
+		}
+	}
+	content := strings.Join(keys, "\n")
+	if content != "" {
+		content += "\n"
+	}
+	const authKeysPath = "/tmp/kindling-authorized_keys"
+	if err := access.WriteGuestFile(ctx, uuid.UUID(sb.ID.Bytes), authKeysPath, []byte(content)); err != nil {
+		return err
+	}
+	script := `
+set -eu
+if ! id -u kindling >/dev/null 2>&1; then
+  if command -v useradd >/dev/null 2>&1; then
+    useradd -m -s /bin/sh kindling || true
+  elif command -v adduser >/dev/null 2>&1; then
+    adduser -D -s /bin/sh kindling 2>/dev/null || adduser --disabled-password --gecos '' kindling 2>/dev/null || true
+  fi
+fi
+home_dir="/home/kindling"
+if command -v getent >/dev/null 2>&1; then
+  maybe_home="$(getent passwd kindling | cut -d: -f6 || true)"
+  if [ -n "$maybe_home" ]; then
+    home_dir="$maybe_home"
+  fi
+fi
+mkdir -p "$home_dir/.ssh"
+cat /tmp/kindling-authorized_keys > "$home_dir/.ssh/authorized_keys"
+chown -R kindling:kindling "$home_dir/.ssh" 2>/dev/null || true
+chmod 700 "$home_dir/.ssh"
+chmod 600 "$home_dir/.ssh/authorized_keys"
+sshd_bin=""
+if command -v sshd >/dev/null 2>&1; then
+  sshd_bin="$(command -v sshd)"
+elif [ -x /usr/sbin/sshd ]; then
+  sshd_bin="/usr/sbin/sshd"
+fi
+if [ -n "$sshd_bin" ]; then
+  mkdir -p /run/sshd
+  pgrep -x sshd >/dev/null 2>&1 || "$sshd_bin" || true
+fi
+`
+	_, err = access.ExecGuest(ctx, uuid.UUID(sb.ID.Bytes), []string{"/bin/sh", "-lc", script}, "/", nil)
+	return err
 }
 
 func RunExpiryOnce(ctx context.Context, databaseURL string, q *queries.Queries, sched interface{ ScheduleNow(uuid.UUID) }) {

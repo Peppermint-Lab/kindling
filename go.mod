@@ -44,6 +44,7 @@ require (
 	github.com/aws/smithy-go v1.24.2 // indirect
 	github.com/caddyserver/zerossl v0.1.5 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgio v1.0.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect

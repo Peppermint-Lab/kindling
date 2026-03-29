@@ -16,6 +16,7 @@ const (
 	SettingVolumeBackupS3Prefix           = "volume_backup_s3_prefix"
 	SettingServiceBaseDomain              = "service_base_domain"
 	SettingPreviewBaseDomain              = "preview_base_domain"
+	SettingSandboxBaseDomain              = "sandbox_base_domain"
 	SettingPreviewRetentionAfterCloseSecs = "preview_retention_after_close_seconds"
 	SettingPreviewIdleSeconds             = "preview_idle_scale_seconds"
 )
@@ -26,4 +27,5 @@ const (
 	SecretRegistryPassword              = "registry_password"
 	SecretVolumeBackupS3AccessKeyID     = "volume_backup_s3_access_key_id"
 	SecretVolumeBackupS3SecretAccessKey = "volume_backup_s3_secret_access_key"
+	SecretInterServerProxySharedKey     = "inter_server_proxy_shared_key"
 )

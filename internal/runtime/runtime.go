@@ -184,6 +184,12 @@ type GuestStreamAccess interface {
 	StreamGuest(ctx context.Context, id uuid.UUID, argv []string, cwd string, env []string) (io.ReadWriteCloser, error)
 }
 
+// GuestTCPAccess is implemented by runtimes that can proxy a raw TCP stream
+// into a currently running guest on the local worker.
+type GuestTCPAccess interface {
+	ConnectGuestTCP(ctx context.Context, id uuid.UUID, port int) (io.ReadWriteCloser, error)
+}
+
 // Detect returns the best available runtime for this host.
 func Detect() string {
 	if _, err := os.Stat("/dev/kvm"); err == nil {

@@ -142,6 +142,9 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	}
 
 	cfgMgr := config.NewManager(db.Pool, serverID, masterKey)
+	if err := ensureInterServerProxySecret(ctx, q, cfgMgr); err != nil {
+		return fmt.Errorf("ensure inter-server proxy secret: %w", err)
+	}
 	if err := cfgMgr.Reload(ctx); err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
@@ -294,7 +297,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	}
 
 	// API server.
-	if components.api {
+	if components.api || components.worker {
 		return startAPIServer(ctx, q, cfgMgr, dashboardEvents, recs.deployment, recs.ciJob, recs.sandbox, recs.sandboxTpl, sandboxSvc, ciSvc, listenAddr)
 	}
 

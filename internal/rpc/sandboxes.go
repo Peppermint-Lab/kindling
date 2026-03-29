@@ -1,7 +1,6 @@
 package rpc
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -596,13 +595,17 @@ func (a *API) publishSandboxHTTP(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "validation_error", "target_port is required")
 		return
 	}
+	hostname := strings.TrimSpace(req.Hostname)
+	if hostname == "" {
+		hostname = a.defaultSandboxHostname(sb)
+	}
 	if _, err := a.q.SandboxPublishedPortUpsert(r.Context(), queries.SandboxPublishedPortUpsertParams{
 		ID:             pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		SandboxID:      sb.ID,
 		TargetPort:     req.TargetPort,
 		Protocol:       "http",
 		Visibility:     "public",
-		PublicHostname: strings.TrimSpace(req.Hostname),
+		PublicHostname: hostname,
 	}); err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "publish_sandbox_http", err)
 		return
@@ -619,12 +622,18 @@ func (a *API) publishSandboxHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) execSandbox(w http.ResponseWriter, r *http.Request) {
+	if !a.requireValidSandboxProxyIfPresent(w, r) {
+		return
+	}
 	p, ok := mustPrincipal(w, r)
 	if !ok {
 		return
 	}
 	sb, ok := a.requireSandboxAccess(w, r, p)
 	if !ok {
+		return
+	}
+	if a.proxySandboxHTTPRequest(w, r, sb) {
 		return
 	}
 	access, ok := a.sandboxGuestAccess(w, sb)
@@ -644,86 +653,34 @@ func (a *API) execSandbox(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "validation_error", "argv is required")
 		return
 	}
+	a.recordSandboxAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "exec", "started", nil, "")
 	out, err := access.ExecGuest(r.Context(), uuid.UUID(sb.ID.Bytes), req.Argv, req.Cwd, req.Env)
 	if err != nil {
+		a.recordSandboxAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "exec", "failed", nil, err.Error())
 		writeAPIErrorFromErr(w, http.StatusConflict, "sandbox_exec", err)
 		return
 	}
 	_ = a.q.SandboxUpdateLastUsedAt(r.Context(), sb.ID)
+	a.recordSandboxAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "exec", "ended", &out.ExitCode, "")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"exit_code": out.ExitCode,
 		"output":    out.Output,
 	})
 }
 
-func (a *API) sandboxShell(w http.ResponseWriter, r *http.Request) {
-	p, ok := mustPrincipal(w, r)
-	if !ok {
-		return
-	}
-	sb, ok := a.requireSandboxAccess(w, r, p)
-	if !ok {
-		return
-	}
-	access, ok := a.sandboxStreamAccess(w, sb)
-	if !ok {
-		return
-	}
-	hj, ok := w.(http.Hijacker)
-	if !ok {
-		writeAPIError(w, http.StatusInternalServerError, "sandbox_shell", "http hijacking is unavailable")
-		return
-	}
-	shellPath := strings.TrimSpace(r.URL.Query().Get("shell"))
-	if shellPath == "" {
-		shellPath = "/bin/sh"
-	}
-	cwd := strings.TrimSpace(r.URL.Query().Get("cwd"))
-	env := append([]string(nil), r.URL.Query()["env"]...)
-	stream, err := access.StreamGuest(r.Context(), uuid.UUID(sb.ID.Bytes), []string{shellPath}, cwd, env)
-	if err != nil {
-		writeAPIErrorFromErr(w, http.StatusConflict, "sandbox_shell", err)
-		return
-	}
-	conn, rw, err := hj.Hijack()
-	if err != nil {
-		_ = stream.Close()
-		return
-	}
-	if _, err := rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: kindling-shell\r\n\r\n"); err != nil {
-		_ = stream.Close()
-		_ = conn.Close()
-		return
-	}
-	if err := rw.Flush(); err != nil {
-		_ = stream.Close()
-		_ = conn.Close()
-		return
-	}
-
-	done := make(chan struct{}, 2)
-	go func() {
-		_, _ = io.Copy(stream, conn)
-		done <- struct{}{}
-	}()
-	go func() {
-		_, _ = io.Copy(conn, stream)
-		done <- struct{}{}
-	}()
-	<-done
-	_ = a.q.SandboxUpdateLastUsedAt(context.Background(), sb.ID)
-	_ = stream.Close()
-	_ = conn.Close()
-	<-done
-}
-
 func (a *API) copyIntoSandbox(w http.ResponseWriter, r *http.Request) {
+	if !a.requireValidSandboxProxyIfPresent(w, r) {
+		return
+	}
 	p, ok := mustPrincipal(w, r)
 	if !ok {
 		return
 	}
 	sb, ok := a.requireSandboxAccess(w, r, p)
 	if !ok {
+		return
+	}
+	if a.proxySandboxHTTPRequest(w, r, sb) {
 		return
 	}
 	access, ok := a.sandboxGuestAccess(w, sb)
@@ -741,20 +698,28 @@ func (a *API) copyIntoSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := access.WriteGuestFile(r.Context(), uuid.UUID(sb.ID.Bytes), targetPath, data); err != nil {
+		a.recordSandboxAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "copy_in", "failed", nil, err.Error())
 		writeAPIErrorFromErr(w, http.StatusConflict, "sandbox_copy_in", err)
 		return
 	}
 	_ = a.q.SandboxUpdateLastUsedAt(r.Context(), sb.ID)
+	a.recordSandboxAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "copy_in", "ended", nil, "")
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
 func (a *API) copyOutOfSandbox(w http.ResponseWriter, r *http.Request) {
+	if !a.requireValidSandboxProxyIfPresent(w, r) {
+		return
+	}
 	p, ok := mustPrincipal(w, r)
 	if !ok {
 		return
 	}
 	sb, ok := a.requireSandboxAccess(w, r, p)
 	if !ok {
+		return
+	}
+	if a.proxySandboxHTTPRequest(w, r, sb) {
 		return
 	}
 	access, ok := a.sandboxGuestAccess(w, sb)
@@ -768,22 +733,30 @@ func (a *API) copyOutOfSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := access.ReadGuestFile(r.Context(), uuid.UUID(sb.ID.Bytes), sourcePath)
 	if err != nil {
+		a.recordSandboxAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "copy_out", "failed", nil, err.Error())
 		writeAPIErrorFromErr(w, http.StatusConflict, "sandbox_copy_out", err)
 		return
 	}
 	_ = a.q.SandboxUpdateLastUsedAt(r.Context(), sb.ID)
+	a.recordSandboxAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "copy_out", "ended", nil, "")
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }
 
 func (a *API) sandboxLogs(w http.ResponseWriter, r *http.Request) {
+	if !a.requireValidSandboxProxyIfPresent(w, r) {
+		return
+	}
 	p, ok := mustPrincipal(w, r)
 	if !ok {
 		return
 	}
 	sb, ok := a.requireSandboxAccess(w, r, p)
 	if !ok {
+		return
+	}
+	if a.proxySandboxHTTPRequest(w, r, sb) {
 		return
 	}
 	rt, ok := a.sandboxLocalRuntime(w, sb)
@@ -799,12 +772,18 @@ func (a *API) sandboxLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) sandboxStats(w http.ResponseWriter, r *http.Request) {
+	if !a.requireValidSandboxProxyIfPresent(w, r) {
+		return
+	}
 	p, ok := mustPrincipal(w, r)
 	if !ok {
 		return
 	}
 	sb, ok := a.requireSandboxAccess(w, r, p)
 	if !ok {
+		return
+	}
+	if a.proxySandboxHTTPRequest(w, r, sb) {
 		return
 	}
 	rt, ok := a.sandboxLocalRuntime(w, sb)
@@ -938,4 +917,37 @@ func (a *API) sandboxStreamAccess(w http.ResponseWriter, sb queries.Sandbox) (kr
 		return nil, false
 	}
 	return access, true
+}
+
+func (a *API) defaultSandboxHostname(sb queries.Sandbox) string {
+	if a == nil || a.cfg == nil || a.cfg.Snapshot() == nil {
+		return ""
+	}
+	base := strings.Trim(strings.TrimSpace(a.cfg.Snapshot().SandboxBaseDomain), ".")
+	if base == "" {
+		return ""
+	}
+	label := strings.ToLower(strings.TrimSpace(sb.Name))
+	label = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r
+		case r >= '0' && r <= '9':
+			return r
+		default:
+			return '-'
+		}
+	}, label)
+	label = strings.Trim(label, "-")
+	for strings.Contains(label, "--") {
+		label = strings.ReplaceAll(label, "--", "-")
+	}
+	if label == "" {
+		label = "sandbox"
+	}
+	shortID := pguuid.ToString(sb.ID)
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+	return label + "-" + shortID + "." + base
 }

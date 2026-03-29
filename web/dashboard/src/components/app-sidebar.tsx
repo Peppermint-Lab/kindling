@@ -20,6 +20,7 @@ import {
   LifeBuoyIcon,
   BookOpenIcon,
   LogOutIcon,
+  BoxIcon,
 } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
 import { Button } from "@/components/ui/button"
@@ -40,6 +41,11 @@ const data = {
       icon: <RocketIcon />,
     },
     {
+      title: "Sandboxes",
+      url: "/sandboxes",
+      icon: <BoxIcon />,
+    },
+    {
       title: "Pipelines",
       url: "/pipelines",
       icon: <GitBranchIcon />,
@@ -48,6 +54,12 @@ const data = {
       title: "Settings",
       url: "/settings",
       icon: <Settings2Icon />,
+      items: [
+        {
+          title: "SSH Keys",
+          url: "/settings/ssh-keys",
+        },
+      ],
     },
   ],
   navSecondary: [

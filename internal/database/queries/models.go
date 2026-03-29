@@ -393,6 +393,17 @@ type Sandbox struct {
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
+type SandboxAccessEvent struct {
+	ID           pgtype.UUID        `json:"id"`
+	SandboxID    pgtype.UUID        `json:"sandbox_id"`
+	UserID       pgtype.UUID        `json:"user_id"`
+	AccessMethod string             `json:"access_method"`
+	EventType    string             `json:"event_type"`
+	ExitCode     pgtype.Int4        `json:"exit_code"`
+	ErrorSummary string             `json:"error_summary"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
 type SandboxPublishedPort struct {
 	ID             pgtype.UUID        `json:"id"`
 	SandboxID      pgtype.UUID        `json:"sandbox_id"`
@@ -454,6 +465,7 @@ type ServerSetting struct {
 	ServerID                     pgtype.UUID        `json:"server_id"`
 	RuntimeOverride              string             `json:"runtime_override"`
 	AdvertiseHost                string             `json:"advertise_host"`
+	InternalApiPort              int32              `json:"internal_api_port"`
 	CloudHypervisorBin           string             `json:"cloud_hypervisor_bin"`
 	CloudHypervisorKernelPath    string             `json:"cloud_hypervisor_kernel_path"`
 	CloudHypervisorInitramfsPath string             `json:"cloud_hypervisor_initramfs_path"`
@@ -546,6 +558,16 @@ type UserSession struct {
 	CurrentOrganizationID pgtype.UUID        `json:"current_organization_id"`
 	ExpiresAt             pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+}
+
+type UserSshKey struct {
+	ID        pgtype.UUID        `json:"id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	Name      string             `json:"name"`
+	PublicKey string             `json:"public_key"`
+	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Vm struct {

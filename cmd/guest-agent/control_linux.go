@@ -15,9 +15,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/creack/pty"
+	"github.com/kindlingvm/kindling/internal/shellwire"
 )
 
 const guestControlVsockPort uint32 = 1028
@@ -63,12 +67,14 @@ func handleControlConn(c net.Conn) {
 	switch {
 	case req.Method == http.MethodPost && req.URL.Path == "/exec":
 		handleExecRequest(c, req)
-	case req.Method == http.MethodPost && req.URL.Path == "/exec-stream":
-		handleExecStream(c, req)
+	case req.Method == http.MethodPost && req.URL.Path == "/shell":
+		handleShellStream(c, req)
 	case req.Method == http.MethodGet && req.URL.Path == "/fs":
 		handleReadFile(c, req)
 	case req.Method == http.MethodPut && req.URL.Path == "/fs":
 		handleWriteFile(c, req)
+	case req.Method == http.MethodPost && req.URL.Path == "/tcp-connect":
+		handleTCPConnect(c, req)
 	default:
 		writeControlString(c, http.StatusNotFound, "not found")
 	}
@@ -94,7 +100,7 @@ func handleExecRequest(c net.Conn, req *http.Request) {
 	writeControlBytes(c, http.StatusOK, "application/json", b)
 }
 
-func handleExecStream(c net.Conn, req *http.Request) {
+func handleShellStream(c net.Conn, req *http.Request) {
 	payload, err := decodeGuestExecRequest(req)
 	if err != nil {
 		writeControlString(c, http.StatusBadRequest, "invalid json")
@@ -108,17 +114,130 @@ func handleExecStream(c net.Conn, req *http.Request) {
 	}
 	defer ptmx.Close()
 
-	writeSwitchingProtocols(c, "kindling-shell")
+	writeSwitchingProtocols(c, "kindling-shell-v1")
 
-	copyDone := make(chan struct{}, 1)
+	sendCh := make(chan shellwire.Frame, 64)
+	var sendWG sync.WaitGroup
+	sendWG.Add(1)
 	go func() {
-		_, _ = io.Copy(ptmx, c)
-		_ = ptmx.Close()
-		copyDone <- struct{}{}
+		defer sendWG.Done()
+		enc := shellwire.NewEncoder(c)
+		for frame := range sendCh {
+			if err := enc.Encode(frame); err != nil {
+				return
+			}
+		}
 	}()
-	_, _ = io.Copy(c, ptmx)
-	<-copyDone
-	_ = cmd.Wait()
+	sendFrame := func(frame shellwire.Frame) {
+		select {
+		case sendCh <- frame:
+		default:
+			sendCh <- frame
+		}
+	}
+	sendFrame(shellwire.Frame{Type: "ready"})
+
+	readDone := make(chan struct{}, 1)
+	go func() {
+		defer func() { readDone <- struct{}{} }()
+		dec := shellwire.NewDecoder(c)
+		for {
+			frame, err := dec.Decode()
+			if err != nil {
+				_ = ptmx.Close()
+				return
+			}
+			switch frame.Type {
+			case "stdin":
+				if frame.Data != "" {
+					_, _ = io.WriteString(ptmx, frame.Data)
+				}
+			case "resize":
+				if frame.Width > 0 && frame.Height > 0 {
+					_ = pty.Setsize(ptmx, &pty.Winsize{
+						Cols: uint16(frame.Width),
+						Rows: uint16(frame.Height),
+					})
+				}
+			}
+		}
+	}()
+
+	outputDone := make(chan struct{}, 1)
+	go func() {
+		defer func() { outputDone <- struct{}{} }()
+		buf := make([]byte, 4096)
+		for {
+			n, err := ptmx.Read(buf)
+			if n > 0 {
+				sendFrame(shellwire.Frame{Type: "stdout", Data: string(buf[:n])})
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	heartbeatStop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatStop:
+				return
+			case <-ticker.C:
+				sendFrame(shellwire.Frame{Type: "heartbeat"})
+			}
+		}
+	}()
+
+	waitErr := cmd.Wait()
+	close(heartbeatStop)
+	<-outputDone
+	<-readDone
+	exitCode := 0
+	if waitErr != nil {
+		if ee, ok := waitErr.(*exec.ExitError); ok {
+			exitCode = ee.ExitCode()
+		} else {
+			exitCode = 1
+			sendFrame(shellwire.Frame{Type: "error", Error: waitErr.Error()})
+		}
+	}
+	sendFrame(shellwire.Frame{Type: "exit", ExitCode: &exitCode})
+	close(sendCh)
+	sendWG.Wait()
+}
+
+func handleTCPConnect(c net.Conn, req *http.Request) {
+	port, err := requestedGuestTCPPort(req.URL)
+	if err != nil {
+		writeControlString(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	upstream, err := net.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		writeControlString(c, http.StatusServiceUnavailable, "tcp connect failed")
+		return
+	}
+	defer upstream.Close()
+
+	writeSwitchingProtocols(c, "kindling-tcp-v1")
+
+	done := make(chan struct{}, 2)
+	go func() {
+		_, _ = io.Copy(upstream, c)
+		_ = upstream.Close()
+		done <- struct{}{}
+	}()
+	go func() {
+		_, _ = io.Copy(c, upstream)
+		done <- struct{}{}
+	}()
+	<-done
+	_ = c.Close()
+	<-done
 }
 
 func handleReadFile(c net.Conn, req *http.Request) {
@@ -163,6 +282,18 @@ func requestedGuestPath(u *url.URL) (string, error) {
 		return "", fmt.Errorf("path must be absolute")
 	}
 	return filepath.Clean(p), nil
+}
+
+func requestedGuestTCPPort(u *url.URL) (int, error) {
+	raw := strings.TrimSpace(u.Query().Get("port"))
+	if raw == "" {
+		return 0, fmt.Errorf("port is required")
+	}
+	port, err := strconv.Atoi(raw)
+	if err != nil || port <= 0 || port > 65535 {
+		return 0, fmt.Errorf("invalid port")
+	}
+	return port, nil
 }
 
 func decodeGuestExecRequest(req *http.Request) (guestExecRequest, error) {

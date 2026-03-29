@@ -119,6 +119,11 @@ SET cloud_hypervisor_state_dir = $2, updated_at = NOW()
 WHERE server_id = $1
   AND (cloud_hypervisor_state_dir = '' OR BTRIM(cloud_hypervisor_state_dir) = '');
 
+-- name: ServerSettingUpsertInternalAPIPort :exec
+UPDATE server_settings
+SET internal_api_port = $2, updated_at = NOW()
+WHERE server_id = $1;
+
 -- name: InstanceMigrationCreate :one
 INSERT INTO instance_migrations (
     id, deployment_instance_id, source_server_id, destination_server_id, source_vm_id, state, mode,
@@ -1678,6 +1683,34 @@ ORDER BY created_at ASC;
 DELETE FROM sandbox_published_ports
 WHERE sandbox_id = $1 AND target_port = $2;
 
+-- name: SandboxPublishedPortLookupByHostname :one
+SELECT
+  sp.id,
+  sp.sandbox_id,
+  sp.target_port,
+  sp.protocol,
+  sp.visibility,
+  sp.public_hostname,
+  sp.created_at,
+  sp.updated_at,
+  sb.org_id,
+  sb.name AS sandbox_name,
+  sb.runtime_url,
+  sb.observed_state,
+  sb.server_id
+FROM sandbox_published_ports sp
+INNER JOIN sandboxes sb ON sb.id = sp.sandbox_id
+WHERE LOWER(sp.public_hostname) = LOWER($1)
+  AND sb.deleted_at IS NULL
+LIMIT 1;
+
+-- name: SandboxTouchRunningByOrg :exec
+UPDATE sandboxes
+SET updated_at = NOW()
+WHERE org_id = $1
+  AND deleted_at IS NULL
+  AND observed_state = 'running';
+
 -- name: BuildLogsAfterCreatedAt :many
 SELECT * FROM build_logs
 WHERE build_id = $1 AND created_at > $2
@@ -1982,6 +2015,70 @@ WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL;
 UPDATE user_api_keys
 SET last_used_at = NOW()
 WHERE id = $1;
+
+-- name: UserSSHKeyCreate :one
+INSERT INTO user_ssh_keys (id, user_id, name, public_key)
+VALUES ($1, $2, $3, $4)
+RETURNING *;
+
+-- name: UserSSHKeyListByUser :many
+SELECT * FROM user_ssh_keys
+WHERE user_id = $1
+  AND deleted_at IS NULL
+ORDER BY created_at DESC;
+
+-- name: UserSSHKeyDeleteByIDAndUser :exec
+UPDATE user_ssh_keys
+SET deleted_at = NOW(), updated_at = NOW()
+WHERE id = $1
+  AND user_id = $2
+  AND deleted_at IS NULL;
+
+-- name: OrgUserSSHKeysActive :many
+SELECT
+  k.id,
+  k.user_id,
+  k.name,
+  k.public_key,
+  k.deleted_at,
+  k.created_at,
+  k.updated_at,
+  m.organization_id,
+  m.role,
+  u.email,
+  u.display_name
+FROM user_ssh_keys k
+INNER JOIN organization_memberships m ON m.user_id = k.user_id
+INNER JOIN users u ON u.id = k.user_id
+WHERE m.organization_id = $1
+  AND k.deleted_at IS NULL
+ORDER BY k.user_id ASC, k.created_at ASC;
+
+-- name: SandboxAccessEventCreate :one
+INSERT INTO sandbox_access_events (
+  id, sandbox_id, user_id, access_method, event_type, exit_code, error_summary
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING *;
+
+-- name: SandboxAccessEventsBySandboxIDAndOrg :many
+SELECT
+  e.id,
+  e.sandbox_id,
+  e.user_id,
+  e.access_method,
+  e.event_type,
+  e.exit_code,
+  e.error_summary,
+  e.created_at,
+  u.email,
+  u.display_name
+FROM sandbox_access_events e
+INNER JOIN sandboxes sb ON sb.id = e.sandbox_id
+LEFT JOIN users u ON u.id = e.user_id
+WHERE e.sandbox_id = $1
+  AND sb.org_id = $2
+ORDER BY e.created_at DESC;
 
 -- name: UserIdentityListByUser :many
 SELECT * FROM user_identities

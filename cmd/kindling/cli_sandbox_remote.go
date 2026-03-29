@@ -13,12 +13,18 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 	"github.com/kindlingvm/kindling/internal/auth"
 	kcli "github.com/kindlingvm/kindling/internal/cli"
+	"github.com/kindlingvm/kindling/internal/shellwire"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -38,6 +44,8 @@ func cliSandboxRemoteCmd() *cobra.Command {
 	cmd.AddCommand(cliSandboxResumeCmd())
 	cmd.AddCommand(cliSandboxExecCmd())
 	cmd.AddCommand(cliSandboxShellCmd())
+	cmd.AddCommand(cliSandboxSSHCmd())
+	cmd.AddCommand(cliSandboxSSHProxyCmd())
 	cmd.AddCommand(cliSandboxCPCmd())
 	cmd.AddCommand(cliSandboxLogsCmd())
 	cmd.AddCommand(cliSandboxStatsCmd())
@@ -436,6 +444,120 @@ func cliSandboxShellCmd() *cobra.Command {
 	return cmd
 }
 
+func cliSandboxSSHCmd() *cobra.Command {
+	var sandboxID string
+	cmd := &cobra.Command{
+		Use:   "ssh --sandbox <uuid> [-- <ssh args...>]",
+		Short: "Open an SSH session to a running sandbox using the local ssh client",
+		Args:  cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := strings.TrimSpace(sandboxID)
+			if id == "" {
+				return fmt.Errorf("--sandbox is required")
+			}
+			if _, err := uuid.Parse(id); err != nil {
+				return fmt.Errorf("invalid sandbox id: %w", err)
+			}
+			exe, err := os.Executable()
+			if err != nil {
+				return fmt.Errorf("locate current binary: %w", err)
+			}
+			proxyParts := []string{shellEscape(exe), "sandbox", "ssh-proxy", "--sandbox", shellEscape(id)}
+			if strings.TrimSpace(remoteProfile) != "" {
+				proxyParts = append(proxyParts, "--profile", shellEscape(strings.TrimSpace(remoteProfile)))
+			}
+			if strings.TrimSpace(remoteAPIURL) != "" {
+				proxyParts = append(proxyParts, "--api-url", shellEscape(strings.TrimSpace(remoteAPIURL)))
+			}
+			if strings.TrimSpace(remoteAPIKey) != "" {
+				proxyParts = append(proxyParts, "--api-key", shellEscape(strings.TrimSpace(remoteAPIKey)))
+			}
+			sshArgs := []string{
+				"-o", "ProxyCommand=" + strings.Join(proxyParts, " "),
+				"-o", "StrictHostKeyChecking=no",
+				"-o", "UserKnownHostsFile=/dev/null",
+			}
+			sshArgs = append(sshArgs, args...)
+			sshArgs = append(sshArgs, "kindling@sandbox-"+id[:8])
+			sshCmd := exec.CommandContext(cmd.Context(), "ssh", sshArgs...)
+			sshCmd.Stdin = os.Stdin
+			sshCmd.Stdout = os.Stdout
+			sshCmd.Stderr = os.Stderr
+			return sshCmd.Run()
+		},
+	}
+	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
+	return cmd
+}
+
+func cliSandboxSSHProxyCmd() *cobra.Command {
+	var sandboxID string
+	cmd := &cobra.Command{
+		Use:    "ssh-proxy --sandbox <uuid>",
+		Short:  "Internal helper used by `kindling sandbox ssh`",
+		Hidden: true,
+		Args:   cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := strings.TrimSpace(sandboxID)
+			if id == "" {
+				return fmt.Errorf("--sandbox is required")
+			}
+			if _, err := uuid.Parse(id); err != nil {
+				return fmt.Errorf("invalid sandbox id: %w", err)
+			}
+			c, err := mustRemoteClient()
+			if err != nil {
+				return fmt.Errorf("create client: %w", err)
+			}
+			ws, _, err := sandboxDialWebsocket(cmd.Context(), c, "/api/sandboxes/"+id+"/ssh/ws")
+			if err != nil {
+				return err
+			}
+			defer ws.Close()
+
+			done := make(chan error, 2)
+			go func() {
+				buf := make([]byte, 32*1024)
+				for {
+					n, err := os.Stdin.Read(buf)
+					if n > 0 {
+						if werr := ws.WriteMessage(websocket.BinaryMessage, buf[:n]); werr != nil {
+							done <- werr
+							return
+						}
+					}
+					if err != nil {
+						done <- err
+						return
+					}
+				}
+			}()
+			go func() {
+				for {
+					_, payload, err := ws.ReadMessage()
+					if err != nil {
+						done <- err
+						return
+					}
+					if len(payload) > 0 {
+						if _, err := os.Stdout.Write(payload); err != nil {
+							done <- err
+							return
+						}
+					}
+				}
+			}()
+			err = <-done
+			if errors.Is(err, io.EOF) || websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				return nil
+			}
+			return err
+		},
+	}
+	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
+	return cmd
+}
+
 func cliSandboxCPCmd() *cobra.Command {
 	var sandboxID string
 	cmd := &cobra.Command{
@@ -592,21 +714,22 @@ func runSandboxShell(cmd *cobra.Command, sandboxID, cwd, shellPath string, env [
 	if err != nil {
 		return fmt.Errorf("create client: %w", err)
 	}
-	reqPath := "/api/sandboxes/" + id + "/shell?shell=" + url.QueryEscape(strings.TrimSpace(shellPath))
+	reqPath := "/api/sandboxes/" + id + "/shell/ws?shell=" + url.QueryEscape(strings.TrimSpace(shellPath))
 	if strings.TrimSpace(cwd) != "" {
 		reqPath += "&cwd=" + url.QueryEscape(strings.TrimSpace(cwd))
 	}
 	for _, item := range env {
 		reqPath += "&env=" + url.QueryEscape(strings.TrimSpace(item))
 	}
-	stream, err := sandboxUpgradeRequest(cmd.Context(), c, http.MethodGet, reqPath, "kindling-shell")
+	ws, _, err := sandboxDialWebsocket(cmd.Context(), c, reqPath)
 	if err != nil {
 		return fmt.Errorf("open sandbox shell: %w", err)
 	}
-	defer stream.Close()
+	defer ws.Close()
 
 	var oldState *term.State
-	if term.IsTerminal(int(os.Stdin.Fd())) {
+	stdinFD := int(os.Stdin.Fd())
+	if term.IsTerminal(stdinFD) {
 		state, err := term.MakeRaw(int(os.Stdin.Fd()))
 		if err == nil {
 			oldState = state
@@ -614,24 +737,100 @@ func runSandboxShell(cmd *cobra.Command, sandboxID, cwd, shellPath string, env [
 		}
 	}
 
-	copyErr := make(chan error, 1)
+	var writeMu sync.Mutex
+	sendFrame := func(frame shellwire.Frame) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return ws.WriteJSON(frame)
+	}
+	if term.IsTerminal(stdinFD) {
+		if width, height, err := term.GetSize(stdinFD); err == nil {
+			_ = sendFrame(shellwire.Frame{Type: "resize", Width: width, Height: height})
+		}
+	}
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGWINCH)
+	defer signal.Stop(sigCh)
 	go func() {
-		_, err := io.Copy(stream, os.Stdin)
-		_ = stream.Close()
-		copyErr <- err
+		for range sigCh {
+			if !term.IsTerminal(stdinFD) {
+				continue
+			}
+			width, height, err := term.GetSize(stdinFD)
+			if err != nil {
+				continue
+			}
+			_ = sendFrame(shellwire.Frame{Type: "resize", Width: width, Height: height})
+		}
 	}()
 
-	_, outErr := io.Copy(os.Stdout, stream)
-	_ = stream.Close()
-	inErr := <-copyErr
+	copyErr := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if n > 0 {
+				if werr := sendFrame(shellwire.Frame{Type: "stdin", Data: string(buf[:n])}); werr != nil {
+					copyErr <- werr
+					return
+				}
+			}
+			if err != nil {
+				copyErr <- err
+				return
+			}
+		}
+	}()
+
+	var exitCode int
+	var sawExit bool
+	var outErr error
+	for {
+		var frame shellwire.Frame
+		if err := ws.ReadJSON(&frame); err != nil {
+			outErr = err
+			break
+		}
+		switch frame.Type {
+		case "stdout", "stderr":
+			if frame.Data != "" {
+				if _, err := io.WriteString(os.Stdout, frame.Data); err != nil {
+					outErr = err
+					break
+				}
+			}
+		case "exit":
+			sawExit = true
+			if frame.ExitCode != nil {
+				exitCode = *frame.ExitCode
+			}
+			outErr = nil
+			break
+		case "error":
+			if frame.Error != "" {
+				_, _ = fmt.Fprintln(os.Stderr, frame.Error)
+			}
+		}
+		if sawExit {
+			break
+		}
+	}
 	if oldState != nil {
 		fmt.Fprintln(os.Stdout)
 	}
+	_ = ws.Close()
 	if outErr != nil && !errors.Is(outErr, net.ErrClosed) && !errors.Is(outErr, io.EOF) {
 		return outErr
 	}
-	if inErr != nil && !errors.Is(inErr, net.ErrClosed) && !errors.Is(inErr, io.EOF) {
-		return inErr
+	if sawExit && exitCode != 0 {
+		return fmt.Errorf("sandbox shell exited with code %d", exitCode)
+	}
+	select {
+	case inErr := <-copyErr:
+		if inErr != nil && !errors.Is(inErr, net.ErrClosed) && !errors.Is(inErr, io.EOF) {
+			return inErr
+		}
+	default:
 	}
 	return nil
 }
@@ -783,4 +982,45 @@ func sandboxResponseError(resp *http.Response, action string) error {
 		return fmt.Errorf("%s: API %d (%s): %s", action, resp.StatusCode, strings.TrimSpace(apiErr.Code), strings.TrimSpace(apiErr.Error))
 	}
 	return fmt.Errorf("%s failed (%d): %s", action, resp.StatusCode, strings.TrimSpace(string(body)))
+}
+
+func sandboxDialWebsocket(ctx context.Context, c *kcli.Client, path string) (*websocket.Conn, *http.Response, error) {
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	baseURL, err := url.Parse(c.BaseURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	scheme := "ws"
+	if strings.EqualFold(baseURL.Scheme, "https") {
+		scheme = "wss"
+	}
+	targetURL := &url.URL{
+		Scheme: scheme,
+		Host:   baseURL.Host,
+		Path:   path,
+	}
+	if strings.Contains(path, "?") {
+		rawPath, rawQuery, _ := strings.Cut(path, "?")
+		targetURL.Path = rawPath
+		targetURL.RawQuery = rawQuery
+	}
+	header := make(http.Header)
+	if strings.TrimSpace(c.APIKey) != "" {
+		header.Set("Authorization", "Bearer "+strings.TrimSpace(c.APIKey))
+	} else if strings.TrimSpace(c.SessionToken) != "" {
+		header.Set("Cookie", auth.SessionCookieName+"="+strings.TrimSpace(c.SessionToken))
+	}
+	return websocket.DefaultDialer.DialContext(ctx, targetURL.String(), header)
+}
+
+func shellEscape(s string) string {
+	if s == "" {
+		return "''"
+	}
+	if !strings.ContainsAny(s, " \t\n'\"\\$`!#&*()[]{}<>?|;") {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

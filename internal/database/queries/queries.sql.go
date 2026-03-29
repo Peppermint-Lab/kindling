@@ -4891,6 +4891,73 @@ func (q *Queries) OrgProviderConnectionUpdate(ctx context.Context, arg OrgProvid
 	return i, err
 }
 
+const orgUserSSHKeysActive = `-- name: OrgUserSSHKeysActive :many
+SELECT
+  k.id,
+  k.user_id,
+  k.name,
+  k.public_key,
+  k.deleted_at,
+  k.created_at,
+  k.updated_at,
+  m.organization_id,
+  m.role,
+  u.email,
+  u.display_name
+FROM user_ssh_keys k
+INNER JOIN organization_memberships m ON m.user_id = k.user_id
+INNER JOIN users u ON u.id = k.user_id
+WHERE m.organization_id = $1
+  AND k.deleted_at IS NULL
+ORDER BY k.user_id ASC, k.created_at ASC
+`
+
+type OrgUserSSHKeysActiveRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	Name           string             `json:"name"`
+	PublicKey      string             `json:"public_key"`
+	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	Role           string             `json:"role"`
+	Email          string             `json:"email"`
+	DisplayName    string             `json:"display_name"`
+}
+
+func (q *Queries) OrgUserSSHKeysActive(ctx context.Context, organizationID pgtype.UUID) ([]OrgUserSSHKeysActiveRow, error) {
+	rows, err := q.db.Query(ctx, orgUserSSHKeysActive, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrgUserSSHKeysActiveRow{}
+	for rows.Next() {
+		var i OrgUserSSHKeysActiveRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Name,
+			&i.PublicKey,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OrganizationID,
+			&i.Role,
+			&i.Email,
+			&i.DisplayName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const organizationByID = `-- name: OrganizationByID :one
 SELECT id, name, slug, created_at, updated_at FROM organizations WHERE id = $1
 `
@@ -7448,6 +7515,117 @@ func (q *Queries) RouteFindActive(ctx context.Context) ([]RouteFindActiveRow, er
 	return items, nil
 }
 
+const sandboxAccessEventCreate = `-- name: SandboxAccessEventCreate :one
+INSERT INTO sandbox_access_events (
+  id, sandbox_id, user_id, access_method, event_type, exit_code, error_summary
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, sandbox_id, user_id, access_method, event_type, exit_code, error_summary, created_at
+`
+
+type SandboxAccessEventCreateParams struct {
+	ID           pgtype.UUID `json:"id"`
+	SandboxID    pgtype.UUID `json:"sandbox_id"`
+	UserID       pgtype.UUID `json:"user_id"`
+	AccessMethod string      `json:"access_method"`
+	EventType    string      `json:"event_type"`
+	ExitCode     pgtype.Int4 `json:"exit_code"`
+	ErrorSummary string      `json:"error_summary"`
+}
+
+func (q *Queries) SandboxAccessEventCreate(ctx context.Context, arg SandboxAccessEventCreateParams) (SandboxAccessEvent, error) {
+	row := q.db.QueryRow(ctx, sandboxAccessEventCreate,
+		arg.ID,
+		arg.SandboxID,
+		arg.UserID,
+		arg.AccessMethod,
+		arg.EventType,
+		arg.ExitCode,
+		arg.ErrorSummary,
+	)
+	var i SandboxAccessEvent
+	err := row.Scan(
+		&i.ID,
+		&i.SandboxID,
+		&i.UserID,
+		&i.AccessMethod,
+		&i.EventType,
+		&i.ExitCode,
+		&i.ErrorSummary,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const sandboxAccessEventsBySandboxIDAndOrg = `-- name: SandboxAccessEventsBySandboxIDAndOrg :many
+SELECT
+  e.id,
+  e.sandbox_id,
+  e.user_id,
+  e.access_method,
+  e.event_type,
+  e.exit_code,
+  e.error_summary,
+  e.created_at,
+  u.email,
+  u.display_name
+FROM sandbox_access_events e
+INNER JOIN sandboxes sb ON sb.id = e.sandbox_id
+LEFT JOIN users u ON u.id = e.user_id
+WHERE e.sandbox_id = $1
+  AND sb.org_id = $2
+ORDER BY e.created_at DESC
+`
+
+type SandboxAccessEventsBySandboxIDAndOrgParams struct {
+	SandboxID pgtype.UUID `json:"sandbox_id"`
+	OrgID     pgtype.UUID `json:"org_id"`
+}
+
+type SandboxAccessEventsBySandboxIDAndOrgRow struct {
+	ID           pgtype.UUID        `json:"id"`
+	SandboxID    pgtype.UUID        `json:"sandbox_id"`
+	UserID       pgtype.UUID        `json:"user_id"`
+	AccessMethod string             `json:"access_method"`
+	EventType    string             `json:"event_type"`
+	ExitCode     pgtype.Int4        `json:"exit_code"`
+	ErrorSummary string             `json:"error_summary"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	Email        pgtype.Text        `json:"email"`
+	DisplayName  pgtype.Text        `json:"display_name"`
+}
+
+func (q *Queries) SandboxAccessEventsBySandboxIDAndOrg(ctx context.Context, arg SandboxAccessEventsBySandboxIDAndOrgParams) ([]SandboxAccessEventsBySandboxIDAndOrgRow, error) {
+	rows, err := q.db.Query(ctx, sandboxAccessEventsBySandboxIDAndOrg, arg.SandboxID, arg.OrgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SandboxAccessEventsBySandboxIDAndOrgRow{}
+	for rows.Next() {
+		var i SandboxAccessEventsBySandboxIDAndOrgRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SandboxID,
+			&i.UserID,
+			&i.AccessMethod,
+			&i.EventType,
+			&i.ExitCode,
+			&i.ErrorSummary,
+			&i.CreatedAt,
+			&i.Email,
+			&i.DisplayName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const sandboxAttachVM = `-- name: SandboxAttachVM :one
 UPDATE sandboxes
 SET vm_id = $2,
@@ -7917,6 +8095,65 @@ func (q *Queries) SandboxPublishedPortDeleteBySandboxAndPort(ctx context.Context
 	return err
 }
 
+const sandboxPublishedPortLookupByHostname = `-- name: SandboxPublishedPortLookupByHostname :one
+SELECT
+  sp.id,
+  sp.sandbox_id,
+  sp.target_port,
+  sp.protocol,
+  sp.visibility,
+  sp.public_hostname,
+  sp.created_at,
+  sp.updated_at,
+  sb.org_id,
+  sb.name AS sandbox_name,
+  sb.runtime_url,
+  sb.observed_state,
+  sb.server_id
+FROM sandbox_published_ports sp
+INNER JOIN sandboxes sb ON sb.id = sp.sandbox_id
+WHERE LOWER(sp.public_hostname) = LOWER($1)
+  AND sb.deleted_at IS NULL
+LIMIT 1
+`
+
+type SandboxPublishedPortLookupByHostnameRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	SandboxID      pgtype.UUID        `json:"sandbox_id"`
+	TargetPort     int32              `json:"target_port"`
+	Protocol       string             `json:"protocol"`
+	Visibility     string             `json:"visibility"`
+	PublicHostname string             `json:"public_hostname"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	SandboxName    string             `json:"sandbox_name"`
+	RuntimeUrl     string             `json:"runtime_url"`
+	ObservedState  string             `json:"observed_state"`
+	ServerID       pgtype.UUID        `json:"server_id"`
+}
+
+func (q *Queries) SandboxPublishedPortLookupByHostname(ctx context.Context, lower string) (SandboxPublishedPortLookupByHostnameRow, error) {
+	row := q.db.QueryRow(ctx, sandboxPublishedPortLookupByHostname, lower)
+	var i SandboxPublishedPortLookupByHostnameRow
+	err := row.Scan(
+		&i.ID,
+		&i.SandboxID,
+		&i.TargetPort,
+		&i.Protocol,
+		&i.Visibility,
+		&i.PublicHostname,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OrgID,
+		&i.SandboxName,
+		&i.RuntimeUrl,
+		&i.ObservedState,
+		&i.ServerID,
+	)
+	return i, err
+}
+
 const sandboxPublishedPortUpsert = `-- name: SandboxPublishedPortUpsert :one
 INSERT INTO sandbox_published_ports (
   id, sandbox_id, target_port, protocol, visibility, public_hostname
@@ -8305,6 +8542,19 @@ func (q *Queries) SandboxTemplateMarkReady(ctx context.Context, arg SandboxTempl
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const sandboxTouchRunningByOrg = `-- name: SandboxTouchRunningByOrg :exec
+UPDATE sandboxes
+SET updated_at = NOW()
+WHERE org_id = $1
+  AND deleted_at IS NULL
+  AND observed_state = 'running'
+`
+
+func (q *Queries) SandboxTouchRunningByOrg(ctx context.Context, orgID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, sandboxTouchRunningByOrg, orgID)
+	return err
 }
 
 const sandboxUpdateDesiredState = `-- name: SandboxUpdateDesiredState :one
@@ -9092,7 +9342,7 @@ func (q *Queries) ServerSettingEnsure(ctx context.Context, serverID pgtype.UUID)
 }
 
 const serverSettingGet = `-- name: ServerSettingGet :one
-SELECT server_id, runtime_override, advertise_host, cloud_hypervisor_bin, cloud_hypervisor_kernel_path, cloud_hypervisor_initramfs_path, cloud_hypervisor_state_dir, updated_at FROM server_settings WHERE server_id = $1
+SELECT server_id, runtime_override, advertise_host, internal_api_port, cloud_hypervisor_bin, cloud_hypervisor_kernel_path, cloud_hypervisor_initramfs_path, cloud_hypervisor_state_dir, updated_at FROM server_settings WHERE server_id = $1
 `
 
 func (q *Queries) ServerSettingGet(ctx context.Context, serverID pgtype.UUID) (ServerSetting, error) {
@@ -9102,6 +9352,7 @@ func (q *Queries) ServerSettingGet(ctx context.Context, serverID pgtype.UUID) (S
 		&i.ServerID,
 		&i.RuntimeOverride,
 		&i.AdvertiseHost,
+		&i.InternalApiPort,
 		&i.CloudHypervisorBin,
 		&i.CloudHypervisorKernelPath,
 		&i.CloudHypervisorInitramfsPath,
@@ -9142,6 +9393,22 @@ type ServerSettingSeedCloudHypervisorStateDirIfUnsetParams struct {
 
 func (q *Queries) ServerSettingSeedCloudHypervisorStateDirIfUnset(ctx context.Context, arg ServerSettingSeedCloudHypervisorStateDirIfUnsetParams) error {
 	_, err := q.db.Exec(ctx, serverSettingSeedCloudHypervisorStateDirIfUnset, arg.ServerID, arg.CloudHypervisorStateDir)
+	return err
+}
+
+const serverSettingUpsertInternalAPIPort = `-- name: ServerSettingUpsertInternalAPIPort :exec
+UPDATE server_settings
+SET internal_api_port = $2, updated_at = NOW()
+WHERE server_id = $1
+`
+
+type ServerSettingUpsertInternalAPIPortParams struct {
+	ServerID        pgtype.UUID `json:"server_id"`
+	InternalApiPort int32       `json:"internal_api_port"`
+}
+
+func (q *Queries) ServerSettingUpsertInternalAPIPort(ctx context.Context, arg ServerSettingUpsertInternalAPIPortParams) error {
+	_, err := q.db.Exec(ctx, serverSettingUpsertInternalAPIPort, arg.ServerID, arg.InternalApiPort)
 	return err
 }
 
@@ -10128,6 +10395,92 @@ func (q *Queries) UserIdentityUpdateByID(ctx context.Context, arg UserIdentityUp
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const userSSHKeyCreate = `-- name: UserSSHKeyCreate :one
+INSERT INTO user_ssh_keys (id, user_id, name, public_key)
+VALUES ($1, $2, $3, $4)
+RETURNING id, user_id, name, public_key, deleted_at, created_at, updated_at
+`
+
+type UserSSHKeyCreateParams struct {
+	ID        pgtype.UUID `json:"id"`
+	UserID    pgtype.UUID `json:"user_id"`
+	Name      string      `json:"name"`
+	PublicKey string      `json:"public_key"`
+}
+
+func (q *Queries) UserSSHKeyCreate(ctx context.Context, arg UserSSHKeyCreateParams) (UserSshKey, error) {
+	row := q.db.QueryRow(ctx, userSSHKeyCreate,
+		arg.ID,
+		arg.UserID,
+		arg.Name,
+		arg.PublicKey,
+	)
+	var i UserSshKey
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.PublicKey,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const userSSHKeyDeleteByIDAndUser = `-- name: UserSSHKeyDeleteByIDAndUser :exec
+UPDATE user_ssh_keys
+SET deleted_at = NOW(), updated_at = NOW()
+WHERE id = $1
+  AND user_id = $2
+  AND deleted_at IS NULL
+`
+
+type UserSSHKeyDeleteByIDAndUserParams struct {
+	ID     pgtype.UUID `json:"id"`
+	UserID pgtype.UUID `json:"user_id"`
+}
+
+func (q *Queries) UserSSHKeyDeleteByIDAndUser(ctx context.Context, arg UserSSHKeyDeleteByIDAndUserParams) error {
+	_, err := q.db.Exec(ctx, userSSHKeyDeleteByIDAndUser, arg.ID, arg.UserID)
+	return err
+}
+
+const userSSHKeyListByUser = `-- name: UserSSHKeyListByUser :many
+SELECT id, user_id, name, public_key, deleted_at, created_at, updated_at FROM user_ssh_keys
+WHERE user_id = $1
+  AND deleted_at IS NULL
+ORDER BY created_at DESC
+`
+
+func (q *Queries) UserSSHKeyListByUser(ctx context.Context, userID pgtype.UUID) ([]UserSshKey, error) {
+	rows, err := q.db.Query(ctx, userSSHKeyListByUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UserSshKey{}
+	for rows.Next() {
+		var i UserSshKey
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Name,
+			&i.PublicKey,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const userSessionByTokenHash = `-- name: UserSessionByTokenHash :one

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -177,6 +178,9 @@ func New(cfg Config) (*Service, error) {
 				if h != "" && strings.EqualFold(name, h) {
 					return nil
 				}
+			}
+			if _, err := q.SandboxPublishedPortLookupByHostname(ctx, name); err == nil {
+				return nil
 			}
 			_, err := q.DomainVerified(ctx, name)
 			if err != nil {
@@ -415,6 +419,11 @@ func (s *Service) serveHTTPS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if sandboxRoute, sandboxOK := s.lookupSandboxRoute(r.Context(), host); sandboxOK {
+		s.reverseProxy(w, r, host, sandboxRoute)
+		return
+	}
+
 	// Scale-to-zero cold path or unknown host: resolve from DB.
 	lookup, err := s.q.DomainEdgeLookup(r.Context(), host)
 	if err != nil {
@@ -558,6 +567,39 @@ func (s *Service) waitForBackend(ctx context.Context, host string) (Route, bool)
 		}
 	}
 	return Route{}, false
+}
+
+func (s *Service) lookupSandboxRoute(ctx context.Context, host string) (Route, bool) {
+	row, err := s.q.SandboxPublishedPortLookupByHostname(ctx, host)
+	if err != nil {
+		return Route{}, false
+	}
+	if row.ObservedState != "running" || strings.TrimSpace(row.RuntimeUrl) == "" {
+		return Route{}, false
+	}
+	u, err := url.Parse(strings.TrimSpace(row.RuntimeUrl))
+	if err != nil {
+		return Route{}, false
+	}
+	portStr := u.Port()
+	if portStr == "" {
+		return Route{}, false
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port <= 0 {
+		return Route{}, false
+	}
+	hostName := u.Hostname()
+	if hostName == "" {
+		return Route{}, false
+	}
+	return Route{
+		DeploymentKind: "sandbox",
+		Backends: []Backend{{
+			IP:   hostName,
+			Port: int32(port),
+		}},
+	}, true
 }
 
 // stripPort removes the port portion from an address (e.g. "1.2.3.4:5678" → "1.2.3.4").

@@ -559,6 +559,42 @@ CREATE TABLE IF NOT EXISTS sandbox_published_ports (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sandbox_published_ports_sandbox_id ON sandbox_published_ports(sandbox_id, created_at ASC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sandbox_published_ports_public_hostname_unique
+    ON sandbox_published_ports(LOWER(public_hostname))
+    WHERE BTRIM(public_hostname) <> '';
+
+CREATE TABLE IF NOT EXISTS user_ssh_keys (
+    id          UUID PRIMARY KEY,
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL DEFAULT '',
+    public_key  TEXT NOT NULL,
+    deleted_at  TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_ssh_keys_user_id
+    ON user_ssh_keys(user_id, created_at DESC)
+    WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_ssh_keys_user_public_key_active
+    ON user_ssh_keys(user_id, public_key)
+    WHERE deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS sandbox_access_events (
+    id             UUID PRIMARY KEY,
+    sandbox_id     UUID NOT NULL REFERENCES sandboxes(id) ON DELETE CASCADE,
+    user_id        UUID REFERENCES users(id) ON DELETE SET NULL,
+    access_method  TEXT NOT NULL CHECK (access_method IN ('shell_ws', 'ssh', 'exec', 'copy_in', 'copy_out')),
+    event_type     TEXT NOT NULL CHECK (event_type IN ('started', 'ended', 'failed')),
+    exit_code      INT,
+    error_summary  TEXT NOT NULL DEFAULT '',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sandbox_access_events_sandbox_id
+    ON sandbox_access_events(sandbox_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sandbox_access_events_user_id
+    ON sandbox_access_events(user_id, created_at DESC);
 
 -- Environment variables per project (values stored as encrypted envelopes)
 CREATE TABLE IF NOT EXISTS environment_variables (
@@ -1307,6 +1343,8 @@ CREATE TABLE IF NOT EXISTS server_settings (
     server_id                       UUID PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
     runtime_override                TEXT NOT NULL DEFAULT '',
     advertise_host                  TEXT NOT NULL DEFAULT '',
+    internal_api_port               INT NOT NULL DEFAULT 0
+        CHECK (internal_api_port >= 0 AND internal_api_port <= 65535),
     cloud_hypervisor_bin            TEXT NOT NULL DEFAULT '',
     cloud_hypervisor_kernel_path    TEXT NOT NULL DEFAULT '',
     cloud_hypervisor_initramfs_path TEXT NOT NULL DEFAULT '',
@@ -1316,6 +1354,9 @@ CREATE TABLE IF NOT EXISTS server_settings (
 
 ALTER TABLE server_settings
     ADD COLUMN IF NOT EXISTS cloud_hypervisor_state_dir TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE server_settings
+    ADD COLUMN IF NOT EXISTS internal_api_port INT NOT NULL DEFAULT 0;
 
 -- Latest control-plane component snapshots per server.
 CREATE TABLE IF NOT EXISTS server_component_statuses (

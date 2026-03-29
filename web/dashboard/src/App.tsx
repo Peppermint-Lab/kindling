@@ -37,6 +37,16 @@ const DeploymentsPage = lazy(() =>
     default: module.DeploymentsPage,
   }))
 )
+const SandboxesPage = lazy(() =>
+  import("@/pages/SandboxesPage").then((module) => ({
+    default: module.SandboxesPage,
+  }))
+)
+const SandboxDetailPage = lazy(() =>
+  import("@/pages/SandboxDetailPage").then((module) => ({
+    default: module.SandboxDetailPage,
+  }))
+)
 const PipelinesPage = lazy(() =>
   import("@/pages/PipelinesPage").then((module) => ({
     default: module.PipelinesPage,
@@ -55,6 +65,11 @@ const CIJobDetailPage = lazy(() =>
 const SettingsPage = lazy(() =>
   import("@/pages/SettingsPage").then((module) => ({
     default: module.SettingsPage,
+  }))
+)
+const SSHKeysPage = lazy(() =>
+  import("@/pages/SSHKeysPage").then((module) => ({
+    default: module.SSHKeysPage,
   }))
 )
 const ServerDetailPage = lazy(() =>
@@ -77,6 +92,9 @@ function pageName(pathname: string): string {
   if (pathname.startsWith("/settings/servers/")) return "Server"
   if (pathname.startsWith("/ci/jobs/")) return "CI Job"
   if (pathname === "/pipelines") return "Pipelines"
+  if (pathname.startsWith("/sandboxes/")) return "Sandbox"
+  if (pathname === "/sandboxes") return "Sandboxes"
+  if (pathname === "/settings/ssh-keys") return "SSH Keys"
   if (pathname.startsWith("/deployments/")) return "Deployment"
   if (pathname === "/deployments") return "Deployments"
   if (pathname.startsWith("/services/")) return "Service"
@@ -177,6 +195,22 @@ function Layout() {
               }
             />
             <Route
+              path="/sandboxes"
+              element={
+                <PrivateRouteContent>
+                  <SandboxesPage />
+                </PrivateRouteContent>
+              }
+            />
+            <Route
+              path="/sandboxes/:id"
+              element={
+                <PrivateRouteContent>
+                  <SandboxDetailPage />
+                </PrivateRouteContent>
+              }
+            />
+            <Route
               path="/pipelines"
               element={
                 <PrivateRouteContent>
@@ -205,6 +239,14 @@ function Layout() {
               element={
                 <PrivateRouteContent>
                   <SettingsPage />
+                </PrivateRouteContent>
+              }
+            />
+            <Route
+              path="/settings/ssh-keys"
+              element={
+                <PrivateRouteContent>
+                  <SSHKeysPage />
                 </PrivateRouteContent>
               }
             />

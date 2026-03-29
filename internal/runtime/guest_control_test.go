@@ -189,10 +189,10 @@ func TestStreamGuestHTTP(t *testing.T) {
 		if req.Method != http.MethodPost {
 			t.Errorf("method = %s, want POST", req.Method)
 		}
-		if req.URL.Path != "/exec-stream" {
-			t.Errorf("path = %s, want /exec-stream", req.URL.Path)
+		if req.URL.Path != "/shell" {
+			t.Errorf("path = %s, want /shell", req.URL.Path)
 		}
-		if got := req.Header.Get("Upgrade"); got != "kindling-shell" {
+		if got := req.Header.Get("Upgrade"); got != "kindling-shell-v1" {
 			t.Errorf("upgrade = %q", got)
 		}
 		resp := &http.Response{
@@ -203,7 +203,7 @@ func TestStreamGuestHTTP(t *testing.T) {
 			Header:     make(http.Header),
 		}
 		resp.Header.Set("Connection", "Upgrade")
-		resp.Header.Set("Upgrade", "kindling-shell")
+		resp.Header.Set("Upgrade", "kindling-shell-v1")
 		_ = resp.Write(server)
 		_, _ = server.Write([]byte("shell-ready"))
 	}()

@@ -219,6 +219,25 @@ func (r *CloudHypervisorRuntime) StreamGuest(ctx context.Context, id uuid.UUID, 
 	return stream, nil
 }
 
+func (r *CloudHypervisorRuntime) ConnectGuestTCP(ctx context.Context, id uuid.UUID, port int) (io.ReadWriteCloser, error) {
+	r.mu.Lock()
+	ai, ok := r.instances[id]
+	r.mu.Unlock()
+	if !ok || ai.socketBase == "" {
+		return nil, ErrInstanceNotRunning
+	}
+	conn, err := dialCloudHypervisorGuestOverUDS(ai.socketBase, GuestControlVsockPort)
+	if err != nil {
+		return nil, err
+	}
+	stream, err := tcpGuestHTTP(ctx, conn, port)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return stream, nil
+}
+
 func (r *CloudHypervisorRuntime) ReadGuestFile(ctx context.Context, id uuid.UUID, filePath string) ([]byte, error) {
 	r.mu.Lock()
 	ai, ok := r.instances[id]
