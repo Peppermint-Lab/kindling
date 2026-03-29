@@ -10,12 +10,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/kindlingvm/kindling/internal/auth"
 	"github.com/kindlingvm/kindling/internal/ci"
 	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/ratelimit"
 	"github.com/kindlingvm/kindling/internal/reconciler"
 	"github.com/kindlingvm/kindling/internal/rpc"
 	"github.com/kindlingvm/kindling/internal/webhook"
@@ -182,12 +185,21 @@ func startAPIServer(
 		distDir = "web/dashboard/dist"
 	}
 
+	// Rate limit auth endpoints: 10 requests per minute per IP.
+	authLimiter := ratelimit.NewWithDefaults(10, 60*time.Second)
+	defer authLimiter.Stop()
+	rateLimitedTargets := map[string]bool{
+		"POST /api/auth/login":     true,
+		"POST /api/auth/bootstrap": true,
+	}
+
 	protectedAPI := auth.Middleware(q, apiMux)
+	rateLimitedAPI := authLimiter.PathMiddleware(rateLimitedTargets, protectedAPI)
 	var handler http.Handler
 	if dashHostStr != "" {
-		handler = hostBasedHandler(corsMiddleware(corsOrigins, protectedAPI), dashboardSPAHandler(distDir), dashHostStr)
+		handler = hostBasedHandler(corsMiddleware(corsOrigins, rateLimitedAPI), dashboardSPAHandler(distDir), dashHostStr)
 	} else {
-		handler = corsMiddleware(corsOrigins, protectedAPI)
+		handler = corsMiddleware(corsOrigins, rateLimitedAPI)
 	}
 
 	srv := &http.Server{Addr: listenAddr, Handler: handler}
