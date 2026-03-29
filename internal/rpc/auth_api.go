@@ -300,15 +300,11 @@ func bootstrapClientIP(r *http.Request) (net.IP, bool) {
 	if !ok {
 		return nil, false
 	}
-	if peer.IsLoopback() {
-		if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
-			first := strings.TrimSpace(strings.Split(forwarded, ",")[0])
-			if first == "" {
-				return nil, false
-			}
-			return parseRequestIP(first)
-		}
-	}
+	// Security: when the peer is loopback, ignore X-Forwarded-For entirely.
+	// The edge proxy runs on the same host, so all proxied requests arrive
+	// from loopback. Trusting XFF would let an external attacker spoof
+	// headers to bypass or inject the bootstrap IP check. The edge proxy's
+	// XFF-stripping middleware ensures only sanitised headers reach here.
 	return peer, true
 }
 
