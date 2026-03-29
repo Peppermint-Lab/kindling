@@ -67,6 +67,8 @@ type CiJob struct {
 	EventName        string             `json:"event_name"`
 	InputValues      []byte             `json:"input_values"`
 	InputArchivePath string             `json:"input_archive_path"`
+	RequireMicrovm   bool               `json:"require_microvm"`
+	ExecutionBackend string             `json:"execution_backend"`
 	WorkspaceDir     string             `json:"workspace_dir"`
 	ProcessingBy     pgtype.UUID        `json:"processing_by"`
 	ExitCode         pgtype.Int4        `json:"exit_code"`

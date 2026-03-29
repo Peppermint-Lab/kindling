@@ -19,6 +19,8 @@ import (
 
 type WorkflowRunner interface {
 	Run(ctx context.Context, plan ExecutionPlan, opts RunOptions) (RunResult, error)
+	Backend() string
+	IsMicroVM() bool
 }
 
 type LocalWorkflowRunner struct{}
@@ -26,6 +28,10 @@ type LocalWorkflowRunner struct{}
 func NewLocalWorkflowRunner() *LocalWorkflowRunner {
 	return &LocalWorkflowRunner{}
 }
+
+func (r *LocalWorkflowRunner) Backend() string { return "local_host" }
+
+func (r *LocalWorkflowRunner) IsMicroVM() bool { return false }
 
 type RunOptions struct {
 	Stdout io.Writer
@@ -37,6 +43,7 @@ type RunResult struct {
 	Jobs         []JobRunResult
 	Artifacts    []ArtifactInfo
 	ArtifactRoot string
+	Backend      string
 }
 
 type JobRunResult struct {
@@ -185,7 +192,7 @@ func (r *LocalWorkflowRunner) Run(ctx context.Context, plan ExecutionPlan, opts 
 				jobResult = "failure"
 				ctxState.needs[job.ID] = jobState{Result: jobResult, Outputs: map[string]string{}}
 				jobResults = append(jobResults, JobRunResult{ID: job.ID, Name: job.Name, Result: jobResult, Outputs: map[string]string{}})
-				return RunResult{Jobs: jobResults, Artifacts: artifacts.List(), ArtifactRoot: artifacts.root}, fmt.Errorf("job %s step %s: %w", job.ID, step.Name, err)
+				return RunResult{Jobs: jobResults, Artifacts: artifacts.List(), ArtifactRoot: artifacts.root, Backend: r.Backend()}, fmt.Errorf("job %s step %s: %w", job.ID, step.Name, err)
 			}
 			if step.Kind == StepKindSSHAgent {
 				sshEnv = cloneMap(stepEnv)
@@ -208,7 +215,7 @@ func (r *LocalWorkflowRunner) Run(ctx context.Context, plan ExecutionPlan, opts 
 		}
 	}
 
-	return RunResult{Jobs: jobResults, Artifacts: artifacts.List(), ArtifactRoot: artifacts.root}, nil
+	return RunResult{Jobs: jobResults, Artifacts: artifacts.List(), ArtifactRoot: artifacts.root, Backend: r.Backend()}, nil
 }
 
 func (r *LocalWorkflowRunner) runStep(

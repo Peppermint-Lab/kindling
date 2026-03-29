@@ -18,7 +18,11 @@ type AppleVMWorkflowRunner struct {
 	exec *builder.AppleVZExecRunner
 }
 
-func NewPreferredWorkflowRunner() WorkflowRunner {
+type RunnerSelection struct {
+	RequireMicroVM bool
+}
+
+func NewWorkflowRunner(sel RunnerSelection) (WorkflowRunner, error) {
 	home, err := os.UserHomeDir()
 	if err == nil && hostSupportsAppleVirtualization() {
 		runner, rerr := builder.NewAppleVZExecRunner(builder.AppleVZBuildRunnerConfig{
@@ -27,10 +31,24 @@ func NewPreferredWorkflowRunner() WorkflowRunner {
 			BuilderRootfsDir: filepath.Join(home, ".kindling", "builder-rootfs"),
 		})
 		if rerr == nil {
-			return &AppleVMWorkflowRunner{exec: runner}
+			return &AppleVMWorkflowRunner{exec: runner}, nil
+		}
+		if sel.RequireMicroVM {
+			return nil, fmt.Errorf("microVM CI execution is required, but the Apple VZ runner is unavailable: %w", rerr)
 		}
 	}
-	return NewLocalWorkflowRunner()
+	if sel.RequireMicroVM {
+		return nil, fmt.Errorf("microVM CI execution is required, but this process does not have Apple virtualization support enabled")
+	}
+	return NewLocalWorkflowRunner(), nil
+}
+
+func NewPreferredWorkflowRunner() WorkflowRunner {
+	r, err := NewWorkflowRunner(RunnerSelection{})
+	if err != nil {
+		return NewLocalWorkflowRunner()
+	}
+	return r
 }
 
 func hostSupportsAppleVirtualization() bool {
@@ -44,6 +62,10 @@ func hostSupportsAppleVirtualization() bool {
 	}
 	return strings.Contains(string(out), "com.apple.security.virtualization")
 }
+
+func (r *AppleVMWorkflowRunner) Backend() string { return "apple_vz" }
+
+func (r *AppleVMWorkflowRunner) IsMicroVM() bool { return true }
 
 func (r *AppleVMWorkflowRunner) Run(ctx context.Context, plan ExecutionPlan, opts RunOptions) (RunResult, error) {
 	stdout := opts.Stdout
@@ -104,7 +126,7 @@ func (r *AppleVMWorkflowRunner) Run(ctx context.Context, plan ExecutionPlan, opt
 				jobResult = "failure"
 				ctxState.needs[job.ID] = jobState{Result: jobResult, Outputs: map[string]string{}}
 				jobResults = append(jobResults, JobRunResult{ID: job.ID, Name: job.Name, Result: jobResult, Outputs: map[string]string{}})
-				return RunResult{Jobs: jobResults, Artifacts: artifacts.List(), ArtifactRoot: artifacts.root}, fmt.Errorf("job %s step %s: %w", job.ID, step.Name, err)
+				return RunResult{Jobs: jobResults, Artifacts: artifacts.List(), ArtifactRoot: artifacts.root, Backend: r.Backend()}, fmt.Errorf("job %s step %s: %w", job.ID, step.Name, err)
 			}
 			if step.ID != "" {
 				jobCtx.steps[step.ID] = stepState{Outputs: outputs}
@@ -120,7 +142,7 @@ func (r *AppleVMWorkflowRunner) Run(ctx context.Context, plan ExecutionPlan, opt
 			_ = cache.save(entry.Key, filepath.Join(plan.RepoRoot, entry.Path))
 		}
 	}
-	return RunResult{Jobs: jobResults, Artifacts: artifacts.List(), ArtifactRoot: artifacts.root}, nil
+	return RunResult{Jobs: jobResults, Artifacts: artifacts.List(), ArtifactRoot: artifacts.root, Backend: r.Backend()}, nil
 }
 
 func (r *AppleVMWorkflowRunner) runStep(ctx context.Context, repoRoot string, step CompiledStep, env map[string]string, stdout, stderr io.Writer, ev evalContext, artifacts *artifactStore, cache *cacheStore) (map[string]string, error) {

@@ -1073,9 +1073,9 @@ SELECT * FROM build_logs WHERE build_id = $1 ORDER BY created_at;
 -- name: CIJobCreate :one
 INSERT INTO ci_jobs (
   id, project_id, status, source, workflow_name, workflow_file, selected_job_id,
-  event_name, input_values, input_archive_path, workspace_dir, error_message
+  event_name, input_values, input_archive_path, require_microvm, workspace_dir, error_message
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 RETURNING *;
 
 -- name: CIJobFirstByID :one
@@ -1103,6 +1103,7 @@ WHERE id = $1 AND processing_by = $2;
 UPDATE ci_jobs
 SET status = 'running',
     workspace_dir = $2,
+    execution_backend = $3,
     started_at = NOW(),
     updated_at = NOW()
 WHERE id = $1;

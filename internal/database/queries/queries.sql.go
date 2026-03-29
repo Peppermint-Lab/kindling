@@ -508,7 +508,7 @@ func (q *Queries) CIJobArtifactsByJobID(ctx context.Context, ciJobID pgtype.UUID
 const cIJobClaimLease = `-- name: CIJobClaimLease :one
 UPDATE ci_jobs SET processing_by = $2, updated_at = NOW()
 WHERE id = $1 AND status = 'queued' AND (processing_by IS NULL OR processing_by = $2)
-RETURNING id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at
+RETURNING id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, require_microvm, execution_backend, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at
 `
 
 type CIJobClaimLeaseParams struct {
@@ -530,6 +530,8 @@ func (q *Queries) CIJobClaimLease(ctx context.Context, arg CIJobClaimLeaseParams
 		&i.EventName,
 		&i.InputValues,
 		&i.InputArchivePath,
+		&i.RequireMicrovm,
+		&i.ExecutionBackend,
 		&i.WorkspaceDir,
 		&i.ProcessingBy,
 		&i.ExitCode,
@@ -547,10 +549,10 @@ const cIJobCreate = `-- name: CIJobCreate :one
 
 INSERT INTO ci_jobs (
   id, project_id, status, source, workflow_name, workflow_file, selected_job_id,
-  event_name, input_values, input_archive_path, workspace_dir, error_message
+  event_name, input_values, input_archive_path, require_microvm, workspace_dir, error_message
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-RETURNING id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+RETURNING id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, require_microvm, execution_backend, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at
 `
 
 type CIJobCreateParams struct {
@@ -564,6 +566,7 @@ type CIJobCreateParams struct {
 	EventName        string      `json:"event_name"`
 	InputValues      []byte      `json:"input_values"`
 	InputArchivePath string      `json:"input_archive_path"`
+	RequireMicrovm   bool        `json:"require_microvm"`
 	WorkspaceDir     string      `json:"workspace_dir"`
 	ErrorMessage     string      `json:"error_message"`
 }
@@ -581,6 +584,7 @@ func (q *Queries) CIJobCreate(ctx context.Context, arg CIJobCreateParams) (CiJob
 		arg.EventName,
 		arg.InputValues,
 		arg.InputArchivePath,
+		arg.RequireMicrovm,
 		arg.WorkspaceDir,
 		arg.ErrorMessage,
 	)
@@ -596,6 +600,8 @@ func (q *Queries) CIJobCreate(ctx context.Context, arg CIJobCreateParams) (CiJob
 		&i.EventName,
 		&i.InputValues,
 		&i.InputArchivePath,
+		&i.RequireMicrovm,
+		&i.ExecutionBackend,
 		&i.WorkspaceDir,
 		&i.ProcessingBy,
 		&i.ExitCode,
@@ -610,7 +616,7 @@ func (q *Queries) CIJobCreate(ctx context.Context, arg CIJobCreateParams) (CiJob
 }
 
 const cIJobFindByProjectID = `-- name: CIJobFindByProjectID :many
-SELECT id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at FROM ci_jobs WHERE project_id = $1 ORDER BY created_at DESC
+SELECT id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, require_microvm, execution_backend, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at FROM ci_jobs WHERE project_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) CIJobFindByProjectID(ctx context.Context, projectID pgtype.UUID) ([]CiJob, error) {
@@ -633,6 +639,8 @@ func (q *Queries) CIJobFindByProjectID(ctx context.Context, projectID pgtype.UUI
 			&i.EventName,
 			&i.InputValues,
 			&i.InputArchivePath,
+			&i.RequireMicrovm,
+			&i.ExecutionBackend,
 			&i.WorkspaceDir,
 			&i.ProcessingBy,
 			&i.ExitCode,
@@ -654,7 +662,7 @@ func (q *Queries) CIJobFindByProjectID(ctx context.Context, projectID pgtype.UUI
 }
 
 const cIJobFirstByID = `-- name: CIJobFirstByID :one
-SELECT id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at FROM ci_jobs WHERE id = $1
+SELECT id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, require_microvm, execution_backend, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at FROM ci_jobs WHERE id = $1
 `
 
 func (q *Queries) CIJobFirstByID(ctx context.Context, id pgtype.UUID) (CiJob, error) {
@@ -671,6 +679,8 @@ func (q *Queries) CIJobFirstByID(ctx context.Context, id pgtype.UUID) (CiJob, er
 		&i.EventName,
 		&i.InputValues,
 		&i.InputArchivePath,
+		&i.RequireMicrovm,
+		&i.ExecutionBackend,
 		&i.WorkspaceDir,
 		&i.ProcessingBy,
 		&i.ExitCode,
@@ -685,7 +695,7 @@ func (q *Queries) CIJobFirstByID(ctx context.Context, id pgtype.UUID) (CiJob, er
 }
 
 const cIJobFirstByIDAndOrg = `-- name: CIJobFirstByIDAndOrg :one
-SELECT j.id, j.project_id, j.status, j.source, j.workflow_name, j.workflow_file, j.selected_job_id, j.event_name, j.input_values, j.input_archive_path, j.workspace_dir, j.processing_by, j.exit_code, j.error_message, j.started_at, j.finished_at, j.canceled_at, j.created_at, j.updated_at
+SELECT j.id, j.project_id, j.status, j.source, j.workflow_name, j.workflow_file, j.selected_job_id, j.event_name, j.input_values, j.input_archive_path, j.require_microvm, j.execution_backend, j.workspace_dir, j.processing_by, j.exit_code, j.error_message, j.started_at, j.finished_at, j.canceled_at, j.created_at, j.updated_at
 FROM ci_jobs j
 JOIN projects p ON p.id = j.project_id
 WHERE j.id = $1 AND p.org_id = $2
@@ -710,6 +720,8 @@ func (q *Queries) CIJobFirstByIDAndOrg(ctx context.Context, arg CIJobFirstByIDAn
 		&i.EventName,
 		&i.InputValues,
 		&i.InputArchivePath,
+		&i.RequireMicrovm,
+		&i.ExecutionBackend,
 		&i.WorkspaceDir,
 		&i.ProcessingBy,
 		&i.ExitCode,
@@ -814,18 +826,20 @@ const cIJobMarkRunning = `-- name: CIJobMarkRunning :exec
 UPDATE ci_jobs
 SET status = 'running',
     workspace_dir = $2,
+    execution_backend = $3,
     started_at = NOW(),
     updated_at = NOW()
 WHERE id = $1
 `
 
 type CIJobMarkRunningParams struct {
-	ID           pgtype.UUID `json:"id"`
-	WorkspaceDir string      `json:"workspace_dir"`
+	ID               pgtype.UUID `json:"id"`
+	WorkspaceDir     string      `json:"workspace_dir"`
+	ExecutionBackend string      `json:"execution_backend"`
 }
 
 func (q *Queries) CIJobMarkRunning(ctx context.Context, arg CIJobMarkRunningParams) error {
-	_, err := q.db.Exec(ctx, cIJobMarkRunning, arg.ID, arg.WorkspaceDir)
+	_, err := q.db.Exec(ctx, cIJobMarkRunning, arg.ID, arg.WorkspaceDir, arg.ExecutionBackend)
 	return err
 }
 

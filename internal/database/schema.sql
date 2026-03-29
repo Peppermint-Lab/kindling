@@ -1108,6 +1108,8 @@ CREATE TABLE IF NOT EXISTS ci_jobs (
     event_name         TEXT NOT NULL DEFAULT '',
     input_values       JSONB NOT NULL DEFAULT '{}'::jsonb,
     input_archive_path TEXT NOT NULL DEFAULT '',
+    require_microvm    BOOLEAN NOT NULL DEFAULT true,
+    execution_backend  TEXT NOT NULL DEFAULT '',
     workspace_dir      TEXT NOT NULL DEFAULT '',
     processing_by      UUID REFERENCES servers(id),
     exit_code          INT,
@@ -1118,6 +1120,12 @@ CREATE TABLE IF NOT EXISTS ci_jobs (
     created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE ci_jobs
+    ADD COLUMN IF NOT EXISTS require_microvm BOOLEAN NOT NULL DEFAULT true;
+
+ALTER TABLE ci_jobs
+    ADD COLUMN IF NOT EXISTS execution_backend TEXT NOT NULL DEFAULT '';
 
 CREATE TABLE IF NOT EXISTS ci_job_logs (
     id          UUID PRIMARY KEY,

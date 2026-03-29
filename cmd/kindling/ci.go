@@ -69,11 +69,12 @@ func ciListWorkflowsCmd() *cobra.Command {
 
 func ciRunCmd() *cobra.Command {
 	var (
-		cwd       string
-		jobID     string
-		event     string
-		inputs    []string
-		projectID string
+		cwd            string
+		jobID          string
+		event          string
+		inputs         []string
+		projectID      string
+		requireMicroVM bool
 	)
 	cmd := &cobra.Command{
 		Use:   "run <workflow>",
@@ -104,7 +105,11 @@ func ciRunCmd() *cobra.Command {
 				return err
 			}
 
-			runner := ci.NewPreferredWorkflowRunner()
+			runner, err := ci.NewWorkflowRunner(ci.RunnerSelection{RequireMicroVM: requireMicroVM})
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Execution backend: %s\n", runner.Backend())
 			result, err := runner.Run(context.Background(), plan, ci.RunOptions{
 				Stdout: os.Stdout,
 				Stderr: os.Stderr,
@@ -126,6 +131,7 @@ func ciRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&event, "event", "", "Workflow event name to emulate (defaults from workflow triggers)")
 	cmd.Flags().StringArrayVar(&inputs, "input", nil, "workflow_dispatch input in key=value form")
 	cmd.Flags().StringVar(&projectID, "project", "", "Project UUID for remote execution via the Kindling API")
+	cmd.Flags().BoolVar(&requireMicroVM, "require-microvm", false, "Require a microVM-backed local runner instead of falling back to host execution")
 	return cmd
 }
 
@@ -288,11 +294,12 @@ func runRemoteCIJob(ctx context.Context, repoRoot, projectID, workflowRef, jobID
 	}
 	var out map[string]any
 	if err := c.DoJSON(ctx, http.MethodPost, "/api/projects/"+pid+"/ci/jobs", map[string]any{
-		"workflow":       workflowRef,
-		"job":            jobID,
-		"event":          event,
-		"inputs":         inputs,
-		"archive_base64": archiveBase64,
+		"workflow":        workflowRef,
+		"job":             jobID,
+		"event":           event,
+		"inputs":          inputs,
+		"archive_base64":  archiveBase64,
+		"require_microvm": true,
 	}, &out); err != nil {
 		return fmt.Errorf("create ci job: %w", err)
 	}
@@ -303,6 +310,7 @@ func runRemoteCIJob(ctx context.Context, repoRoot, projectID, workflowRef, jobID
 
 func followRemoteCIJob(ctx context.Context, c *cli.Client, jobID string) error {
 	seenLogs := 0
+	shownBackend := ""
 	for {
 		var logs []map[string]any
 		if err := c.DoJSON(ctx, http.MethodGet, "/api/ci/jobs/"+jobID+"/logs", nil, &logs); err == nil {
@@ -316,6 +324,11 @@ func followRemoteCIJob(ctx context.Context, c *cli.Client, jobID string) error {
 			return err
 		}
 		status := jsonFieldString(job, "status")
+		backend := jsonFieldString(job, "execution_backend")
+		if backend != "" && backend != shownBackend {
+			fmt.Printf("Execution backend: %s\n", backend)
+			shownBackend = backend
+		}
 		switch status {
 		case "successful":
 			return nil

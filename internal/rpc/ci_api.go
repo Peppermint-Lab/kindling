@@ -15,22 +15,24 @@ import (
 )
 
 type ciJobOut struct {
-	ID            string            `json:"id"`
-	ProjectID     string            `json:"project_id"`
-	Status        string            `json:"status"`
-	Source        string            `json:"source"`
-	WorkflowName  string            `json:"workflow_name"`
-	WorkflowFile  string            `json:"workflow_file"`
-	SelectedJobID string            `json:"selected_job_id,omitempty"`
-	EventName     string            `json:"event_name,omitempty"`
-	Inputs        map[string]string `json:"inputs,omitempty"`
-	ExitCode      *int32            `json:"exit_code,omitempty"`
-	ErrorMessage  string            `json:"error_message,omitempty"`
-	StartedAt     *string           `json:"started_at,omitempty"`
-	FinishedAt    *string           `json:"finished_at,omitempty"`
-	CanceledAt    *string           `json:"canceled_at,omitempty"`
-	CreatedAt     *string           `json:"created_at,omitempty"`
-	UpdatedAt     *string           `json:"updated_at,omitempty"`
+	ID               string            `json:"id"`
+	ProjectID        string            `json:"project_id"`
+	Status           string            `json:"status"`
+	Source           string            `json:"source"`
+	WorkflowName     string            `json:"workflow_name"`
+	WorkflowFile     string            `json:"workflow_file"`
+	SelectedJobID    string            `json:"selected_job_id,omitempty"`
+	EventName        string            `json:"event_name,omitempty"`
+	Inputs           map[string]string `json:"inputs,omitempty"`
+	RequireMicroVM   bool              `json:"require_microvm"`
+	ExecutionBackend string            `json:"execution_backend,omitempty"`
+	ExitCode         *int32            `json:"exit_code,omitempty"`
+	ErrorMessage     string            `json:"error_message,omitempty"`
+	StartedAt        *string           `json:"started_at,omitempty"`
+	FinishedAt       *string           `json:"finished_at,omitempty"`
+	CanceledAt       *string           `json:"canceled_at,omitempty"`
+	CreatedAt        *string           `json:"created_at,omitempty"`
+	UpdatedAt        *string           `json:"updated_at,omitempty"`
 }
 
 type ciJobArtifactOut struct {
@@ -63,22 +65,24 @@ func ciJobToOut(job queries.CiJob) ciJobOut {
 		exitCode = &v
 	}
 	return ciJobOut{
-		ID:            pguuid.ToString(job.ID),
-		ProjectID:     pguuid.ToString(job.ProjectID),
-		Status:        job.Status,
-		Source:        job.Source,
-		WorkflowName:  job.WorkflowName,
-		WorkflowFile:  job.WorkflowFile,
-		SelectedJobID: job.SelectedJobID,
-		EventName:     job.EventName,
-		Inputs:        inputs,
-		ExitCode:      exitCode,
-		ErrorMessage:  strings.TrimSpace(job.ErrorMessage),
-		StartedAt:     rpcutil.FormatTS(job.StartedAt),
-		FinishedAt:    rpcutil.FormatTS(job.FinishedAt),
-		CanceledAt:    rpcutil.FormatTS(job.CanceledAt),
-		CreatedAt:     rpcutil.FormatTS(job.CreatedAt),
-		UpdatedAt:     rpcutil.FormatTS(job.UpdatedAt),
+		ID:               pguuid.ToString(job.ID),
+		ProjectID:        pguuid.ToString(job.ProjectID),
+		Status:           job.Status,
+		Source:           job.Source,
+		WorkflowName:     job.WorkflowName,
+		WorkflowFile:     job.WorkflowFile,
+		SelectedJobID:    job.SelectedJobID,
+		EventName:        job.EventName,
+		Inputs:           inputs,
+		RequireMicroVM:   job.RequireMicrovm,
+		ExecutionBackend: strings.TrimSpace(job.ExecutionBackend),
+		ExitCode:         exitCode,
+		ErrorMessage:     strings.TrimSpace(job.ErrorMessage),
+		StartedAt:        rpcutil.FormatTS(job.StartedAt),
+		FinishedAt:       rpcutil.FormatTS(job.FinishedAt),
+		CanceledAt:       rpcutil.FormatTS(job.CanceledAt),
+		CreatedAt:        rpcutil.FormatTS(job.CreatedAt),
+		UpdatedAt:        rpcutil.FormatTS(job.UpdatedAt),
 	}
 }
 
@@ -182,11 +186,12 @@ func (a *API) createProjectCIJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Workflow      string            `json:"workflow"`
-		Job           string            `json:"job"`
-		Event         string            `json:"event"`
-		Inputs        map[string]string `json:"inputs"`
-		ArchiveBase64 string            `json:"archive_base64"`
+		Workflow       string            `json:"workflow"`
+		Job            string            `json:"job"`
+		Event          string            `json:"event"`
+		Inputs         map[string]string `json:"inputs"`
+		ArchiveBase64  string            `json:"archive_base64"`
+		RequireMicroVM *bool             `json:"require_microvm"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_json", "malformed JSON body")
@@ -201,12 +206,13 @@ func (a *API) createProjectCIJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	job, err := a.ciJobService.CreateLocalWorkflowJob(r.Context(), ci.CreateJobRequest{
-		ProjectID:     uuid.UUID(projectID.Bytes),
-		WorkflowRef:   req.Workflow,
-		JobID:         req.Job,
-		EventName:     req.Event,
-		Inputs:        req.Inputs,
-		ArchiveBase64: req.ArchiveBase64,
+		ProjectID:      uuid.UUID(projectID.Bytes),
+		WorkflowRef:    req.Workflow,
+		JobID:          req.Job,
+		EventName:      req.Event,
+		Inputs:         req.Inputs,
+		ArchiveBase64:  req.ArchiveBase64,
+		RequireMicroVM: req.RequireMicroVM == nil || *req.RequireMicroVM,
 	})
 	if err != nil {
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "create_ci_job", err)

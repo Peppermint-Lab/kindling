@@ -17,11 +17,11 @@ import (
 )
 
 type JobService struct {
-	q        *queries.Queries
-	serverID uuid.UUID
-	resolver WorkflowResolver
-	compiler WorkflowCompiler
-	runner   WorkflowRunner
+	q         *queries.Queries
+	serverID  uuid.UUID
+	resolver  WorkflowResolver
+	compiler  WorkflowCompiler
+	selection RunnerSelection
 
 	mu      sync.Mutex
 	running map[uuid.UUID]context.CancelFunc
@@ -33,18 +33,21 @@ func NewJobService(q *queries.Queries, serverID uuid.UUID) *JobService {
 		serverID: serverID,
 		resolver: NewFSWorkflowResolver(),
 		compiler: NewStaticWorkflowCompiler(),
-		runner:   NewPreferredWorkflowRunner(),
-		running:  map[uuid.UUID]context.CancelFunc{},
+		selection: RunnerSelection{
+			RequireMicroVM: true,
+		},
+		running: map[uuid.UUID]context.CancelFunc{},
 	}
 }
 
 type CreateJobRequest struct {
-	ProjectID     uuid.UUID
-	WorkflowRef   string
-	JobID         string
-	EventName     string
-	Inputs        map[string]string
-	ArchiveBase64 string
+	ProjectID      uuid.UUID
+	WorkflowRef    string
+	JobID          string
+	EventName      string
+	Inputs         map[string]string
+	ArchiveBase64  string
+	RequireMicroVM bool
 }
 
 func (s *JobService) CreateLocalWorkflowJob(ctx context.Context, req CreateJobRequest) (queries.CiJob, error) {
@@ -65,6 +68,7 @@ func (s *JobService) CreateLocalWorkflowJob(ctx context.Context, req CreateJobRe
 		InputValues:      inputsJSON,
 		InputArchivePath: "",
 		WorkspaceDir:     "",
+		RequireMicrovm:   req.RequireMicroVM,
 		ErrorMessage:     "",
 	})
 	if err != nil {
@@ -139,14 +143,6 @@ func (s *JobService) Reconcile(ctx context.Context, jobID uuid.UUID) error {
 	}
 	defer cleanup()
 
-	if err := s.q.CIJobMarkRunning(ctx, queries.CIJobMarkRunningParams{
-		ID:           job.ID,
-		WorkspaceDir: workDir,
-	}); err != nil {
-		return err
-	}
-	_ = s.log(ctx, job.ID, "info", fmt.Sprintf("Starting workflow %s", job.WorkflowName))
-
 	runCtx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
 	s.running[jobID] = cancel
@@ -184,7 +180,28 @@ func (s *JobService) Reconcile(ctx context.Context, jobID uuid.UUID) error {
 	logWriter := &lineLogWriter{fn: func(line string) {
 		_ = s.log(context.Background(), job.ID, "info", line)
 	}}
-	result, runErr := s.runner.Run(runCtx, plan, RunOptions{
+	selection := s.selection
+	selection.RequireMicroVM = job.RequireMicrovm
+	runner, err := NewWorkflowRunner(selection)
+	if err != nil {
+		_ = s.log(ctx, job.ID, "error", err.Error())
+		_ = s.q.CIJobMarkFailed(ctx, queries.CIJobMarkFailedParams{
+			ID:           job.ID,
+			ExitCode:     pgtype.Int4{Int32: 1, Valid: true},
+			ErrorMessage: err.Error(),
+		})
+		return nil
+	}
+	_ = s.log(ctx, job.ID, "info", fmt.Sprintf("Starting workflow %s", job.WorkflowName))
+	_ = s.log(ctx, job.ID, "info", fmt.Sprintf("Execution backend: %s", runner.Backend()))
+	if err := s.q.CIJobMarkRunning(ctx, queries.CIJobMarkRunningParams{
+		ID:               job.ID,
+		WorkspaceDir:     workDir,
+		ExecutionBackend: runner.Backend(),
+	}); err != nil {
+		return err
+	}
+	result, runErr := runner.Run(runCtx, plan, RunOptions{
 		Stdout: logWriter,
 		Stderr: logWriter,
 	})
