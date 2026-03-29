@@ -5203,6 +5203,33 @@ func (q *Queries) OrganizationMembershipListPendingByOrg(ctx context.Context, or
 	return items, nil
 }
 
+const organizationMembershipUpdatePendingStatus = `-- name: OrganizationMembershipUpdatePendingStatus :one
+UPDATE organization_memberships
+SET status = $3
+WHERE organization_id = $1 AND user_id = $2 AND status = 'pending'
+RETURNING id, organization_id, user_id, role, status, created_at
+`
+
+type OrganizationMembershipUpdatePendingStatusParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	UserID         pgtype.UUID `json:"user_id"`
+	Status         string      `json:"status"`
+}
+
+func (q *Queries) OrganizationMembershipUpdatePendingStatus(ctx context.Context, arg OrganizationMembershipUpdatePendingStatusParams) (OrganizationMembership, error) {
+	row := q.db.QueryRow(ctx, organizationMembershipUpdatePendingStatus, arg.OrganizationID, arg.UserID, arg.Status)
+	var i OrganizationMembership
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.UserID,
+		&i.Role,
+		&i.Status,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const organizationMembershipUpdateStatus = `-- name: OrganizationMembershipUpdateStatus :one
 UPDATE organization_memberships
 SET status = $3

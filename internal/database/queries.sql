@@ -2340,6 +2340,12 @@ SET status = $3
 WHERE organization_id = $1 AND user_id = $2
 RETURNING *;
 
+-- name: OrganizationMembershipUpdatePendingStatus :one
+UPDATE organization_memberships
+SET status = $3
+WHERE organization_id = $1 AND user_id = $2 AND status = 'pending'
+RETURNING *;
+
 -- name: OrganizationMembershipListPendingByOrg :many
 SELECT m.*, u.email, u.display_name
 FROM organization_memberships m

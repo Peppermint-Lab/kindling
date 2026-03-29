@@ -18,7 +18,7 @@ export function Footer() {
               sign in
             </a>
             <a
-              href="https://docs.kindling.dev"
+              href="https://docs.kindling.systems"
               className="hover:text-black transition-colors"
             >
               docs

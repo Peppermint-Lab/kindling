@@ -11,7 +11,7 @@ function GitHubIcon({ className }: { className?: string }) {
 }
 
 const links = [
-  { label: "docs", href: "https://docs.kindling.dev" },
+  { label: "docs", href: "https://docs.kindling.systems" },
   { label: "github", href: "https://github.com/kindlingvm/kindling" },
 ]
 

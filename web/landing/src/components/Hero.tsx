@@ -21,7 +21,7 @@ export function Hero() {
 
       <div className="mt-8 flex flex-wrap items-center gap-3">
         <a
-          href="https://docs.kindling.dev"
+          href="https://docs.kindling.systems"
           className="bg-black text-white text-sm font-medium px-4 py-2 rounded-md hover:bg-gray-800 transition-colors"
         >
           Get started

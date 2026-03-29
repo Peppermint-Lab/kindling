@@ -65,7 +65,7 @@ const data = {
   navSecondary: [
     {
       title: "Documentation",
-      url: "https://docs.kindling.dev",
+      url: "https://docs.kindling.systems",
       icon: <BookOpenIcon />,
     },
     {
