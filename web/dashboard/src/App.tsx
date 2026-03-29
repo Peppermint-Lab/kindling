@@ -1,13 +1,6 @@
 import { lazy, Suspense, type ReactNode } from "react"
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom"
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom"
 import { AppSidebar } from "@/components/app-sidebar"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbList,
-  BreadcrumbPage,
-} from "@/components/ui/breadcrumb"
-import { Separator } from "@/components/ui/separator"
 import {
   SidebarInset,
   SidebarProvider,
@@ -88,21 +81,6 @@ const BootstrapPage = lazy(() =>
   }))
 )
 
-function pageName(pathname: string): string {
-  if (pathname.startsWith("/settings/servers/")) return "Server"
-  if (pathname.startsWith("/ci/jobs/")) return "CI Job"
-  if (pathname === "/pipelines") return "Pipelines"
-  if (pathname.startsWith("/sandboxes/")) return "Sandbox"
-  if (pathname === "/sandboxes") return "Sandboxes"
-  if (pathname === "/settings/ssh-keys") return "SSH Keys"
-  if (pathname.startsWith("/deployments/")) return "Deployment"
-  if (pathname === "/deployments") return "Deployments"
-  if (pathname.startsWith("/services/")) return "Service"
-  if (pathname.startsWith("/projects/")) return "Project"
-  if (pathname === "/settings") return "Settings"
-  return "Projects"
-}
-
 function PublicRouteFallback() {
   return (
     <div className="flex min-h-svh items-center justify-center text-muted-foreground text-sm">
@@ -124,28 +102,17 @@ function PrivateRouteContent({ children }: { children: ReactNode }) {
 }
 
 function Layout() {
-  const location = useLocation()
   const { session } = useAuth()
 
   return (
     <SidebarProvider>
       <AppSidebar />
       <SidebarInset>
-        <header className="flex h-16 shrink-0 items-center gap-2 pr-2">
-          <div className="flex flex-1 items-center gap-2 px-4 min-w-0">
+        <header className="flex h-12 shrink-0 items-center gap-2 pr-3">
+          <div className="flex flex-1 items-center gap-2 px-3 min-w-0">
             <SidebarTrigger className="-ml-1 shrink-0" />
-            <Separator orientation="vertical" className="mr-2 h-4 hidden sm:block" />
-            <Breadcrumb className="min-w-0">
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbPage className="truncate">
-                    {pageName(location.pathname)}
-                  </BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
             {session && session.authenticated ? (
-              <span className="text-muted-foreground hidden md:inline text-xs truncate ml-2">
+              <span className="text-muted-foreground hidden md:inline text-xs truncate">
                 {session.organization.name}
               </span>
             ) : null}

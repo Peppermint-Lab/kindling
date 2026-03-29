@@ -52,10 +52,10 @@ const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
 ]
 
 const DOT_CLASSES: Record<PhaseDotColor, string> = {
-  green: "bg-emerald-500",
-  amber: "bg-amber-500 animate-pulse",
-  red: "bg-red-500",
-  gray: "bg-zinc-400 dark:bg-zinc-500",
+  green: "bg-emerald-400 shadow-[0_0_4px_rgba(52,211,153,0.5)]",
+  amber: "bg-amber-400 animate-pulse shadow-[0_0_4px_rgba(251,191,36,0.5)]",
+  red: "bg-red-400 shadow-[0_0_4px_rgba(248,113,113,0.5)]",
+  gray: "bg-zinc-500",
 }
 
 function StatusDot({ phase }: { phase: string }) {
@@ -102,7 +102,7 @@ function FilterSelect<T extends string>({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value as T)}
-      className="h-8 rounded-md border border-input bg-background px-2.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-accent focus:outline-none focus:ring-1 focus:ring-ring"
+      className="h-8 rounded-md border border-white/[0.08] bg-white/[0.04] px-2.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-white/[0.07] focus:outline-none focus:ring-1 focus:ring-orange-500/40 cursor-pointer"
     >
       {options.map((o) => (
         <option key={o.value} value={o.value}>
@@ -231,7 +231,7 @@ export function DeploymentsPage() {
                 <li key={d.id}>
                   <Link
                     to={`/deployments/${d.id}`}
-                    className="group flex items-center gap-4 px-4 py-3 transition-colors hover:bg-accent/50"
+                    className="group flex items-center gap-4 px-4 py-3 transition-colors hover:bg-white/[0.03]"
                   >
                     {/* Project + Environment */}
                     <div className="flex items-center gap-3 min-w-0 w-52 shrink-0">

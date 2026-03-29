@@ -22,7 +22,7 @@ export function Dialog({ open, onOpenChange, children }: DialogProps) {
 
 export function DialogContent({ className, children, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={cn("rounded-lg border bg-background p-6 shadow-lg", className)} {...props}>
+    <div className={cn("rounded-xl border border-white/10 bg-[#12121a] p-6 shadow-2xl backdrop-blur-sm", className)} {...props}>
       {children}
     </div>
   )

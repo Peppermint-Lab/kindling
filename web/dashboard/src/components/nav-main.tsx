@@ -8,7 +8,6 @@ import {
 } from "@/components/ui/collapsible"
 import {
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuAction,
   SidebarMenuButton,
@@ -34,8 +33,7 @@ export function NavMain({
   }[]
 }) {
   return (
-    <SidebarGroup>
-      <SidebarGroupLabel>Platform</SidebarGroupLabel>
+    <SidebarGroup className="pt-1">
       <SidebarMenu>
         {items.map((item) => (
           <Collapsible
@@ -45,6 +43,7 @@ export function NavMain({
           >
             <SidebarMenuButton
               tooltip={item.title}
+              isActive={item.isActive}
               render={<Link to={item.url} />}
             >
               {item.icon}
@@ -57,8 +56,7 @@ export function NavMain({
                     <SidebarMenuAction className="aria-expanded:rotate-90" />
                   }
                 >
-                  <ChevronRightIcon
-                  />
+                  <ChevronRightIcon />
                   <span className="sr-only">Toggle</span>
                 </CollapsibleTrigger>
                 <CollapsibleContent>

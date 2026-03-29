@@ -53,7 +53,7 @@ function PageTitle({
   return (
     <h1
       className={cn(
-        "text-2xl font-semibold tracking-tight text-foreground",
+        "text-2xl font-bold tracking-tight text-foreground",
         className,
       )}
       {...props}
@@ -191,11 +191,11 @@ function EmptyState({
       )}
     >
       {icon && (
-        <div className="mb-4 text-muted-foreground/60">{icon}</div>
+        <div className="mb-4 text-muted-foreground/40">{icon}</div>
       )}
-      <p className="text-sm font-medium text-muted-foreground">{title}</p>
+      <p className="text-sm font-semibold text-foreground/80">{title}</p>
       {description && (
-        <p className="mt-1.5 text-sm text-muted-foreground/80 max-w-sm leading-relaxed">
+        <p className="mt-1.5 text-sm text-muted-foreground/70 max-w-sm leading-relaxed">
           {description}
         </p>
       )}

@@ -28,14 +28,14 @@ export function DeploymentLogsPanel({
   }, [logs])
 
   return (
-    <Surface>
+    <Surface className="border-white/[0.06]">
       <SurfaceHeader>
         <div className="flex items-center gap-2">
           <ScrollTextIcon className="size-4 text-muted-foreground" />
           <SurfaceTitle>Build logs</SurfaceTitle>
         </div>
       </SurfaceHeader>
-      <SurfaceBody>
+      <SurfaceBody className="p-0">
         {logs.length === 0 ? (
           <div className="py-6 text-center">
             {!terminal ? (
@@ -48,7 +48,7 @@ export function DeploymentLogsPanel({
             )}
           </div>
         ) : (
-          <div className="rounded-lg bg-muted/40 p-3.5 sm:p-4 font-mono text-xs leading-relaxed max-h-[min(70vh,720px)] overflow-y-auto space-y-0.5">
+          <div className="rounded-lg bg-black/60 border border-white/[0.06] p-3.5 sm:p-4 font-mono text-xs leading-relaxed max-h-[min(70vh,720px)] overflow-y-auto space-y-0.5">
             {logs.map((log) => (
               <div
                 key={logKey(log)}

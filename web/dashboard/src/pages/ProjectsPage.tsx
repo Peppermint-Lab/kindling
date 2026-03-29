@@ -24,7 +24,7 @@ import {
   EmptyState,
   PageErrorBanner,
 } from "@/components/page-layout"
-import { Surface, SurfaceBody } from "@/components/page-surface"
+import { Surface } from "@/components/page-surface"
 
 export function ProjectsPage() {
   const navigate = useNavigate()
@@ -136,7 +136,7 @@ export function ProjectsPage() {
         <PageHeader>
           <PageTitle>Projects</PageTitle>
           <PageActions>
-            <Button size="sm" onClick={() => setDialogOpen(true)}>
+            <Button size="sm" variant="accent" onClick={() => setDialogOpen(true)}>
               <PlusIcon className="mr-2 size-4" />
               New Project
             </Button>
@@ -146,7 +146,12 @@ export function ProjectsPage() {
         {projects.length === 0 ? (
           <Surface>
             <EmptyState
-              icon={<FolderIcon className="size-10" />}
+              icon={
+                <div className="relative">
+                  <div className="absolute inset-0 blur-xl bg-gradient-to-br from-[#f97316]/20 to-[#f59e0b]/10 rounded-full" />
+                  <FolderIcon className="size-10 relative" />
+                </div>
+              }
               title="No projects yet"
               description="Create a project with an optional GitHub repository. You'll get webhook setup steps on the project page to deploy on push to main."
               action={
@@ -161,10 +166,12 @@ export function ProjectsPage() {
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {projects.map((project) => (
               <Link key={project.id} to={`/projects/${project.id}`} className="group block min-w-0">
-                <Surface className="h-full transition-colors group-hover:border-foreground/20 group-hover:bg-accent/40">
-                  <SurfaceBody className="flex items-start justify-between gap-3 pt-5 sm:pt-6">
-                    <div className="min-w-0 space-y-2">
-                      <p className="font-medium text-sm truncate">{project.name}</p>
+                <div className="relative rounded-xl border border-white/10 bg-white/5 backdrop-blur-sm p-5 transition-all duration-200 hover:border-orange-500/30 hover:bg-white/[0.07] hover:shadow-[0_0_24px_rgba(249,115,22,0.08)]">
+                  {/* Gradient accent in corner */}
+                  <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-[#f97316]/10 to-transparent rounded-tr-xl rounded-bl-[48px] pointer-events-none" />
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 space-y-2 relative">
+                      <p className="font-semibold text-sm truncate text-foreground">{project.name}</p>
                       {project.github_repository ? (
                         <Badge variant="secondary" className="font-mono text-xs max-w-full truncate">
                           {project.github_repository}
@@ -173,9 +180,9 @@ export function ProjectsPage() {
                         <span className="text-xs text-muted-foreground">No repository linked</span>
                       )}
                     </div>
-                    <ChevronRightIcon className="size-4 text-muted-foreground/50 shrink-0 mt-0.5 transition-transform group-hover:translate-x-0.5" />
-                  </SurfaceBody>
-                </Surface>
+                    <ChevronRightIcon className="size-4 text-muted-foreground/40 shrink-0 mt-0.5 transition-all duration-200 group-hover:translate-x-1 group-hover:text-orange-400/60" />
+                  </div>
+                </div>
               </Link>
             ))}
           </div>

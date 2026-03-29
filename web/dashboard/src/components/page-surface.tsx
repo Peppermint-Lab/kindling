@@ -14,9 +14,9 @@ function Surface({
       className={cn(
         "rounded-xl",
         variant === "card" &&
-          "border bg-card text-card-foreground shadow-sm",
+          "border border-white/10 bg-white/5 backdrop-blur-sm text-card-foreground",
         variant === "inset" &&
-          "border bg-muted/30 text-card-foreground",
+          "border border-white/[0.06] bg-black/20 text-card-foreground",
         variant === "ghost" && "text-card-foreground",
         className,
       )}
@@ -49,7 +49,7 @@ function SurfaceTitle({
 }: React.HTMLAttributes<HTMLHeadingElement>) {
   return (
     <h3
-      className={cn("text-sm font-semibold leading-none tracking-tight", className)}
+      className={cn("text-sm font-semibold leading-none tracking-tight text-foreground", className)}
       {...props}
     >
       {children}
@@ -85,7 +85,7 @@ function SurfaceBody({
 }
 
 function SurfaceSeparator({ className }: { className?: string }) {
-  return <div className={cn("border-t mx-5 sm:mx-6", className)} />
+  return <div className={cn("border-t border-white/[0.06] mx-5 sm:mx-6", className)} />
 }
 
 function SurfaceRow({

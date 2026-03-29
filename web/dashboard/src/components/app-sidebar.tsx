@@ -81,18 +81,18 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const navigate = useNavigate()
 
   return (
-    <Sidebar variant="inset" {...props}>
+    <Sidebar variant="inset" className="bg-sidebar" {...props}>
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" render={<Link to="/" />}>
-              <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+              <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-gradient-to-br from-[#f97316] to-[#f59e0b] text-[#0c0a09] shadow-[0_0_12px_rgba(249,115,22,0.4)]">
                 <FlameIcon className="size-4" />
               </div>
               <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">Kindling</span>
-                <span className="truncate text-xs">Self-hosted PaaS</span>
-                <span className="truncate font-mono text-[11px] text-sidebar-foreground/60">
+                <span className="truncate font-semibold text-foreground">Kindling</span>
+                <span className="truncate text-xs text-muted-foreground">Self-hosted PaaS</span>
+                <span className="truncate font-mono text-[10px] text-muted-foreground/50">
                   {kindlingVersion.tag}
                 </span>
               </div>
@@ -103,10 +103,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarContent>
         <NavMain items={data.navMain} />
         {session && session.authenticated && session.organizations.length > 1 ? (
-          <div className="px-2 py-2 border-t border-sidebar-border">
-            <p className="text-xs text-muted-foreground mb-1 px-2">Organization</p>
+          <div className="px-2 py-2 border-t border-white/[0.06]">
+            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60 mb-1 px-2">Organization</p>
             <select
-              className="w-full text-sm rounded-md border bg-background px-2 py-1.5"
+              className="w-full text-xs rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-foreground backdrop-blur-sm focus:outline-none focus:border-orange-500/40"
               value={session.organization.id}
               onChange={(e) => {
                 void switchOrg(e.target.value)
@@ -121,11 +121,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           </div>
         ) : null}
         <NavSecondary items={data.navSecondary} className="mt-auto" />
-        <div className="p-2 border-t border-sidebar-border">
+        <div className="p-2 border-t border-white/[0.06]">
           <Button
             variant="ghost"
             size="sm"
-            className="w-full justify-start gap-2"
+            className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground hover:bg-white/[0.05]"
             onClick={() => {
               void logout().then(() => navigate("/login"))
             }}
