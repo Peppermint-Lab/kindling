@@ -7,7 +7,7 @@ Run Linux microVMs directly on your Mac using Apple's Virtualization Framework â
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Peppermint-Lab/kindling/main/contrib/install-kindling-mac.sh | bash
 
-# Start the daemon
+# Start the background daemon
 kindling-mac
 
 # In another terminal: start your box VM (like WSL)
@@ -22,6 +22,7 @@ The installer follows the usual user-local CLI pattern:
 - downloads VM assets into `~/.kindling-mac`
 - writes `~/.kindling-mac.yaml` if you do not already have one
 - adds `~/.local/bin` to your shell config if needed
+- `kindling-mac` starts launchd in the background by default
 
 ## Requirements
 
@@ -77,6 +78,12 @@ $EDITOR ~/.kindling-mac.yaml
 
 ```bash
 kindling-mac
+```
+
+For foreground debugging, run:
+
+```bash
+kindling-mac run
 ```
 
 ### 4. Start your box VM

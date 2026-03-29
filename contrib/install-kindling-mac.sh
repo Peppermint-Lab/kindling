@@ -267,10 +267,10 @@ kindling-mac is installed.
 
 Next steps:
   1. Edit ${CONFIG_PATH} if you want to change the defaults.
-  2. Start the daemon:
-       ${INSTALL_DIR}/kindling-mac
+  2. Start the background daemon:
+       kindling-mac
   3. In another terminal:
-       ${INSTALL_DIR}/kindling local box start
+       kindling local box start
 EOF
 
   if ! path_contains "$INSTALL_DIR"; then
