@@ -187,6 +187,14 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		startReconcilers(ctx, q, serverID, rt, recs, notifyRouteChange)
 	}
 
+	// In split-mode deployments the API process still needs a CI job service so
+	// webhook-driven GitHub Actions runner events can be accepted and persisted.
+	// The worker process picks up the resulting ci_jobs rows via WAL and performs
+	// the actual provisioning/reconciliation work.
+	if components.api && ciSvc == nil {
+		ciSvc = ci.NewJobService(q, cfgMgr, serverID)
+	}
+
 	// Component heartbeats for tracked servers.
 	serverTracked := components.worker || components.edge
 	if serverTracked && components.api {

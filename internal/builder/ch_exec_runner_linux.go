@@ -28,7 +28,7 @@ import (
 
 const (
 	chExecConfigPort    = uint32(1024)
-	chExecGuestCID      = uint32(3)
+	chExecGuestCIDBase  = uint32(4096)
 	chExecGuestExecPort = uint32(1027)
 	chExecVCPU          = 4
 	chExecMemoryMB      = 8192
@@ -75,6 +75,7 @@ type cloudHypervisorExecVM struct {
 	guestIP          string
 	hostCIDR         string
 	hostGW           string
+	guestCID         uint32
 
 	mu         sync.Mutex
 	started    bool
@@ -197,6 +198,7 @@ func newCloudHypervisorExecVM(cfg resolvedCloudHypervisorExecRunnerConfig, works
 		return nil, err
 	}
 	id := uuid.New()
+	guestCID := chExecGuestCIDBase + slot
 	return &cloudHypervisorExecVM{
 		binaryPath:       cfg.binaryPath,
 		kernelPath:       cfg.kernelPath,
@@ -212,6 +214,7 @@ func newCloudHypervisorExecVM(cfg resolvedCloudHypervisorExecRunnerConfig, works
 		guestIP:          guestPrefix.Addr().String(),
 		hostCIDR:         guestCIDR,
 		hostGW:           hostGW,
+		guestCID:         guestCID,
 		readyCh:          make(chan struct{}),
 	}, nil
 }
@@ -285,11 +288,12 @@ func (v *cloudHypervisorExecVM) start(parentCtx context.Context) error {
 		"--cpus", fmt.Sprintf("boot=%d", chExecVCPU),
 		"--memory", fmt.Sprintf("size=%dM,shared=on", chExecMemoryMB),
 		"--net", fmt.Sprintf("tap=%s,ip=%s,mask=255.255.255.254", v.tapName, v.guestIP),
-		"--vsock", fmt.Sprintf("cid=%d,socket=%s", chExecGuestCID, v.socketBase),
+		"--vsock", fmt.Sprintf("cid=%d,socket=%s", v.guestCID, v.socketBase),
 		"--api-socket", v.apiSocket,
-		"--fs", fmt.Sprintf("tag=app,socket=%s,num_queues=1,queue_size=1024", v.virtiofsSocketPath("app")),
-		"--fs", fmt.Sprintf("tag=workspace,socket=%s,num_queues=1,queue_size=1024", v.virtiofsSocketPath("workspace")),
-		"--fs", fmt.Sprintf("tag=builder,socket=%s,num_queues=1,queue_size=1024", v.virtiofsSocketPath("builder")),
+		"--fs",
+		fmt.Sprintf("tag=app,socket=%s,num_queues=1,queue_size=1024", v.virtiofsSocketPath("app")),
+		fmt.Sprintf("tag=workspace,socket=%s,num_queues=1,queue_size=1024", v.virtiofsSocketPath("workspace")),
+		fmt.Sprintf("tag=builder,socket=%s,num_queues=1,queue_size=1024", v.virtiofsSocketPath("builder")),
 	}
 	cmd := exec.CommandContext(runCtx, v.binaryPath, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

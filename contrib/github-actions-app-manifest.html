@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kindling GitHub Actions App</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5f2eb;
+        --panel: #fffdf8;
+        --ink: #1f2421;
+        --muted: #5e655f;
+        --accent: #0d7c66;
+        --border: #d8d2c4;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: radial-gradient(circle at top, #fff7d6 0%, var(--bg) 55%);
+        color: var(--ink);
+      }
+      main {
+        max-width: 760px;
+        margin: 48px auto;
+        padding: 0 20px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        padding: 28px;
+        box-shadow: 0 18px 50px rgba(31, 36, 33, 0.08);
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 32px;
+        line-height: 1.1;
+      }
+      p, li {
+        line-height: 1.55;
+        color: var(--muted);
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: #f1ede3;
+        border-radius: 6px;
+        padding: 2px 6px;
+        color: var(--ink);
+      }
+      button {
+        margin-top: 12px;
+        border: 0;
+        border-radius: 999px;
+        padding: 14px 20px;
+        background: var(--accent);
+        color: white;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:hover {
+        filter: brightness(1.05);
+      }
+      textarea {
+        width: 100%;
+        min-height: 260px;
+        margin-top: 16px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 12px;
+        resize: vertical;
+        font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: #fcfbf7;
+      }
+      .note {
+        margin-top: 18px;
+        padding: 14px 16px;
+        border-left: 4px solid var(--accent);
+        background: #f2fbf8;
+        border-radius: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="panel">
+        <h1>Register The Kindling GitHub App</h1>
+        <p>
+          This form opens GitHub’s org app registration page for <code>Peppermint-Lab</code> with the
+          Kindling runner permissions already filled in.
+        </p>
+        <ol>
+          <li>Click the button below while signed into GitHub as a <code>Peppermint-Lab</code> admin.</li>
+          <li>Create the app, then install it on <code>Peppermint-Lab/kindling</code>.</li>
+          <li>Copy the final browser URL after GitHub redirects you back and paste it into Codex.</li>
+        </ol>
+
+        <form method="post" action="https://github.com/organizations/Peppermint-Lab/settings/apps/new">
+          <input id="manifest" type="hidden" name="manifest" value="" />
+          <input type="hidden" name="state" value="kindling-prod-20260329" />
+          <button type="submit">Open GitHub App Registration</button>
+        </form>
+
+        <div class="note">
+          The redirect target is <code>https://app.kindling.systems/?kindling_github_app=1</code>. Even if
+          that page looks ordinary, the address bar will include the temporary <code>code=...</code> value
+          I need to finish the setup.
+        </div>
+
+        <textarea id="manifestPreview" readonly></textarea>
+      </div>
+    </main>
+    <script>
+      const manifest = {
+        name: "Kindling Actions Runner",
+        url: "https://app.kindling.systems",
+        redirect_url: "https://app.kindling.systems/?kindling_github_app=1",
+        hook_attributes: {
+          url: "https://api.kindling.systems/webhooks/github"
+        },
+        public: false,
+        default_permissions: {
+          metadata: "read",
+          organization_self_hosted_runners: "write"
+        },
+        default_events: ["workflow_job"]
+      };
+
+      const raw = JSON.stringify(manifest);
+      document.getElementById("manifest").value = raw;
+      document.getElementById("manifestPreview").value = JSON.stringify(manifest, null, 2);
+    </script>
+  </body>
+</html>
