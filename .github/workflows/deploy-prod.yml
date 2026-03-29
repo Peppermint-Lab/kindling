@@ -274,6 +274,6 @@ jobs:
           ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
             "set -euo pipefail; cd '$KH/web'; rm -rf dashboard.prev; if [ -d dashboard ]; then mv dashboard dashboard.prev; fi; mv dashboard.new dashboard"
           ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
-            "sudo systemctl daemon-reload && sudo systemctl enable kindling@edge kindling@api kindling@worker"
+            "sudo systemctl daemon-reload && { sudo systemctl unmask kindling.service kindling@.service kindling@edge kindling@api kindling@worker || true; } && sudo systemctl enable kindling@edge kindling@api kindling@worker"
           ssh -p "$PORT" -o StrictHostKeyChecking=yes "$H" \
             "if sudo systemctl is-active --quiet kindling && ! sudo systemctl is-active --quiet kindling@edge; then sudo systemctl disable --now kindling || true; sudo systemctl start kindling@edge kindling@api kindling@worker; else if ! sudo systemctl is-active --quiet kindling@edge; then sudo systemctl start kindling@edge; fi; if sudo systemctl is-active --quiet kindling@api; then sudo systemctl restart kindling@api; else sudo systemctl start kindling@api; fi; if sudo systemctl is-active --quiet kindling@worker; then sudo systemctl restart kindling@worker; else sudo systemctl start kindling@worker; fi; fi"

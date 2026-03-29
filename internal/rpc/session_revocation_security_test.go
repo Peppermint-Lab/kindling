@@ -213,6 +213,7 @@ func passwordChangeRequest(t *testing.T, currentPassword, newPassword string, ra
 	body := fmt.Sprintf(`{"current_password":%q,"new_password":%q}`, currentPassword, newPassword)
 	req := httptest.NewRequest(http.MethodPut, "/api/auth/password", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	setTrustedOrigin(req)
 
 	// Set session cookie so the handler can extract the token hash
 	if rawToken != nil {
@@ -550,6 +551,7 @@ func TestPasswordChangeFailsWhenFallbackRevocationFails(t *testing.T) {
 	body := fmt.Sprintf(`{"current_password":%q,"new_password":%q}`, oldPassword, newPassword)
 	req := httptest.NewRequest(http.MethodPut, "/api/auth/password", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	setTrustedOrigin(req)
 	req = req.WithContext(auth.WithPrincipal(req.Context(), principal))
 
 	rec := httptest.NewRecorder()

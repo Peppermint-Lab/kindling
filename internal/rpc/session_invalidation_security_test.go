@@ -10,6 +10,10 @@ import (
 	"github.com/kindlingvm/kindling/internal/auth"
 )
 
+func setTrustedOrigin(req *http.Request) {
+	req.Header.Set("Origin", "http://"+req.Host)
+}
+
 // TestSessionTokenHashFromRequest verifies that the session token hash
 // extraction helper correctly parses the session cookie and returns
 // the SHA-256 hash used for database lookup.
@@ -118,6 +122,7 @@ func TestPasswordChangeHandlerRejectsUnauthenticated(t *testing.T) {
 
 	api := &API{}
 	req := httptest.NewRequest(http.MethodPut, "/api/auth/password", nil)
+	setTrustedOrigin(req)
 	rec := httptest.NewRecorder()
 
 	api.authChangePassword(rec, req)
@@ -187,6 +192,7 @@ func TestPasswordChangeHandlerRejectsMissingBody(t *testing.T) {
 
 	api := &API{}
 	req := httptest.NewRequest(http.MethodPut, "/api/auth/password", nil)
+	setTrustedOrigin(req)
 
 	// Inject a principal to simulate an authenticated request.
 	p := auth.Principal{
@@ -226,6 +232,7 @@ func TestPasswordChangeHandlerRejectsEmptyPasswords(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPut, "/api/auth/password",
 				strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")
+			setTrustedOrigin(req)
 
 			p := auth.Principal{
 				UserID:    [16]byte{1},
@@ -253,6 +260,7 @@ func TestPasswordChangeHandlerRejectsShortNewPassword(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/auth/password",
 		strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	setTrustedOrigin(req)
 
 	p := auth.Principal{
 		UserID:    [16]byte{1},

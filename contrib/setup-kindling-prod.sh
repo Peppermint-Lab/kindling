@@ -48,6 +48,7 @@ sed \
 install -m 0644 "${REPO}/contrib/systemd/kindling-networking.service" /etc/systemd/system/kindling-networking.service
 
 systemctl daemon-reload
+systemctl unmask kindling.service kindling@.service kindling@edge kindling@api kindling@worker 2>/dev/null || true
 systemctl enable --now kindling-networking.service
 echo "Installed kindling.service and kindling@.service."
 echo "Installed and enabled kindling-networking.service."
