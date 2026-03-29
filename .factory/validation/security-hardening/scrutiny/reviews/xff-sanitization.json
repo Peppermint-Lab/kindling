@@ -1,0 +1,26 @@
+{
+  "featureId": "xff-sanitization",
+  "reviewedAt": "2026-03-29T17:56:20Z",
+  "commitId": "5ec8c36",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The feature requirements are met: both edge proxy paths were moved to ReverseProxy Rewrite handlers, client-supplied forwarding headers are sanitized before backend forwarding, and dedicated security tests cover spoofed XFF/X-Real-IP, multi-hop replacement, and cross-feature bootstrap/rate-limit behavior.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The architecture shared-state doc is now stale about forwarding behavior and could mislead future workers on XFF trust assumptions.",
+      "evidence": ".factory/library/architecture.md:7 still says proxyControlPlane preserves inbound X-Forwarded-For when present, but commit 5ec8c36 switched both proxy paths to Rewrite-based sanitization and replacement."
+    },
+    {
+      "area": "skills",
+      "observation": "The security-backend-worker skill does not currently document the ReverseProxy Director vs Rewrite forwarding-header behavior, which was central to implementing this feature correctly.",
+      "evidence": "handoff 2026-03-29T16-00-33-332Z__xff-sanitization__025d86a3-6190-4b25-9930-6ab512013b06.json:100-101 suggests adding this pitfall to the skill; worker transcript shows investigation of duplicate XFF append behavior before landing the Rewrite approach."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Review passed. Commit 5ec8c36 correctly enforces edge-generated forwarding headers for both control-plane and app proxy paths and includes targeted security regression tests; no correctness/security blocking issues were identified in the feature diff."
+}

@@ -1,0 +1,39 @@
+{
+  "featureId": "oauth-auto-creation-controls",
+  "reviewedAt": "2026-03-29T17:59:00Z",
+  "commitId": "eebdb78",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Core OAuth domain matching and pending-member flow are in place, but membership status transitions are overly permissive in the new admin endpoints.",
+    "issues": [
+      {
+        "file": "internal/rpc/pending_members_api.go",
+        "line": 56,
+        "severity": "blocking",
+        "description": "Approve/reject endpoints call OrganizationMembershipUpdateStatus directly by org+user without requiring current status='pending'. An org admin can therefore reject or reactivate any member (including already-active users), which violates the intended 'pending member' lifecycle and can revoke active access unexpectedly."
+      },
+      {
+        "file": "internal/database/queries.sql",
+        "line": 2318,
+        "severity": "non_blocking",
+        "description": "OrganizationFindByEmailDomain uses LIMIT 1 while schema only adds a non-unique index on organizations.email_domain (schema.sql line 45). If multiple orgs claim the same domain (e.g., concurrent first logins), matching becomes nondeterministic and may route users to the wrong org."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "Mission guidance is internally contradictory about schema edits, which caused avoidable ambiguity for this feature.",
+      "evidence": "Mission AGENTS.md line 9 says 'DO NOT modify the PostgreSQL database schema' and line 14 marks internal/database/schema.sql off-limits, but line 48 explicitly says schema changes ARE allowed for OAuth domain matching."
+    },
+    {
+      "area": "skills",
+      "observation": "security-backend-worker skill conflicts with mission reality for OAuth features that require schema work.",
+      "evidence": ".factory/skills/security-backend-worker/SKILL.md line 82 says to return to orchestrator when schema changes are required ('not authorized for this mission'), while this reviewed feature explicitly required schema additions."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Review failed: pending-member approval/rejection endpoints are not scoped to pending memberships and can alter active memberships. Also noted a non-blocking domain-claim determinism risk and shared-state documentation contradictions around schema-change policy."
+}

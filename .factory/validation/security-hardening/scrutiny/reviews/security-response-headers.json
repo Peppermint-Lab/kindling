@@ -1,0 +1,34 @@
+{
+  "featureId": "security-response-headers",
+  "reviewedAt": "2026-03-29T17:57:31Z",
+  "commitId": "eb7e2ad5a90e2aa9e81df0d8655e51b84a6d50a9",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "Feature remains non-compliant with VAL-HEADERS-004: runtime HTTPS write timeout is still multi-minute on default configuration; this commit only adds tests and one test codifies non-30s behavior.",
+    "issues": [
+      {
+        "file": "internal/edgeproxy/edgeproxy.go",
+        "line": 148,
+        "severity": "blocking",
+        "description": "HTTPS write timeout is computed as max(30s, ColdStartTimeout+15s). With default ColdStartTimeout=2m (internal/config/snapshot.go:17) passed into edgeproxy.New (cmd/kindling/serve_edge.go:134), default runtime timeout becomes 2m15s instead of the required 30s (VAL-HEADERS-004)."
+      },
+      {
+        "file": "cmd/kindling/serve_http.go",
+        "line": 134,
+        "severity": "non_blocking",
+        "description": "CORS middleware returns OPTIONS requests before calling next, while SecurityHeadersMiddleware is inside CORS (lines 209 and 214). As a result, preflight API responses do not receive security headers despite the feature's \"all API responses\" wording."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The security-backend-worker skill does not explicitly require validating config-driven defaults through real startup/default paths. This can allow assertion-level test coverage to pass while contract-required default runtime behavior remains wrong.",
+      "evidence": "SKILL.md step 3 is generic; transcript marks feature complete, but added tests in internal/edgeproxy/edgeproxy_security_test.go (lines 456-488) use hand-picked ColdStartTimeout values and even assert expansion, instead of validating the default startup path wired by cmd/kindling/serve_edge.go:114-134 and internal/config/snapshot.go:17."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed handoff, transcript skeleton, and commit diff for security-response-headers. The feature fails review because default HTTPS write timeout remains 2m15s on default config, violating VAL-HEADERS-004's 30s requirement. Added tests improved coverage but did not correct the runtime behavior."
+}
