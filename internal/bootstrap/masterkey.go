@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,6 +56,10 @@ func LoadOrCreateMasterKey() ([]byte, error) {
 	if err := os.WriteFile(localPath, k, 0o600); err != nil {
 		return nil, fmt.Errorf("write master key: %w", err)
 	}
+	slog.Warn("auto-generated a new master encryption key — this should be pre-provisioned in production",
+		"path", localPath,
+		"remediation", "generate a 32-byte key and place it at "+SystemMasterKeyPath+" before starting the server; see docs for key management",
+	)
 	return k, nil
 }
 

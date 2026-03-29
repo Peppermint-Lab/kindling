@@ -4,6 +4,7 @@ package bootstrap
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,7 @@ const DefaultLocalPostgresDSN = "postgres://kindling:kindling@127.0.0.1:5432/kin
 // Whitespace around the DSN is trimmed. Empty files are treated as missing.
 func ResolvePostgresDSN(pathOverride string) (string, error) {
 	if s := strings.TrimSpace(pathOverride); s != "" {
+		warnSSLModeDisable(s)
 		return s, nil
 	}
 	for _, p := range dsnSearchPaths() {
@@ -42,9 +44,24 @@ func ResolvePostgresDSN(pathOverride string) (string, error) {
 		if s == "" || strings.HasPrefix(s, "#") {
 			continue
 		}
+		warnSSLModeDisable(s)
 		return s, nil
 	}
+	slog.Warn("using default Postgres DSN with well-known credentials — this is insecure for production",
+		"dsn_user", "kindling",
+		"remediation", "provision a DSN file at "+SystemDSNPath+" or ~/"+LocalDSNRelPath+" with your production connection URI",
+	)
+	warnSSLModeDisable(DefaultLocalPostgresDSN)
 	return DefaultLocalPostgresDSN, nil
+}
+
+// warnSSLModeDisable emits a warning when a DSN explicitly disables TLS.
+func warnSSLModeDisable(dsn string) {
+	if strings.Contains(dsn, "sslmode=disable") {
+		slog.Warn("database connection has TLS disabled — data is transmitted unencrypted",
+			"remediation", "configure sslmode=require (or sslmode=verify-full) in your DSN and ensure your PostgreSQL server has TLS enabled",
+		)
+	}
 }
 
 func dsnSearchPaths() []string {
