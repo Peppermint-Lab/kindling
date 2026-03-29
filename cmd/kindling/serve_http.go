@@ -200,11 +200,15 @@ func startAPIServer(
 
 	protectedAPI := auth.Middleware(q, apiMux)
 	rateLimitedAPI := authLimiter.PathMiddleware(rateLimitedTargets, protectedAPI)
+	// Enforce request body size limits to prevent OOM DoS via unbounded
+	// JSON decoding. Applied before rate limiting so oversized payloads
+	// are rejected as early as possible.
+	sizeLimitedAPI := bodyLimitMiddleware(maxJSONBodySize, rateLimitedAPI)
 	var handler http.Handler
 	if dashHostStr != "" {
-		handler = hostBasedHandler(corsMiddleware(corsOrigins, rateLimitedAPI), dashboardSPAHandler(distDir), dashHostStr)
+		handler = hostBasedHandler(corsMiddleware(corsOrigins, sizeLimitedAPI), dashboardSPAHandler(distDir), dashHostStr)
 	} else {
-		handler = corsMiddleware(corsOrigins, rateLimitedAPI)
+		handler = corsMiddleware(corsOrigins, sizeLimitedAPI)
 	}
 
 	srv := &http.Server{Addr: listenAddr, Handler: handler}
