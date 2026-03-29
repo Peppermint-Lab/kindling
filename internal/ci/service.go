@@ -17,11 +17,13 @@ import (
 )
 
 type JobService struct {
-	q         *queries.Queries
-	serverID  uuid.UUID
-	resolver  WorkflowResolver
-	compiler  WorkflowCompiler
-	selection RunnerSelection
+	q          *queries.Queries
+	serverID   uuid.UUID
+	resolver   WorkflowResolver
+	compiler   WorkflowCompiler
+	selection  RunnerSelection
+	publish    func(uuid.UUID)
+	publishJob func(uuid.UUID)
 
 	mu      sync.Mutex
 	running map[uuid.UUID]context.CancelFunc
@@ -38,6 +40,14 @@ func NewJobService(q *queries.Queries, serverID uuid.UUID) *JobService {
 		},
 		running: map[uuid.UUID]context.CancelFunc{},
 	}
+}
+
+func (s *JobService) SetDashboardPublisher(fn func(uuid.UUID)) {
+	s.publish = fn
+}
+
+func (s *JobService) SetJobDashboardPublisher(fn func(uuid.UUID)) {
+	s.publishJob = fn
 }
 
 type CreateJobRequest struct {
@@ -91,17 +101,28 @@ func (s *JobService) CreateLocalWorkflowJob(ctx context.Context, req CreateJobRe
 		}
 		job.InputArchivePath = archivePath
 	}
+	s.publishProject(req.ProjectID)
+	s.publishCIJob(jobID)
 	return job, nil
 }
 
 func (s *JobService) Cancel(ctx context.Context, jobID uuid.UUID) error {
+	job, err := s.q.CIJobFirstByID(ctx, pguuid.ToPgtype(jobID))
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
 	cancel := s.running[jobID]
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
-	return s.q.CIJobMarkCanceled(ctx, pguuid.ToPgtype(jobID))
+	if err := s.q.CIJobMarkCanceled(ctx, pguuid.ToPgtype(jobID)); err != nil {
+		return err
+	}
+	s.publishProject(uuid.UUID(job.ProjectID.Bytes))
+	s.publishCIJob(jobID)
+	return nil
 }
 
 func (s *JobService) Reconcile(ctx context.Context, jobID uuid.UUID) error {
@@ -113,7 +134,12 @@ func (s *JobService) Reconcile(ctx context.Context, jobID uuid.UUID) error {
 		return nil
 	}
 	if job.CanceledAt.Valid {
-		return s.q.CIJobMarkCanceled(ctx, job.ID)
+		if err := s.q.CIJobMarkCanceled(ctx, job.ID); err != nil {
+			return err
+		}
+		s.publishProject(uuid.UUID(job.ProjectID.Bytes))
+		s.publishCIJob(uuid.UUID(job.ID.Bytes))
+		return nil
 	}
 	job, err = s.q.CIJobClaimLease(ctx, queries.CIJobClaimLeaseParams{
 		ID:           job.ID,
@@ -139,6 +165,8 @@ func (s *JobService) Reconcile(ctx context.Context, jobID uuid.UUID) error {
 			ExitCode:     pgtype.Int4{Int32: 1, Valid: true},
 			ErrorMessage: err.Error(),
 		})
+		s.publishProject(uuid.UUID(job.ProjectID.Bytes))
+		s.publishCIJob(uuid.UUID(job.ID.Bytes))
 		return nil
 	}
 	defer cleanup()
@@ -160,6 +188,8 @@ func (s *JobService) Reconcile(ctx context.Context, jobID uuid.UUID) error {
 			ExitCode:     pgtype.Int4{Int32: 1, Valid: true},
 			ErrorMessage: err.Error(),
 		})
+		s.publishProject(uuid.UUID(job.ProjectID.Bytes))
+		s.publishCIJob(uuid.UUID(job.ID.Bytes))
 		return nil
 	}
 	plan, err := s.compiler.Compile(CompileRequest{
@@ -175,6 +205,8 @@ func (s *JobService) Reconcile(ctx context.Context, jobID uuid.UUID) error {
 			ExitCode:     pgtype.Int4{Int32: 1, Valid: true},
 			ErrorMessage: err.Error(),
 		})
+		s.publishProject(uuid.UUID(job.ProjectID.Bytes))
+		s.publishCIJob(uuid.UUID(job.ID.Bytes))
 		return nil
 	}
 	logWriter := &lineLogWriter{fn: func(line string) {
@@ -190,6 +222,8 @@ func (s *JobService) Reconcile(ctx context.Context, jobID uuid.UUID) error {
 			ExitCode:     pgtype.Int4{Int32: 1, Valid: true},
 			ErrorMessage: err.Error(),
 		})
+		s.publishProject(uuid.UUID(job.ProjectID.Bytes))
+		s.publishCIJob(uuid.UUID(job.ID.Bytes))
 		return nil
 	}
 	_ = s.log(ctx, job.ID, "info", fmt.Sprintf("Starting workflow %s", job.WorkflowName))
@@ -201,6 +235,8 @@ func (s *JobService) Reconcile(ctx context.Context, jobID uuid.UUID) error {
 	}); err != nil {
 		return err
 	}
+	s.publishProject(uuid.UUID(job.ProjectID.Bytes))
+	s.publishCIJob(uuid.UUID(job.ID.Bytes))
 	result, runErr := runner.Run(runCtx, plan, RunOptions{
 		Stdout: logWriter,
 		Stderr: logWriter,
@@ -225,6 +261,8 @@ func (s *JobService) Reconcile(ctx context.Context, jobID uuid.UUID) error {
 			ExitCode: pgtype.Int4{Int32: 0, Valid: true},
 		})
 	}
+	s.publishProject(uuid.UUID(job.ProjectID.Bytes))
+	s.publishCIJob(uuid.UUID(job.ID.Bytes))
 	return nil
 }
 
@@ -261,16 +299,33 @@ func (s *JobService) replaceArtifacts(ctx context.Context, jobID pgtype.UUID, ar
 			return err
 		}
 	}
+	s.publishCIJob(uuid.UUID(jobID.Bytes))
 	return nil
 }
 
 func (s *JobService) log(ctx context.Context, jobID pgtype.UUID, level, message string) error {
-	return s.q.CIJobLogCreate(ctx, queries.CIJobLogCreateParams{
+	err := s.q.CIJobLogCreate(ctx, queries.CIJobLogCreateParams{
 		ID:      pguuid.ToPgtype(uuid.New()),
 		CiJobID: jobID,
 		Message: message,
 		Level:   level,
 	})
+	if err == nil {
+		s.publishCIJob(uuid.UUID(jobID.Bytes))
+	}
+	return err
+}
+
+func (s *JobService) publishProject(projectID uuid.UUID) {
+	if s.publish != nil && projectID != uuid.Nil {
+		s.publish(projectID)
+	}
+}
+
+func (s *JobService) publishCIJob(jobID uuid.UUID) {
+	if s.publishJob != nil && jobID != uuid.Nil {
+		s.publishJob(jobID)
+	}
 }
 
 func isTerminalStatus(status string) bool {

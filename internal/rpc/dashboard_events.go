@@ -20,6 +20,8 @@ const (
 	TopicProjects = "projects"
 	// TopicDeployments signals org-wide deployment lists may have changed.
 	TopicDeployments = "deployments"
+	// TopicCIJobs signals org-wide CI lists may have changed.
+	TopicCIJobs  = "ci_jobs"
 	TopicServers = "servers"
 )
 
@@ -31,6 +33,16 @@ func TopicProject(id uuid.UUID) string {
 // TopicProjectDeployments is the invalidate topic for a project's deployment list tab.
 func TopicProjectDeployments(id uuid.UUID) string {
 	return "project_deployments:" + id.String()
+}
+
+// TopicProjectCIJobs is the invalidate topic for a project's CI jobs tab.
+func TopicProjectCIJobs(id uuid.UUID) string {
+	return "project_ci_jobs:" + id.String()
+}
+
+// TopicCIJob is the invalidate topic for a single CI job detail page.
+func TopicCIJob(id uuid.UUID) string {
+	return "ci_job:" + id.String()
 }
 
 // DashboardInvalidateEvent is a tiny notification for dashboard refetch.

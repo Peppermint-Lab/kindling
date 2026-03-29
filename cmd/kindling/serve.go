@@ -210,6 +210,22 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 			rpc.TopicProjectDeployments(projectID),
 		)
 	}
+	publishCIScopes := func(projectID uuid.UUID) {
+		if dashboardEvents == nil {
+			return
+		}
+		dashboardEvents.PublishMany(
+			rpc.TopicCIJobs,
+			rpc.TopicProject(projectID),
+			rpc.TopicProjectCIJobs(projectID),
+		)
+	}
+	publishCIJob := func(jobID uuid.UUID) {
+		if dashboardEvents == nil {
+			return
+		}
+		dashboardEvents.Publish(rpc.TopicCIJob(jobID))
+	}
 	if deployer != nil {
 		deployer.SetDashboardPublishers(publishDeploymentScopes, func() {
 			if dashboardEvents == nil {
@@ -217,6 +233,12 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 			}
 			dashboardEvents.Publish(rpc.TopicServers)
 		})
+	}
+	if ciDashboardPublisher, ok := ciSvc.(interface{ SetDashboardPublisher(func(uuid.UUID)) }); ok {
+		ciDashboardPublisher.SetDashboardPublisher(publishCIScopes)
+	}
+	if ciJobDashboardPublisher, ok := ciSvc.(interface{ SetJobDashboardPublisher(func(uuid.UUID)) }); ok {
+		ciJobDashboardPublisher.SetJobDashboardPublisher(publishCIJob)
 	}
 
 	// WAL listener.

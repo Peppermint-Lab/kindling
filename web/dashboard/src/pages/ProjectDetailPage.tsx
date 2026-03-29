@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useMemo } from "react"
 import { useParams, Link, useNavigate } from "react-router-dom"
 import {
   api,
@@ -50,6 +50,7 @@ import {
   GitPullRequestIcon,
   KeyRoundIcon,
   HardDriveIcon,
+  PlayIcon,
 } from "lucide-react"
 import { DeploymentReachability } from "@/components/deployment-reachability"
 import { phaseLabel, phaseVariant } from "@/lib/deploy-badge"
@@ -156,6 +157,13 @@ function isTerminalCIJob(status: CIJob["status"]): boolean {
   return status === "successful" || status === "failed" || status === "canceled"
 }
 
+function defaultCITriggerEvent(workflow: CIWorkflow): string {
+  if (workflow.triggers?.workflow_dispatch) return "workflow_dispatch"
+  if (workflow.triggers?.push) return "push"
+  if (workflow.triggers?.pull_request) return "pull_request"
+  return "workflow_dispatch"
+}
+
 function MiniBars({ values, label }: { values: number[]; label?: string }) {
   const max = Math.max(1, ...values)
   return (
@@ -239,6 +247,13 @@ export function ProjectDetailPage() {
   const [ciWorkflows, setCIWorkflows] = useState<CIWorkflow[]>([])
   const [ciWorkflowsLoading, setCIWorkflowsLoading] = useState(false)
   const [ciCancelingId, setCICancelingId] = useState<string | null>(null)
+  const [ciSelectedWorkflowStem, setCISelectedWorkflowStem] = useState("")
+  const [ciCatalogTab, setCICatalogTab] = useState<"overview" | "dispatch">("overview")
+  const [ciTriggerDialogOpen, setCITriggerDialogOpen] = useState(false)
+  const [ciTriggerWorkflowStem, setCITriggerWorkflowStem] = useState("")
+  const [ciTriggerJobID, setCITriggerJobID] = useState("")
+  const [ciTriggerInputs, setCITriggerInputs] = useState<Record<string, string>>({})
+  const [ciTriggerSubmitting, setCITriggerSubmitting] = useState(false)
 
   const [mainTab, setMainTab] = useState("overview")
   const [usageCurrent, setUsageCurrent] = useState<UsageCurrent | null>(null)
@@ -251,6 +266,16 @@ export function ProjectDetailPage() {
   const [deploymentActionId, setDeploymentActionId] = useState<string | null>(null)
   const [previewActionId, setPreviewActionId] = useState<string | null>(null)
   const [previewActionKind, setPreviewActionKind] = useState<"redeploy" | "delete" | null>(null)
+
+  const hasGitHubRepo = Boolean(project?.github_repository?.trim())
+  const selectedCIWorkflow = useMemo(
+    () => ciWorkflows.find((workflow) => workflow.stem === ciSelectedWorkflowStem) ?? ciWorkflows[0] ?? null,
+    [ciSelectedWorkflowStem, ciWorkflows],
+  )
+  const ciTriggerWorkflow = useMemo(
+    () => ciWorkflows.find((workflow) => workflow.stem === ciTriggerWorkflowStem) ?? null,
+    [ciTriggerWorkflowStem, ciWorkflows],
+  )
 
   const loadPreviews = useCallback(async () => {
     if (!id) return
@@ -311,10 +336,10 @@ export function ProjectDetailPage() {
     }
   }, [])
 
-  const loadCIWorkflows = useCallback(async () => {
+  const loadCIWorkflows = useCallback(async (projectId: string) => {
     setCIWorkflowsLoading(true)
     try {
-      const list = await api.listCIWorkflows()
+      const list = await api.listProjectCIWorkflows(projectId, "main")
       setCIWorkflows(list)
     } catch (e) {
       setError(e instanceof APIError ? e.message : "Could not load workflows")
@@ -342,16 +367,42 @@ export function ProjectDetailPage() {
   useEffect(() => {
     if (!id || mainTab !== "ci") return
     void loadCIJobs(id)
-    void loadCIWorkflows()
-  }, [id, mainTab, loadCIJobs, loadCIWorkflows])
+    if (hasGitHubRepo) {
+      void loadCIWorkflows(id)
+    } else {
+      setCIWorkflows([])
+    }
+  }, [hasGitHubRepo, id, mainTab, loadCIJobs, loadCIWorkflows])
 
   useEffect(() => {
     if (!id || mainTab !== "ci") return
-    const interval = window.setInterval(() => {
-      void loadCIJobs(id)
-    }, 4000)
-    return () => window.clearInterval(interval)
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+    const scheduleReload = () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null
+        void loadCIJobs(id)
+      }, 400)
+    }
+    const unsub = subscribeDashboardEvents({
+      topics: [dashboardEventTopics.project(id), dashboardEventTopics.projectCIJobs(id)],
+      onInvalidate: scheduleReload,
+    })
+    return () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      unsub()
+    }
   }, [id, mainTab, loadCIJobs])
+
+  useEffect(() => {
+    if (ciWorkflows.length === 0) {
+      setCISelectedWorkflowStem("")
+      return
+    }
+    if (!ciWorkflows.some((workflow) => workflow.stem === ciSelectedWorkflowStem)) {
+      setCISelectedWorkflowStem(ciWorkflows[0].stem)
+    }
+  }, [ciSelectedWorkflowStem, ciWorkflows])
 
   useEffect(() => {
     if (!id || mainTab !== "previews") return
@@ -901,6 +952,38 @@ export function ProjectDetailPage() {
       setError(e instanceof APIError ? e.message : "Could not cancel CI job")
     } finally {
       setCICancelingId(null)
+    }
+  }
+
+  const openCITriggerDialog = (workflow: CIWorkflow) => {
+    setCITriggerWorkflowStem(workflow.stem)
+    setCITriggerJobID(workflow.jobs.length === 1 ? workflow.jobs[0].id : "")
+    setCITriggerInputs(workflow.inputs ? { ...workflow.inputs } : {})
+    setCITriggerDialogOpen(true)
+  }
+
+  const handleRunCIWorkflow = async () => {
+    if (!id || !ciTriggerWorkflow) return
+    setCITriggerSubmitting(true)
+    try {
+      const created = await api.createProjectCIJob(id, {
+        workflow: ciTriggerWorkflow.stem,
+        job: ciTriggerJobID.trim() || undefined,
+        event: defaultCITriggerEvent(ciTriggerWorkflow),
+        inputs: ciTriggerInputs,
+        require_microvm: true,
+        ref: "main",
+      })
+      setCITriggerDialogOpen(false)
+      setCITriggerJobID("")
+      if (id) {
+        await loadCIJobs(id)
+      }
+      navigate(`/ci/jobs/${created.id}`)
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not start CI job")
+    } finally {
+      setCITriggerSubmitting(false)
     }
   }
 
@@ -1915,123 +1998,244 @@ export function ProjectDetailPage() {
 
           {/* ── CI ─────────────────────────────────────────── */}
           <TabsContent value="ci" className="space-y-4 min-w-0">
-            <Surface>
-              <SurfaceHeader>
-                <SurfaceTitle>CI jobs</SurfaceTitle>
-                <SurfaceDescription>
-                  Workflow-native CI runs for this project, including execution backend, logs, and artifacts.
-                </SurfaceDescription>
-              </SurfaceHeader>
-              {ciJobsLoading && ciJobs.length === 0 ? (
-                <SurfaceBody className="space-y-3">
-                  <Skeleton className="h-20 rounded-xl" />
-                  <Skeleton className="h-20 rounded-xl" />
-                </SurfaceBody>
-              ) : ciJobs.length === 0 ? (
-                <SurfaceBody>
-                  <EmptyState
-                    icon={<GitBranchIcon className="size-8" />}
-                    title="No CI jobs yet"
-                    description="Remote workflow runs will show up here once you submit them through Kindling CI."
-                    className="py-12"
-                  />
-                </SurfaceBody>
-              ) : (
-                <SurfaceBody className="p-0">
-                  <ul className="divide-y">
-                    {ciJobs.map((job) => (
-                      <li key={job.id}>
-                        <div className="flex items-center gap-2 pr-3">
-                          <Link to={`/ci/jobs/${job.id}`} className="list-row group min-w-0 flex-1 pr-0">
-                            <div className="flex min-w-0 flex-col gap-1.5">
-                              <div className="flex flex-wrap items-center gap-2 min-w-0">
-                                <Badge variant={ciStatusVariant(job.status)}>{ciStatusLabel(job.status)}</Badge>
-                                <span className="font-medium truncate">{job.workflow_name || "Workflow"}</span>
-                                {job.selected_job_id ? (
-                                  <span className="font-mono text-xs text-muted-foreground">{job.selected_job_id}</span>
-                                ) : null}
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+              <Surface>
+                <SurfaceHeader>
+                  <SurfaceTitle>Recent runs</SurfaceTitle>
+                  <SurfaceDescription>
+                    Workflow-native CI runs for this project, including execution backend, logs, and artifacts.
+                  </SurfaceDescription>
+                </SurfaceHeader>
+                {ciJobsLoading && ciJobs.length === 0 ? (
+                  <SurfaceBody className="space-y-3">
+                    <Skeleton className="h-20 rounded-xl" />
+                    <Skeleton className="h-20 rounded-xl" />
+                  </SurfaceBody>
+                ) : ciJobs.length === 0 ? (
+                  <SurfaceBody>
+                    <EmptyState
+                      icon={<GitBranchIcon className="size-8" />}
+                      title="No CI jobs yet"
+                      description="Pick a workflow on the right and run it from the latest snapshot on main."
+                      action={
+                        selectedCIWorkflow && hasGitHubRepo ? (
+                          <Button size="sm" onClick={() => openCITriggerDialog(selectedCIWorkflow)}>
+                            <PlayIcon className="mr-2 size-4" />
+                            Run selected workflow
+                          </Button>
+                        ) : null
+                      }
+                      className="py-12"
+                    />
+                  </SurfaceBody>
+                ) : (
+                  <SurfaceBody className="p-0">
+                    <ul className="divide-y">
+                      {ciJobs.map((job) => (
+                        <li key={job.id}>
+                          <div className="flex items-center gap-2 pr-3">
+                            <Link to={`/ci/jobs/${job.id}`} className="list-row group min-w-0 flex-1 pr-0">
+                              <div className="flex min-w-0 flex-col gap-1.5">
+                                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                                  <Badge variant={ciStatusVariant(job.status)}>{ciStatusLabel(job.status)}</Badge>
+                                  <span className="font-medium truncate">{job.workflow_name || "Workflow"}</span>
+                                  {job.selected_job_id ? (
+                                    <span className="font-mono text-xs text-muted-foreground">{job.selected_job_id}</span>
+                                  ) : null}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                  <span>{job.execution_backend || "pending backend"}</span>
+                                  <span>•</span>
+                                  <span>{job.require_microvm ? "MicroVM required" : "Host fallback allowed"}</span>
+                                  {job.exit_code != null ? (
+                                    <>
+                                      <span>•</span>
+                                      <span>Exit {job.exit_code}</span>
+                                    </>
+                                  ) : null}
+                                </div>
                               </div>
-                              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                                <span>{job.execution_backend || "pending backend"}</span>
-                                <span>•</span>
-                                <span>{job.require_microvm ? "MicroVM required" : "Host fallback allowed"}</span>
-                                {job.exit_code != null ? (
-                                  <>
-                                    <span>•</span>
-                                    <span>Exit {job.exit_code}</span>
-                                  </>
-                                ) : null}
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-muted-foreground shrink-0">
+                                  {job.created_at ? new Date(job.created_at).toLocaleString() : ""}
+                                </span>
+                                <ChevronRightIcon className="size-4 text-muted-foreground/40 shrink-0 transition-transform group-hover:translate-x-0.5" />
                               </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-muted-foreground shrink-0">
-                                {job.created_at ? new Date(job.created_at).toLocaleString() : ""}
-                              </span>
-                              <ChevronRightIcon className="size-4 text-muted-foreground/40 shrink-0 transition-transform group-hover:translate-x-0.5" />
-                            </div>
-                          </Link>
-                          {!isTerminalCIJob(job.status) ? (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              disabled={ciCancelingId === job.id}
-                              onClick={() => void handleCancelCIJob(job.id)}
-                            >
-                              {ciCancelingId === job.id ? "Canceling…" : "Cancel"}
-                            </Button>
-                          ) : null}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </SurfaceBody>
-              )}
-            </Surface>
+                            </Link>
+                            {!isTerminalCIJob(job.status) ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={ciCancelingId === job.id}
+                                onClick={() => void handleCancelCIJob(job.id)}
+                              >
+                                {ciCancelingId === job.id ? "Canceling…" : "Cancel"}
+                              </Button>
+                            ) : null}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </SurfaceBody>
+                )}
+              </Surface>
 
-            <Surface>
-              <SurfaceHeader>
-                <SurfaceTitle>Workflow catalog</SurfaceTitle>
-                <SurfaceDescription>
-                  Workflows discovered under <span className="font-mono">.github/workflows</span> on the control plane.
-                </SurfaceDescription>
-              </SurfaceHeader>
-              {ciWorkflowsLoading && ciWorkflows.length === 0 ? (
-                <SurfaceBody className="space-y-3">
-                  <Skeleton className="h-24 rounded-xl" />
-                </SurfaceBody>
-              ) : ciWorkflows.length === 0 ? (
-                <SurfaceBody>
-                  <p className="text-sm text-muted-foreground">No workflows discovered.</p>
-                </SurfaceBody>
-              ) : (
-                <SurfaceBody className="space-y-3">
-                  {ciWorkflows.map((workflow) => (
-                    <div key={workflow.stem} className="rounded-lg border p-3 space-y-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-medium">{workflow.name || workflow.stem}</p>
-                        <Badge variant="secondary" className="font-mono">{workflow.stem}</Badge>
-                      </div>
-                      <p className="font-mono text-xs text-muted-foreground break-all">{workflow.file}</p>
-                      <div className="flex flex-wrap gap-2 text-xs">
-                        {Object.entries(workflow.triggers || {})
-                          .filter(([, enabled]) => enabled)
-                          .map(([trigger]) => (
-                            <Badge key={trigger} variant="outline">{trigger}</Badge>
+              <Surface>
+                <SurfaceHeader>
+                  <SurfaceTitle>Workflow catalog</SurfaceTitle>
+                  <SurfaceDescription>
+                    Workflows discovered from <span className="font-mono">{project.github_repository || "main"}</span> on the
+                    <span className="font-mono"> main</span> branch.
+                  </SurfaceDescription>
+                </SurfaceHeader>
+                {!hasGitHubRepo ? (
+                  <SurfaceBody>
+                    <EmptyState
+                      icon={<FolderGitIcon className="size-8" />}
+                      title="Connect a GitHub repository first"
+                      description="The CI panel can only discover workflows and run jobs once this project has a linked GitHub repository."
+                      className="py-12"
+                    />
+                  </SurfaceBody>
+                ) : ciWorkflowsLoading && ciWorkflows.length === 0 ? (
+                  <SurfaceBody className="space-y-3">
+                    <Skeleton className="h-24 rounded-xl" />
+                    <Skeleton className="h-48 rounded-xl" />
+                  </SurfaceBody>
+                ) : ciWorkflows.length === 0 ? (
+                  <SurfaceBody>
+                    <EmptyState
+                      icon={<GitBranchIcon className="size-8" />}
+                      title="No workflows found on main"
+                      description="Kindling could not find any files under .github/workflows in the linked repository."
+                      className="py-12"
+                    />
+                  </SurfaceBody>
+                ) : (
+                  <SurfaceBody className="p-0">
+                    <div className="grid md:grid-cols-[220px_minmax(0,1fr)]">
+                      <div className="border-b md:border-b-0 md:border-r">
+                        <div className="p-2 space-y-1">
+                          {ciWorkflows.map((workflow) => (
+                            <button
+                              key={workflow.stem}
+                              type="button"
+                              onClick={() => setCISelectedWorkflowStem(workflow.stem)}
+                              className={`w-full rounded-lg px-3 py-2 text-left transition-colors ${
+                                selectedCIWorkflow?.stem === workflow.stem
+                                  ? "bg-accent text-foreground"
+                                  : "hover:bg-accent/60 text-muted-foreground"
+                              }`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="truncate font-medium text-sm text-foreground">
+                                  {workflow.name || workflow.stem}
+                                </span>
+                                <Badge variant="secondary" className="font-mono shrink-0">
+                                  {workflow.stem}
+                                </Badge>
+                              </div>
+                              <p className="mt-1 text-xs text-muted-foreground">{workflow.jobs.length} jobs</p>
+                            </button>
                           ))}
+                        </div>
                       </div>
-                      <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                        {workflow.jobs.map((job) => (
-                          <span key={job.id} className="rounded-md bg-muted px-2 py-1 font-mono">
-                            {job.id}
-                          </span>
-                        ))}
+
+                      <div className="p-4">
+                        {selectedCIWorkflow ? (
+                          <Tabs
+                            value={ciCatalogTab}
+                            onValueChange={(value) =>
+                              setCICatalogTab(value === "dispatch" ? "dispatch" : "overview")
+                            }
+                            className="space-y-4"
+                          >
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="font-medium">{selectedCIWorkflow.name || selectedCIWorkflow.stem}</p>
+                                  <Badge variant="secondary" className="font-mono">
+                                    {selectedCIWorkflow.stem}
+                                  </Badge>
+                                </div>
+                                <p className="font-mono text-xs text-muted-foreground break-all mt-1">
+                                  {selectedCIWorkflow.file}
+                                </p>
+                              </div>
+                              <Button size="sm" className="shrink-0" onClick={() => openCITriggerDialog(selectedCIWorkflow)}>
+                                <PlayIcon className="mr-2 size-4" />
+                                Run on main
+                              </Button>
+                            </div>
+
+                            <TabsList variant="line" className="w-full justify-start overflow-x-auto">
+                              <TabsTrigger value="overview" className="shrink-0">
+                                Overview
+                              </TabsTrigger>
+                              <TabsTrigger value="dispatch" className="shrink-0">
+                                Dispatch
+                              </TabsTrigger>
+                            </TabsList>
+
+                            <TabsContent value="overview" className="space-y-4">
+                              <div className="space-y-2">
+                                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Triggers</p>
+                                <div className="flex flex-wrap gap-2">
+                                  {Object.entries(selectedCIWorkflow.triggers || {})
+                                    .filter(([, enabled]) => enabled)
+                                    .map(([trigger]) => (
+                                      <Badge key={trigger} variant="outline">
+                                        {trigger}
+                                      </Badge>
+                                    ))}
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Jobs</p>
+                                <div className="flex flex-wrap gap-2">
+                                  {selectedCIWorkflow.jobs.map((job) => (
+                                    <span key={job.id} className="rounded-md bg-muted px-2 py-1 font-mono text-xs">
+                                      {job.id}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            </TabsContent>
+
+                            <TabsContent value="dispatch" className="space-y-4">
+                              <div className="rounded-lg border bg-muted/20 p-3">
+                                <p className="text-sm font-medium">Manual runs currently use GitHub ref <span className="font-mono">main</span>.</p>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  Kindling downloads the latest repository snapshot from main, then executes the selected workflow or job in a microVM-backed CI run.
+                                </p>
+                              </div>
+                              {Object.keys(selectedCIWorkflow.inputs || {}).length > 0 ? (
+                                <div className="space-y-2">
+                                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Dispatch inputs</p>
+                                  <div className="space-y-2">
+                                    {Object.entries(selectedCIWorkflow.inputs || {}).map(([name, value]) => (
+                                      <div key={name} className="rounded-lg border px-3 py-2">
+                                        <p className="font-mono text-xs">{name}</p>
+                                        <p className="text-xs text-muted-foreground mt-1">
+                                          Default: <span className="font-mono">{value || "empty"}</span>
+                                        </p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : (
+                                <p className="text-sm text-muted-foreground">No workflow_dispatch inputs are defined for this workflow.</p>
+                              )}
+                            </TabsContent>
+                          </Tabs>
+                        ) : null}
                       </div>
                     </div>
-                  ))}
-                </SurfaceBody>
-              )}
-            </Surface>
+                  </SurfaceBody>
+                )}
+              </Surface>
+            </div>
           </TabsContent>
 
           {/* ── PR previews ─────────────────────────────────── */}
@@ -2425,6 +2629,86 @@ export function ProjectDetailPage() {
             <Button variant="outline" onClick={() => setDeployDialogOpen(false)}>Cancel</Button>
             <Button onClick={() => void handleDeploy()} disabled={deploying}>
               {deploying ? "Deploying..." : "Deploy"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={ciTriggerDialogOpen} onOpenChange={setCITriggerDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Run workflow</DialogTitle>
+            <DialogDescription>
+              Trigger a CI run for {project.name} from the latest snapshot on <span className="font-mono">main</span>.
+            </DialogDescription>
+          </DialogHeader>
+          {ciTriggerWorkflow ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-muted/20 p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-medium">{ciTriggerWorkflow.name || ciTriggerWorkflow.stem}</p>
+                  <Badge variant="secondary" className="font-mono">
+                    {ciTriggerWorkflow.stem}
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Event: <span className="font-mono">{defaultCITriggerEvent(ciTriggerWorkflow)}</span>
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="ci-job-select">Job</Label>
+                <select
+                  id="ci-job-select"
+                  value={ciTriggerJobID}
+                  onChange={(e) => setCITriggerJobID(e.target.value)}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  <option value="">Entire workflow</option>
+                  {ciTriggerWorkflow.jobs.map((job) => (
+                    <option key={job.id} value={job.id}>
+                      {job.name} ({job.id})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  Leave this as <span className="font-mono">Entire workflow</span> to let Kindling choose the full workflow plan.
+                </p>
+              </div>
+
+              {Object.keys(ciTriggerInputs).length > 0 ? (
+                <div className="space-y-3">
+                  <p className="text-sm font-medium">Dispatch inputs</p>
+                  {Object.entries(ciTriggerInputs).map(([name, value]) => (
+                    <div key={name} className="space-y-2">
+                      <Label htmlFor={`ci-input-${name}`} className="font-mono text-xs">
+                        {name}
+                      </Label>
+                      <Input
+                        id={`ci-input-${name}`}
+                        value={value}
+                        onChange={(e) =>
+                          setCITriggerInputs((current) => ({
+                            ...current,
+                            [name]: e.target.value,
+                          }))
+                        }
+                        className="font-mono"
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Pick a workflow before starting a run.</p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCITriggerDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => void handleRunCIWorkflow()} disabled={ciTriggerSubmitting || !ciTriggerWorkflow}>
+              {ciTriggerSubmitting ? "Starting…" : "Run on main"}
             </Button>
           </DialogFooter>
         </DialogContent>

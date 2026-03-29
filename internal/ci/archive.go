@@ -24,6 +24,29 @@ func SnapshotWorkspaceBase64(root string) (string, error) {
 	return buf.String(), nil
 }
 
+func RepackGitHubTarballBase64(src io.Reader) (string, error) {
+	var buf strings.Builder
+	enc := base64.NewEncoder(base64.StdEncoding, &buf)
+	rewriter := newTarRewriter(enc)
+	if err := rewriteGitHubTarball(src, rewriter); err != nil {
+		_ = rewriter.close()
+		_ = enc.Close()
+		return "", err
+	}
+	if err := rewriter.close(); err != nil {
+		_ = enc.Close()
+		return "", err
+	}
+	if err := enc.Close(); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+func ExtractGitHubTarballToDir(src io.Reader, dst string) error {
+	return rewriteGitHubTarball(src, &archiveExtractor{dst: dst})
+}
+
 func SaveArchiveFromBase64(encoded, dst string) error {
 	reader := base64.NewDecoder(base64.StdEncoding, strings.NewReader(encoded))
 	file, err := os.Create(dst)
@@ -162,4 +185,118 @@ func archiveStorageDir() (string, error) {
 		return "", fmt.Errorf("mkdir ci jobs dir: %w", err)
 	}
 	return dir, nil
+}
+
+type archiveExtractor struct {
+	dst string
+}
+
+func (e *archiveExtractor) writeHeader(hdr *tar.Header) error {
+	target := filepath.Join(e.dst, hdr.Name)
+	switch hdr.Typeflag {
+	case tar.TypeDir:
+		return os.MkdirAll(target, 0o755)
+	case tar.TypeReg:
+		return os.MkdirAll(filepath.Dir(target), 0o755)
+	default:
+		return nil
+	}
+}
+
+func (e *archiveExtractor) writeFile(hdr *tar.Header, r io.Reader) error {
+	if hdr.Typeflag != tar.TypeReg {
+		return nil
+	}
+	target := filepath.Join(e.dst, hdr.Name)
+	out, err := os.Create(target)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, r); err != nil {
+		out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return os.Chmod(target, os.FileMode(hdr.Mode))
+}
+
+type tarballWriter interface {
+	writeHeader(*tar.Header) error
+	writeFile(*tar.Header, io.Reader) error
+}
+
+func rewriteGitHubTarball(src io.Reader, out tarballWriter) error {
+	gzr, err := gzip.NewReader(src)
+	if err != nil {
+		return err
+	}
+	defer gzr.Close()
+	return streamGitHubTarball(tar.NewReader(gzr), out)
+}
+
+func streamGitHubTarball(tr *tar.Reader, out tarballWriter) error {
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		name := stripGitHubArchivePrefix(hdr.Name)
+		if name == "" {
+			continue
+		}
+		copyHdr := *hdr
+		copyHdr.Name = name
+		if err := out.writeHeader(&copyHdr); err != nil {
+			return err
+		}
+		if err := out.writeFile(&copyHdr, tr); err != nil {
+			return err
+		}
+	}
+}
+
+type tarRewriter struct {
+	gzw *gzip.Writer
+	tw  *tar.Writer
+}
+
+func newTarRewriter(w io.Writer) *tarRewriter {
+	gzw := gzip.NewWriter(w)
+	return &tarRewriter{
+		gzw: gzw,
+		tw:  tar.NewWriter(gzw),
+	}
+}
+
+func (w *tarRewriter) writeHeader(hdr *tar.Header) error {
+	return w.tw.WriteHeader(hdr)
+}
+
+func (w *tarRewriter) writeFile(_ *tar.Header, r io.Reader) error {
+	_, err := io.Copy(w.tw, r)
+	return err
+}
+
+func (w *tarRewriter) close() error {
+	if err := w.tw.Close(); err != nil {
+		return err
+	}
+	return w.gzw.Close()
+}
+
+func stripGitHubArchivePrefix(name string) string {
+	name = filepath.ToSlash(strings.TrimSpace(name))
+	if name == "" {
+		return ""
+	}
+	parts := strings.SplitN(name, "/", 2)
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[1]
 }

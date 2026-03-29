@@ -1,8 +1,11 @@
 package rpc
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -11,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/ci"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/githubapi"
 	"github.com/kindlingvm/kindling/internal/rpc/rpcutil"
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
@@ -190,6 +194,40 @@ func (a *API) listCIWorkflows(w http.ResponseWriter, r *http.Request) {
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "ci_workflows", err)
 		return
 	}
+	rpcutil.WriteJSON(w, http.StatusOK, workflowsToOut(workflows))
+}
+
+func (a *API) listProjectCIWorkflows(w http.ResponseWriter, r *http.Request) {
+	p, ok := rpcutil.MustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	projectID, err := rpcutil.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
+		return
+	}
+	project, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+		ID:    projectID,
+		OrgID: p.OrganizationID,
+	})
+	if err != nil {
+		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "project not found")
+		return
+	}
+	ref := strings.TrimSpace(r.URL.Query().Get("ref"))
+	if ref == "" {
+		ref = "main"
+	}
+	workflows, err := a.listProjectRepoWorkflows(r.Context(), strings.TrimSpace(project.GithubRepository), ref)
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusBadGateway, "ci_workflows", err)
+		return
+	}
+	rpcutil.WriteJSON(w, http.StatusOK, workflowsToOut(workflows))
+}
+
+func workflowsToOut(workflows []ci.Workflow) []ciWorkflowOut {
 	out := make([]ciWorkflowOut, 0, len(workflows))
 	for _, wf := range workflows {
 		jobIDs := make([]string, 0, len(wf.Jobs))
@@ -218,7 +256,7 @@ func (a *API) listCIWorkflows(w http.ResponseWriter, r *http.Request) {
 			Jobs:   jobs,
 		})
 	}
-	rpcutil.WriteJSON(w, http.StatusOK, out)
+	return out
 }
 
 func (a *API) createProjectCIJob(w http.ResponseWriter, r *http.Request) {
@@ -234,10 +272,11 @@ func (a *API) createProjectCIJob(w http.ResponseWriter, r *http.Request) {
 		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_id", "invalid project id")
 		return
 	}
-	if _, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
+	project, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
 		ID:    projectID,
 		OrgID: p.OrganizationID,
-	}); err != nil {
+	})
+	if err != nil {
 		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "project not found")
 		return
 	}
@@ -252,6 +291,7 @@ func (a *API) createProjectCIJob(w http.ResponseWriter, r *http.Request) {
 		Inputs         map[string]string `json:"inputs"`
 		ArchiveBase64  string            `json:"archive_base64"`
 		RequireMicroVM *bool             `json:"require_microvm"`
+		Ref            string            `json:"ref"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_json", "malformed JSON body")
@@ -262,14 +302,26 @@ func (a *API) createProjectCIJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(req.ArchiveBase64) == "" {
-		rpcutil.WriteAPIError(w, http.StatusBadRequest, "validation_error", "archive_base64 is required")
-		return
+		ref := strings.TrimSpace(req.Ref)
+		if ref == "" {
+			ref = "main"
+		}
+		archiveBase64, archiveErr := a.downloadProjectArchiveBase64(r.Context(), strings.TrimSpace(project.GithubRepository), ref)
+		if archiveErr != nil {
+			rpcutil.WriteAPIErrorFromErr(w, http.StatusBadGateway, "create_ci_job", archiveErr)
+			return
+		}
+		req.ArchiveBase64 = archiveBase64
+	}
+	eventName := strings.TrimSpace(req.Event)
+	if eventName == "" {
+		eventName = "workflow_dispatch"
 	}
 	job, err := a.ciJobService.CreateLocalWorkflowJob(r.Context(), ci.CreateJobRequest{
 		ProjectID:      uuid.UUID(projectID.Bytes),
 		WorkflowRef:    req.Workflow,
 		JobID:          req.Job,
-		EventName:      req.Event,
+		EventName:      eventName,
 		Inputs:         req.Inputs,
 		ArchiveBase64:  req.ArchiveBase64,
 		RequireMicroVM: req.RequireMicroVM == nil || *req.RequireMicroVM,
@@ -282,6 +334,45 @@ func (a *API) createProjectCIJob(w http.ResponseWriter, r *http.Request) {
 		a.ciJobReconciler.ScheduleNow(uuid.UUID(job.ID.Bytes))
 	}
 	rpcutil.WriteJSON(w, http.StatusCreated, ciJobToOut(job))
+}
+
+func (a *API) downloadProjectArchiveBase64(ctx context.Context, repo, ref string) (string, error) {
+	repo = strings.TrimSpace(repo)
+	if repo == "" {
+		return "", fmt.Errorf("project has no GitHub repository")
+	}
+	tarball, err := githubapi.DownloadTarball(ctx, nil, a.gitHubToken(), repo, ref)
+	if err != nil {
+		return "", err
+	}
+	defer tarball.Close()
+	return ci.RepackGitHubTarballBase64(tarball)
+}
+
+func (a *API) listProjectRepoWorkflows(ctx context.Context, repo, ref string) ([]ci.Workflow, error) {
+	repo = strings.TrimSpace(repo)
+	if repo == "" {
+		return nil, fmt.Errorf("project has no GitHub repository")
+	}
+	tarball, err := githubapi.DownloadTarball(ctx, nil, a.gitHubToken(), repo, ref)
+	if err != nil {
+		return nil, err
+	}
+	defer tarball.Close()
+	tmpDir, err := os.MkdirTemp("", "kindling-ci-workflows-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmpDir)
+	if err := ci.ExtractGitHubTarballToDir(tarball, tmpDir); err != nil {
+		return nil, err
+	}
+	resolver := ci.NewFSWorkflowResolver()
+	workflows, err := resolver.List(tmpDir)
+	if err != nil {
+		return nil, err
+	}
+	return workflows, nil
 }
 
 func (a *API) getCIJob(w http.ResponseWriter, r *http.Request) {
@@ -368,6 +459,15 @@ func (a *API) cancelCIJob(w http.ResponseWriter, r *http.Request) {
 	} else if err := a.q.CIJobMarkCanceled(r.Context(), job.ID); err != nil {
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "cancel_ci_job", err)
 		return
+	} else if a.dashboardEvents != nil {
+		jobID := uuid.UUID(job.ID.Bytes)
+		projectID := uuid.UUID(job.ProjectID.Bytes)
+		a.dashboardEvents.PublishMany(
+			TopicCIJobs,
+			TopicProject(projectID),
+			TopicProjectCIJobs(projectID),
+			TopicCIJob(jobID),
+		)
 	}
 	rpcutil.WriteJSON(w, http.StatusOK, map[string]string{"status": "canceled"})
 }

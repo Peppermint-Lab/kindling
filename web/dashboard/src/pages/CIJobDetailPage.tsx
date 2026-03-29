@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useParams } from "react-router-dom"
 import {
   api,
@@ -6,6 +6,8 @@ import {
   type CIJobArtifact,
   type CIJobLog,
   APIError,
+  dashboardEventTopics,
+  subscribeDashboardEvents,
 } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -75,9 +77,6 @@ export function CIJobDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [canceling, setCanceling] = useState(false)
   const [activeTab, setActiveTab] = useState<"overview" | "logs" | "artifacts">("overview")
-  const jobRef = useRef<CIJob | null>(null)
-  jobRef.current = job
-
   const loadJob = useCallback(async (opts?: { initial?: boolean }) => {
     if (!id) return
     const initial = opts?.initial ?? false
@@ -107,12 +106,22 @@ export function CIJobDetailPage() {
 
   useEffect(() => {
     if (!id) return
-    const interval = window.setInterval(() => {
-      if (!jobRef.current || !isTerminalCIJob(jobRef.current.status)) {
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+    const scheduleReload = () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null
         void loadJob()
-      }
-    }, 3000)
-    return () => window.clearInterval(interval)
+      }, 200)
+    }
+    const unsub = subscribeDashboardEvents({
+      topics: [dashboardEventTopics.ciJob(id)],
+      onInvalidate: scheduleReload,
+    })
+    return () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      unsub()
+    }
   }, [id, loadJob])
 
   const handleCancel = async () => {

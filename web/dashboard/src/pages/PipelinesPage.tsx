@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
-import { api, type CIJob, APIError } from "@/lib/api"
+import {
+  api,
+  type CIJob,
+  APIError,
+  dashboardEventTopics,
+  subscribeDashboardEvents,
+} from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Badge } from "@/components/ui/badge"
@@ -128,10 +134,22 @@ export function PipelinesPage() {
   }, [loadJobs])
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
-      void loadJobs()
-    }, 4000)
-    return () => window.clearInterval(interval)
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+    const scheduleReload = () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null
+        void loadJobs()
+      }, 400)
+    }
+    const unsub = subscribeDashboardEvents({
+      topics: [dashboardEventTopics.ciJobs],
+      onInvalidate: scheduleReload,
+    })
+    return () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      unsub()
+    }
   }, [loadJobs])
 
   const handleCancel = async (jobId: string) => {

@@ -860,8 +860,26 @@ export const api = {
     request<CIJob[]>(`/api/ci/jobs?limit=${limit}`),
   listProjectCIJobs: (projectId: string) =>
     request<CIJob[]>(`/api/projects/${projectId}/ci/jobs`),
+  listProjectCIWorkflows: (projectId: string, ref = "main") =>
+    request<CIWorkflow[]>(`/api/projects/${projectId}/ci/workflows?ref=${encodeURIComponent(ref)}`),
   listCIWorkflows: () =>
     request<CIWorkflow[]>("/api/ci/workflows"),
+  createProjectCIJob: (
+    projectId: string,
+    data: {
+      workflow: string
+      job?: string
+      event?: string
+      inputs?: Record<string, string>
+      archive_base64?: string
+      require_microvm?: boolean
+      ref?: string
+    },
+  ) =>
+    request<CIJob>(`/api/projects/${projectId}/ci/jobs`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   getCIJob: (id: string) =>
     request<CIJob>(`/api/ci/jobs/${id}`),
   getCIJobLogs: (id: string) =>
@@ -971,9 +989,12 @@ export function authProviderStartURL(
 export const dashboardEventTopics = {
   projects: "projects",
   deployments: "deployments",
+  ciJobs: "ci_jobs",
   servers: "servers",
   project: (id: string) => `project:${id}`,
   projectDeployments: (id: string) => `project_deployments:${id}`,
+  projectCIJobs: (id: string) => `project_ci_jobs:${id}`,
+  ciJob: (id: string) => `ci_job:${id}`,
 } as const
 
 export type DashboardInvalidatePayload = {
