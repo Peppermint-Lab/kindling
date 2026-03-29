@@ -1,0 +1,37 @@
+---
+title: Topology and Hostnames
+description: How to think about API, dashboard, and workload hostnames in production.
+---
+
+# Topology and Hostnames
+
+Kindling can serve multiple public surfaces from the same process, but they should be modeled as different hostnames.
+
+## Recommended Host Layout
+
+- `api.kindling.systems` for REST, Connect, and webhooks
+- `app.kindling.systems` for the dashboard SPA
+- `docs.kindling.systems` for documentation
+
+Workloads and previews then use their own generated or custom domains.
+
+## Why Split Hosts
+
+This keeps:
+
+- browser API calls pointed at the real API origin
+- dashboard assets separate from API semantics
+- CORS and cookie behavior easier to reason about
+- docs as a separate public surface that does not need to share the dashboard app
+
+## Dashboard Build Input
+
+The dashboard build needs the public API origin baked in through `DASHBOARD_API_URL`, for example:
+
+```bash
+DASHBOARD_API_URL=https://api.kindling.systems make dashboard-build
+```
+
+## Edge Notes
+
+The edge terminates TLS for the configured public hosts and proxies to the loopback control-plane listener internally.

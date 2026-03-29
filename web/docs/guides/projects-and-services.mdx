@@ -1,0 +1,38 @@
+---
+title: Projects and Services
+description: Understand the project model Kindling exposes in the API and dashboard.
+---
+
+# Projects and Services
+
+Projects are the main unit of ownership and deployment in Kindling. Services are the workload and networking unit inside a project.
+
+## Project Shape
+
+A project can contain:
+
+- source configuration
+- deploy history
+- secrets and configuration
+- services
+- environments such as production, staging, and preview
+- volume state where supported
+
+## Service Shape
+
+Services are the deployable and networked workload unit.
+
+Current behavior:
+
+- services are private by default
+- a service can expose one public HTTP endpoint in the current product phase
+- service domains are service-scoped, not project-global aliases for every workload
+
+## Endpoints
+
+An endpoint represents a named target such as HTTP or TCP. Private service identities are exposed through internal names and private IP concepts, while public HTTP traffic still routes through the edge.
+
+## Related Reference
+
+- API surface for project and service resources lives under `/api/projects/...` and `/api/services/...`
+- See [API Overview](/reference/api-overview) for the current endpoint groups

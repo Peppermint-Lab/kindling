@@ -1,0 +1,55 @@
+---
+title: First Deploy
+description: The shortest path from a running Kindling server to a live app.
+---
+
+# First Deploy
+
+Once the Kindling server is running, the typical flow is:
+
+1. Create or connect a project.
+2. Point it at a Git repository.
+3. Trigger a deployment.
+4. Watch the build and instance lifecycle.
+5. Open the runtime URL or attach domains later.
+
+## What Kindling Builds
+
+Kindling can use:
+
+- your own Dockerfile
+- or built-in framework detection for common app types such as Next.js, Nuxt, Rails, Laravel, and Go
+
+## CLI Shape
+
+The core CLI groups involved in a first deploy are:
+
+- `kindling project`
+- `kindling deploy`
+- `kindling logs`
+- `kindling domain`
+- `kindling auth` and `kindling context` for remote API access
+
+Check the live command surface with:
+
+```bash
+go run ./cmd/kindling --help
+```
+
+## What Happens After You Trigger A Deploy
+
+Kindling does not run a single imperative pipeline. Instead:
+
+1. A deployment row is created.
+2. A reconciler creates or advances the build.
+3. The resulting OCI image is handed to the selected runtime.
+4. The instance becomes ready.
+5. The edge proxy routes traffic to healthy backends.
+
+For the architecture behind this, see [Reconcilers](/concepts/reconcilers) and [Runtimes](/concepts/runtimes).
+
+## After The First Deploy
+
+- Add domains: [Domains and Routing](/guides/domains-and-routing)
+- Configure secrets or storage: [Secrets and Volumes](/guides/secrets-and-volumes)
+- Learn preview behavior: [Deployments and Previews](/guides/deployments-and-previews)

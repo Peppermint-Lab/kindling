@@ -1,0 +1,39 @@
+---
+title: Production Setup
+description: The main production shape for a public Kindling deployment.
+---
+
+# Production Setup
+
+The common public shape for Kindling is a Linux host running the control plane with public edge-facing hostnames.
+
+## Core Pieces
+
+- a Linux host with the required Kindling toolchain
+- PostgreSQL configured for Kindling state and logical replication
+- public DNS records for API, dashboard, and any workload hostnames
+- firewall and host permissions aligned with the chosen runtime
+
+## Important First-Boot Inputs
+
+- `public_base_url`
+- optional `dashboard_public_host`
+- optional service and preview base domains
+- optional `advertise_host` for browser-openable runtime URLs
+
+These can be seeded through `kindling serve` flags on first boot.
+
+## What Production Means In Practice
+
+Production self-hosting is not only "the server starts." It also means:
+
+- TLS can be issued for the public hosts you expose
+- the dashboard build points at the correct API origin
+- the host can actually expose runtime URLs or edge-routed traffic
+- the runtime and networking permissions on the machine match the chosen deploy path
+
+## Read Next
+
+- [Topology and Hostnames](/operate/topology-and-hostnames)
+- [Troubleshooting](/operate/troubleshooting)
+- [Configuration Reference](/reference/configuration)

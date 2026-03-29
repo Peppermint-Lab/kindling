@@ -1,0 +1,46 @@
+---
+title: Kindling Docs
+description: Start here for deployment guides, operator setup, architecture, and reference documentation.
+---
+
+# Kindling Docs
+
+Kindling is a self-hosted PaaS built around declarative reconcilers and best-available isolation on your hardware.
+
+- Linux with KVM uses Cloud Hypervisor microVMs.
+- Linux without KVM falls back to `crun`.
+- macOS development uses Apple Virtualization.
+- The deploy pipeline stays the same across runtimes.
+
+## Start Here
+
+- New to Kindling: [Overview](/getting-started/overview)
+- Setting up a real host: [Linux Quickstart](/getting-started/linux)
+- Trying your first app: [First Deploy](/getting-started/first-deploy)
+- Running in production: [Production Setup](/operate/production-setup)
+
+## Docs Map
+
+### Getting Started
+
+The fastest route from "what is this?" to a working Kindling host and a deployed project.
+
+### Guides
+
+Task-oriented docs for projects, services, domains, secrets, volumes, deployments, and previews.
+
+### Operate
+
+Production setup, public hostnames, server draining, and troubleshooting for self-hosters.
+
+### Reference
+
+CLI, API, and configuration details for integrators and contributors.
+
+### Concepts
+
+Architecture, reconcilers, and runtime behavior.
+
+## Current Product Shape
+
+Kindling is pre-1.0, but the core deploy pipeline is real and working: build, boot, route, and serve. Docs in this site are written against the current repo and product behavior. Where something is still in progress, the page calls that out instead of treating roadmap work as shipped.

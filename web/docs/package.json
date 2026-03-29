@@ -1,0 +1,10 @@
+{
+  "name": "kindling-docs",
+  "private": true,
+  "scripts": {
+    "dev": "npx mint dev --no-open",
+    "dev:open": "npx mint dev",
+    "check-links": "npx mint broken-links",
+    "upgrade": "npx mint upgrade"
+  }
+}

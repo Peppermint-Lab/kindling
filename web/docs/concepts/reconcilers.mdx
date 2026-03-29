@@ -1,0 +1,32 @@
+---
+title: Reconcilers
+description: How Kindling drives state changes without imperative deploy pipelines.
+---
+
+# Reconcilers
+
+Reconcilers are the heart of Kindling.
+
+## Flow
+
+1. A row changes in PostgreSQL.
+2. The WAL listener receives that change through logical replication.
+3. The relevant reconciler is scheduled.
+4. The reconciler reads current state and desired state.
+5. It makes the minimum changes needed to converge the system.
+6. Failures retry after a short delay.
+
+## Why This Matters
+
+This keeps Kindling reactive and resilient:
+
+- deployments do not depend on one long, fragile imperative job
+- server-state changes can be retried naturally
+- the same model covers builds, domains, instances, previews, and more
+
+## Places This Shows Up
+
+- deployment creation and scaling
+- preview environment cleanup
+- domain routing updates
+- server drain and replacement behavior

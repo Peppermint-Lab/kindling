@@ -1,0 +1,38 @@
+---
+title: Overview
+description: What Kindling is, where it fits, and how to approach the docs.
+---
+
+# Overview
+
+Kindling aims for Railway-like developer experience with Coolify-style self-hosting, but with stronger workload isolation where the hardware allows it.
+
+## What It Does
+
+Kindling gives you:
+
+- Git-driven deploy workflows
+- A web dashboard and remote CLI
+- Automatic TLS and hostname routing
+- Preview environments
+- Service-level networking concepts
+- A single control plane binary backed by PostgreSQL
+
+## Runtime Model
+
+Kindling chooses the best runtime available on the host:
+
+| Host | Runtime |
+| --- | --- |
+| Linux with `/dev/kvm` | Cloud Hypervisor |
+| macOS development | Apple Virtualization |
+| Linux without KVM | `crun` |
+
+## Read This Site In Order
+
+1. [Linux Quickstart](/getting-started/linux)
+2. [First Deploy](/getting-started/first-deploy)
+3. [Projects and Services](/guides/projects-and-services)
+4. [Production Setup](/operate/production-setup)
+
+If you want the "why does this work this way?" view, jump to [Architecture](/concepts/architecture).

@@ -1,0 +1,37 @@
+---
+title: Troubleshooting
+description: Common bring-up and runtime issues for current Kindling deployments.
+---
+
+# Troubleshooting
+
+## Kindling Falls Back To `crun`
+
+If `/dev/kvm` is missing or unavailable, Kindling uses `crun` instead of Cloud Hypervisor. That is expected, not a startup failure.
+
+## `kindling serve` Cannot Reach PostgreSQL
+
+Check:
+
+- which DSN source is being used
+- whether the database exists
+- whether credentials are correct
+- whether the schema has been applied
+
+## Builds Fail Early
+
+Confirm required host tools are on `PATH`, especially:
+
+- `buildah`
+- `skopeo`
+- `umoci`
+- `crun`
+- `virt-make-fs` and `cloud-hypervisor` on KVM hosts
+
+## Runtime URLs Are Not Reachable
+
+If the URL shown by Kindling is not actually openable from the browser you care about, check the advertised host configuration and the host's firewall or ingress shape.
+
+## Dashboard Talks To The Wrong API
+
+If the dashboard is deployed with the wrong baked-in API origin, browser fetches will go to the wrong place even if the server itself is healthy. Rebuild dashboard assets with the correct `DASHBOARD_API_URL`.

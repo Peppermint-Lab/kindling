@@ -1,0 +1,35 @@
+---
+title: Runtimes
+description: How Kindling chooses and uses Cloud Hypervisor, Apple Virtualization, and crun.
+---
+
+# Runtimes
+
+Kindling selects the best runtime available on the current host at process startup.
+
+## Runtime Matrix
+
+| Host environment | Runtime | Notes |
+| --- | --- | --- |
+| Linux with KVM | Cloud Hypervisor | Primary microVM path |
+| macOS development | Apple Virtualization | Linux microVMs for local development and builder flows |
+| Linux without KVM | `crun` | OCI container fallback |
+
+## Shared Contract
+
+The important abstraction is that the runtime must return a host-reachable address that matches the way the host actually exposes traffic.
+
+That keeps:
+
+- deploy logic simple
+- runtime URLs meaningful
+- the control plane from caring too much about host-specific boot details
+
+## Practical Consequence
+
+The runtime changes, but the product shape does not:
+
+- build an OCI image
+- start a workload
+- establish readiness
+- route traffic to healthy backends

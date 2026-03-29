@@ -141,11 +141,16 @@ func New(cfg Config) (*Service, error) {
 		cfg.HTTPSAddr = ":443"
 	}
 	cold := cfg.ColdStartTimeout
+	explicitColdStart := cold > 0
 	if cold <= 0 {
 		cold = defaultColdStartTimeout
 	}
 	httpsWT := defaultHTTPSWriteTimeout
-	if cold+coldStartMargin > httpsWT {
+	// Only expand the HTTPS write timeout beyond the 30s default when the
+	// caller explicitly configured a ColdStartTimeout large enough to need it.
+	// The default cold-start (2m) must NOT inflate the write timeout — 30s is
+	// the baseline for normal request handling.
+	if explicitColdStart && cold+coldStartMargin > httpsWT {
 		httpsWT = cold + coldStartMargin
 	}
 

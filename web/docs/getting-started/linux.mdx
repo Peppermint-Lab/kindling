@@ -1,0 +1,85 @@
+---
+title: Linux Quickstart
+description: Bring up Kindling on a single Linux host using the repo-supported path.
+---
+
+# Linux Quickstart
+
+This is the fastest supported path to a real Kindling host: one Linux machine, one PostgreSQL instance, one Kindling server.
+
+## Prerequisites
+
+- Linux shell access
+- Go `1.26.x`
+- PostgreSQL
+- `sudo` access for host dependency installation
+
+Recommended:
+
+- KVM support for Cloud Hypervisor microVMs
+- A public IP or DNS name if you want public runtime URLs
+
+Without KVM, Kindling still runs and automatically falls back to `crun`.
+
+## Install Host Dependencies
+
+For the normal repo-supported setup:
+
+```bash
+make install-deps
+```
+
+For a fuller single-node host setup:
+
+```bash
+sudo ./contrib/install-host-deps.sh --all
+```
+
+Typical tools include `buildah`, `skopeo`, `umoci`, `crun`, `virt-make-fs`, and `cloud-hypervisor` on KVM hosts.
+
+## Start PostgreSQL
+
+For a quick local bring-up:
+
+```bash
+make db
+```
+
+Kindling looks for the DSN in this order:
+
+1. `/etc/kindling/postgres.dsn`
+2. `~/.kindling/postgres.dsn`
+3. `postgres://kindling:kindling@127.0.0.1:5432/kindling?sslmode=disable`
+
+If you are creating a fresh database manually, apply the schema once:
+
+```bash
+make migrate
+```
+
+## Build And Run
+
+```bash
+make build
+bin/kindling serve
+```
+
+The API listens on `:8080` by default.
+
+## Useful First-Boot Flags
+
+```bash
+bin/kindling serve --public-url https://api.example.com
+bin/kindling serve --advertise-host 203.0.113.10
+bin/kindling serve --dashboard-host app.example.com
+```
+
+- `--public-url` seeds the public API base URL
+- `--advertise-host` seeds the host shown in browser-openable runtime URLs
+- `--dashboard-host` seeds a separate dashboard hostname
+
+## What To Read Next
+
+- [First Deploy](/getting-started/first-deploy)
+- [Production Setup](/operate/production-setup)
+- [Troubleshooting](/operate/troubleshooting)

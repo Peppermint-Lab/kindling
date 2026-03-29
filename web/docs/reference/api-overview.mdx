@@ -1,0 +1,46 @@
+---
+title: API Overview
+description: The main REST API resource groups currently exposed by Kindling.
+---
+
+# API Overview
+
+Kindling's current public control-plane API is REST-first for the dashboard and CLI integration paths.
+
+## Main Resource Groups
+
+- metadata and public URL settings
+- projects
+- services
+- endpoints
+- domains
+- secrets
+- volumes and volume operations
+- deployments and live deployment streams
+- servers
+- authentication and API keys
+
+## Representative Paths
+
+Current path groups include:
+
+- `/api/meta`
+- `/api/projects`
+- `/api/services`
+- `/api/deployments`
+- `/api/servers`
+- `/api/auth/api-keys`
+
+The dashboard consumes these directly today.
+
+## Response Shape
+
+Errors use a consistent JSON shape:
+
+```json
+{"error":"message","code":"optional_code"}
+```
+
+## Documentation Style For Now
+
+This Mintlify setup starts with curated reference pages rather than generated OpenAPI output. That keeps the docs aligned with the current product surface while the API still evolves quickly.

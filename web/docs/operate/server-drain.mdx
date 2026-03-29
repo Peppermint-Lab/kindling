@@ -1,0 +1,32 @@
+---
+title: Server Drain
+description: What draining a host means in the current product and how it differs from live migration.
+---
+
+# Server Drain
+
+Server drain and live migration are not the same thing in Kindling.
+
+## What Drain Means Today
+
+When a server is marked draining:
+
+- new placements avoid that host
+- replacement replicas are started on active hosts
+- Kindling waits for healthy replacements
+- old instances on the draining host are then retired
+
+The goal is evacuation with healthy traffic continuity where the deployment topology allows it.
+
+## What Drain Does Not Mean
+
+It does not mean in-memory live migration of a running workload process between hosts. That remains separate future work.
+
+## Acceptance Shape
+
+At a practical level, draining is successful when:
+
+- new instances are scheduled only on active hosts
+- traffic continues to target healthy backends
+- the drained host reaches zero non-deleted deployment instances
+- the host can later be re-activated

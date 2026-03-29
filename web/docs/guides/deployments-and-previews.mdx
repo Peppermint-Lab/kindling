@@ -1,0 +1,36 @@
+---
+title: Deployments and Previews
+description: How production deploys, preview environments, and live updates work today.
+---
+
+# Deployments and Previews
+
+Kindling supports production deployments and first-class PR previews.
+
+## Deployments
+
+Deployments move through build and runtime phases, then become routable once healthy. The dashboard follows them live through server-sent events while a deployment is active.
+
+## Preview Environments
+
+Current preview behavior includes:
+
+- one stable preview environment per project and pull request
+- a stable PR URL plus immutable deployment URLs
+- webhook-driven create, update, and reopen flows
+- immediate stop when the PR closes
+- retention and cleanup behavior after close
+
+Closed preview URLs are intended to stop serving instead of waking again.
+
+## Operational Implications
+
+- previews are productized, not just ad hoc branches
+- edge routing only serves healthy backends
+- preview cleanup and idle scale-down are handled through the same reconciliation model
+
+## Next Reads
+
+- [Domains and Routing](/guides/domains-and-routing)
+- [Server Drain](/operate/server-drain)
+- [Reconcilers](/concepts/reconcilers)

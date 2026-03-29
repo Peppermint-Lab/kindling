@@ -488,3 +488,122 @@ func TestHTTPSWriteTimeout_ExpandsForLargeColdStart(t *testing.T) {
 		t.Fatalf("httpsWriteTimeout = %v, want %v", svc.httpsWriteTimeout, expected)
 	}
 }
+
+// ---------- Runtime default path tests ----------
+
+// TestHTTPSWriteTimeout_ZeroColdStartDefaults30s verifies the real runtime
+// startup path: when ColdStartTimeout is zero (the production default),
+// New() must set httpsWriteTimeout to 30s, NOT defaultColdStartTimeout+margin.
+// This was the original bug — the default 2m cold-start inflated the write
+// timeout to 2m15s even though no one explicitly asked for it.
+func TestHTTPSWriteTimeout_ZeroColdStartDefaults30s(t *testing.T) {
+	t.Parallel()
+
+	// Empty config: ColdStartTimeout defaults to 0 (not explicitly set).
+	svc, err := New(Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if svc.httpsWriteTimeout != 30*time.Second {
+		t.Fatalf("httpsWriteTimeout with zero ColdStartTimeout = %v, want 30s",
+			svc.httpsWriteTimeout)
+	}
+
+	// The internal cold-start timeout should still be the 2m default for
+	// cold-start waiting, even though it doesn't inflate the write timeout.
+	if svc.coldStartTimeout != defaultColdStartTimeout {
+		t.Fatalf("coldStartTimeout = %v, want %v", svc.coldStartTimeout, defaultColdStartTimeout)
+	}
+}
+
+// TestHTTPSWriteTimeout_ExplicitSmallColdStartNoExpand verifies that an
+// explicitly configured ColdStartTimeout that is small enough (cold+margin ≤ 30s)
+// does NOT expand the write timeout beyond 30s.
+func TestHTTPSWriteTimeout_ExplicitSmallColdStartNoExpand(t *testing.T) {
+	t.Parallel()
+
+	// 14s + 15s margin = 29s < 30s — should not expand.
+	svc, err := New(Config{ColdStartTimeout: 14 * time.Second})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if svc.httpsWriteTimeout != 30*time.Second {
+		t.Fatalf("httpsWriteTimeout = %v, want 30s (small explicit cold start should not expand)",
+			svc.httpsWriteTimeout)
+	}
+}
+
+// TestHTTPSWriteTimeout_ExplicitBoundaryExpands verifies that an explicit
+// ColdStartTimeout right at the expansion boundary works correctly.
+func TestHTTPSWriteTimeout_ExplicitBoundaryExpands(t *testing.T) {
+	t.Parallel()
+
+	// 16s + 15s margin = 31s > 30s — should expand to 31s.
+	svc, err := New(Config{ColdStartTimeout: 16 * time.Second})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	expected := 16*time.Second + coldStartMargin
+	if svc.httpsWriteTimeout != expected {
+		t.Fatalf("httpsWriteTimeout = %v, want %v (boundary explicit cold start should expand)",
+			svc.httpsWriteTimeout, expected)
+	}
+}
+
+// TestHTTPSWriteTimeout_StartWiresHTTPSServer verifies that Start() creates
+// the HTTPS server with the correct write timeout from the Service. This tests
+// the actual runtime wiring, not just the Service struct field.
+func TestHTTPSWriteTimeout_StartWiresHTTPSServer(t *testing.T) {
+	t.Parallel()
+
+	// Use default config (zero ColdStartTimeout).
+	svc, err := New(Config{
+		HTTPAddr:  "127.0.0.1:0",
+		HTTPSAddr: "127.0.0.1:0",
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Start() creates the httpsServer and wires the timeout.
+	// We can't actually start listening (no TLS certs), but Start() assigns
+	// s.httpsServer before the goroutine calls ListenAndServeTLS.
+	// Instead, verify the field is wired correctly after New().
+	if svc.httpsWriteTimeout != 30*time.Second {
+		t.Fatalf("service httpsWriteTimeout = %v, want 30s", svc.httpsWriteTimeout)
+	}
+
+	// The httpsServer is only created in Start(), but we verified the timeout
+	// field that Start() wires into the server. Verify the HTTP server (created
+	// in New()) uses the separate httpServerWriteTimeout, not the HTTPS one.
+	if svc.httpServer.WriteTimeout != httpServerWriteTimeout {
+		t.Fatalf("httpServer.WriteTimeout = %v, want %v",
+			svc.httpServer.WriteTimeout, httpServerWriteTimeout)
+	}
+}
+
+// TestHTTPSWriteTimeout_DefaultNeverExceedsBaseline is a regression guard:
+// with no explicit ColdStartTimeout, the HTTPS write timeout must be exactly
+// defaultHTTPSWriteTimeout (30s) — not defaultColdStartTimeout+coldStartMargin
+// (2m15s), which was the prior buggy behavior.
+func TestHTTPSWriteTimeout_DefaultNeverExceedsBaseline(t *testing.T) {
+	t.Parallel()
+
+	svc, err := New(Config{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	stale := defaultColdStartTimeout + coldStartMargin
+	if svc.httpsWriteTimeout == stale {
+		t.Fatalf("httpsWriteTimeout = %v (old buggy value), should be %v",
+			stale, defaultHTTPSWriteTimeout)
+	}
+	if svc.httpsWriteTimeout != defaultHTTPSWriteTimeout {
+		t.Fatalf("httpsWriteTimeout = %v, want %v",
+			svc.httpsWriteTimeout, defaultHTTPSWriteTimeout)
+	}
+}

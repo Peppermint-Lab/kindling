@@ -1,0 +1,44 @@
+---
+title: Domains and Routing
+description: Public hostnames, the edge proxy, and current routing behavior.
+---
+
+# Domains and Routing
+
+Kindling routes public HTTP traffic through its edge proxy.
+
+## What The Edge Does
+
+The edge proxy is responsible for:
+
+- hostname routing
+- TLS termination through CertMagic
+- forwarding to healthy backends
+- reloading routes when workload endpoints change
+
+## Public Hostname Model
+
+Today Kindling can expose:
+
+- the API hostname
+- an optional dashboard hostname
+- platform-managed generated service hostnames
+- custom domains attached to services
+
+## Traffic Behavior
+
+Current behavior includes:
+
+- routes are refreshed from PostgreSQL on WAL-driven changes
+- multi-instance backends are round-robined
+- stale backend pointers trigger a route reload and one retry
+
+## Split Hostnames
+
+A common production shape is:
+
+- `api.example.com` for API and webhooks
+- `app.example.com` for the dashboard
+- service or preview hostnames for workloads
+
+See [Topology and Hostnames](/operate/topology-and-hostnames) for the operator-facing setup details.

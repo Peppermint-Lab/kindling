@@ -1,0 +1,52 @@
+---
+title: CLI Reference
+description: High-level reference for the current Kindling CLI command groups.
+---
+
+# CLI Reference
+
+The current `kindling` CLI surface includes:
+
+- `admin`
+- `auth`
+- `ci`
+- `context`
+- `deploy`
+- `domain`
+- `link`
+- `logs`
+- `project`
+- `sandbox`
+- `serve`
+- `ssh-key`
+- `status`
+
+## Common Commands
+
+```bash
+go run ./cmd/kindling --help
+go run ./cmd/kindling serve --help
+go run ./cmd/kindling project --help
+go run ./cmd/kindling deploy --help
+```
+
+## Remote Control Model
+
+The CLI can talk to a remote Kindling API through:
+
+- `--api-url`
+- `--api-key`
+- `--profile`
+- `KINDLING_API_URL`
+- `KINDLING_API_KEY`
+
+Profiles live in `~/.kindling/cli-config.json`.
+
+## Current Focus Areas
+
+- `serve` starts the Kindling server
+- `project`, `deploy`, `domain`, and `logs` cover day-to-day platform usage
+- `auth`, `context`, `status`, and `link` support remote access workflows
+- `admin` remains the break-glass host-local path
+
+For the authoritative live surface, rely on `kindling --help` in the current repo build.

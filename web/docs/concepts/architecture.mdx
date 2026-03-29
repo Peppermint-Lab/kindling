@@ -1,0 +1,26 @@
+---
+title: Architecture
+description: The high-level control-plane model behind Kindling.
+---
+
+# Architecture
+
+Kindling is a self-hosted PaaS built around declarative convergence.
+
+## Core Pieces
+
+- a Go control plane binary
+- PostgreSQL for state and coordination
+- reconcilers that converge resources toward desired state
+- an edge proxy for TLS and routing
+- workload hosts that run the actual app instances
+
+## Important Property
+
+Kindling's architecture is designed so runtime-specific behavior stays local to the runtime implementation. The deploy and routing model stays broadly the same whether the host uses Cloud Hypervisor, Apple Virtualization, or `crun`.
+
+## Read Next
+
+- [Reconcilers](/concepts/reconcilers)
+- [Runtimes](/concepts/runtimes)
+- [Production Setup](/operate/production-setup)
