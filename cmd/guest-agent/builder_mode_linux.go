@@ -79,11 +79,11 @@ func mountBuilderVolumes() error {
 		log.Printf("builder: virtiofs app mount: %v", err)
 	}
 
-	if err := syscall.Mount("workspace", "/mnt/workspace", "virtiofs", 0, ""); err != nil {
-		return fmt.Errorf("mount workspace virtiofs: %w", err)
+	if err := mountBuilderVolume("/mnt/workspace", "workspace", []string{"/dev/vda", "/dev/vda1"}); err != nil {
+		return fmt.Errorf("mount workspace volume: %w", err)
 	}
-	if err := syscall.Mount("builder", "/mnt/builderroot", "virtiofs", 0, ""); err != nil {
-		return fmt.Errorf("mount builder virtiofs: %w", err)
+	if err := mountBuilderVolume("/mnt/builderroot", "builder", []string{"/dev/vdb", "/dev/vdb1"}); err != nil {
+		return fmt.Errorf("mount builder volume: %w", err)
 	}
 
 	_ = os.RemoveAll("/mnt/builderroot/workspace")
@@ -96,6 +96,22 @@ func mountBuilderVolumes() error {
 
 	log.Println("builder: mounted workspace and builder rootfs")
 	return nil
+}
+
+func mountBuilderVolume(target, shareName string, blockDevices []string) error {
+	if err := syscall.Mount(shareName, target, "virtiofs", 0, ""); err == nil {
+		log.Printf("builder: mounted %s via virtiofs", shareName)
+		return nil
+	} else {
+		log.Printf("builder: virtiofs mount for %s failed: %v", shareName, err)
+	}
+	for _, dev := range blockDevices {
+		if err := syscall.Mount(dev, target, "ext4", 0, ""); err == nil {
+			log.Printf("builder: mounted %s from block device %s", shareName, dev)
+			return nil
+		}
+	}
+	return fmt.Errorf("no %s mount source available", shareName)
 }
 
 func handleBuilderExecConn(conn net.Conn, allowAnyExec bool) {

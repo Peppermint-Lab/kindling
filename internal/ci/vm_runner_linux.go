@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build linux
 
 package ci
 
@@ -7,15 +7,14 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/kindlingvm/kindling/internal/builder"
 )
 
-type AppleVMWorkflowRunner struct {
-	exec *builder.AppleVZExecRunner
+type CloudHypervisorWorkflowRunner struct {
+	exec *builder.CloudHypervisorExecRunner
 }
 
 type RunnerSelection struct {
@@ -23,22 +22,12 @@ type RunnerSelection struct {
 }
 
 func NewWorkflowRunner(sel RunnerSelection) (WorkflowRunner, error) {
-	home, err := os.UserHomeDir()
-	if err == nil && hostSupportsAppleVirtualization() {
-		runner, rerr := builder.NewAppleVZExecRunner(builder.AppleVZBuildRunnerConfig{
-			KernelPath:       filepath.Join(home, ".kindling", "vmlinuz.bin"),
-			InitramfsPath:    filepath.Join(home, ".kindling", "initramfs.cpio.gz"),
-			BuilderRootfsDir: filepath.Join(home, ".kindling", "builder-rootfs"),
-		})
-		if rerr == nil {
-			return &AppleVMWorkflowRunner{exec: runner}, nil
-		}
-		if sel.RequireMicroVM {
-			return nil, fmt.Errorf("microVM CI execution is required, but the Apple VZ runner is unavailable: %w", rerr)
-		}
+	runner, err := builder.NewCloudHypervisorExecRunner(builder.CloudHypervisorExecRunnerConfig{})
+	if err == nil {
+		return &CloudHypervisorWorkflowRunner{exec: runner}, nil
 	}
 	if sel.RequireMicroVM {
-		return nil, fmt.Errorf("microVM CI execution is required, but this process does not have Apple virtualization support enabled")
+		return nil, fmt.Errorf("microVM CI execution is required, but the cloud-hypervisor runner is unavailable: %w", err)
 	}
 	return NewLocalWorkflowRunner(), nil
 }
@@ -51,23 +40,11 @@ func NewPreferredWorkflowRunner() WorkflowRunner {
 	return r
 }
 
-func hostSupportsAppleVirtualization() bool {
-	exe, err := os.Executable()
-	if err != nil {
-		return false
-	}
-	out, err := exec.Command("codesign", "-d", "--entitlements", "-", exe).CombinedOutput()
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(out), "com.apple.security.virtualization")
-}
+func (r *CloudHypervisorWorkflowRunner) Backend() string { return "cloud_hypervisor" }
 
-func (r *AppleVMWorkflowRunner) Backend() string { return "apple_vz" }
+func (r *CloudHypervisorWorkflowRunner) IsMicroVM() bool { return true }
 
-func (r *AppleVMWorkflowRunner) IsMicroVM() bool { return true }
-
-func (r *AppleVMWorkflowRunner) Run(ctx context.Context, plan ExecutionPlan, opts RunOptions) (RunResult, error) {
+func (r *CloudHypervisorWorkflowRunner) Run(ctx context.Context, plan ExecutionPlan, opts RunOptions) (RunResult, error) {
 	workspaceRoot, cleanup, err := prepareVMWorkspace(plan.RepoRoot)
 	if err != nil {
 		return RunResult{}, err
@@ -152,7 +129,7 @@ func (r *AppleVMWorkflowRunner) Run(ctx context.Context, plan ExecutionPlan, opt
 	return RunResult{Jobs: jobResults, Artifacts: artifacts.List(), ArtifactRoot: artifacts.root, Backend: r.Backend()}, nil
 }
 
-func (r *AppleVMWorkflowRunner) runStep(ctx context.Context, repoRoot string, step CompiledStep, env map[string]string, stdout, stderr io.Writer, ev evalContext, artifacts *artifactStore, cache *cacheStore) (map[string]string, error) {
+func (r *CloudHypervisorWorkflowRunner) runStep(ctx context.Context, repoRoot string, step CompiledStep, env map[string]string, stdout, stderr io.Writer, ev evalContext, artifacts *artifactStore, cache *cacheStore) (map[string]string, error) {
 	switch step.Kind {
 	case StepKindCheckout:
 		return map[string]string{}, nil
@@ -253,7 +230,7 @@ echo "ssh_agent_pid=$SSH_AGENT_PID" >> "$GITHUB_OUTPUT"
 	}
 }
 
-func (r *AppleVMWorkflowRunner) requireGuestCommand(ctx context.Context, repoRoot, name string) error {
+func (r *CloudHypervisorWorkflowRunner) requireGuestCommand(ctx context.Context, repoRoot, name string) error {
 	_, err := r.exec.Exec(ctx, builder.ExecRun{
 		WorkspaceDir: repoRoot,
 		Cwd:          "/workspace",
@@ -263,7 +240,7 @@ func (r *AppleVMWorkflowRunner) requireGuestCommand(ctx context.Context, repoRoo
 	return err
 }
 
-func (r *AppleVMWorkflowRunner) execShellStep(ctx context.Context, repoRoot, workingDir, script string, env map[string]string, logLine func(string)) (map[string]string, error) {
+func (r *CloudHypervisorWorkflowRunner) execShellStep(ctx context.Context, repoRoot, workingDir, script string, env map[string]string, logLine func(string)) (map[string]string, error) {
 	outputFile := filepath.Join(repoRoot, ".kindling-gh-output")
 	_ = os.Remove(outputFile)
 	cwd := "/workspace"

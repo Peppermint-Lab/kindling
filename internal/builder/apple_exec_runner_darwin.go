@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 )
 
@@ -37,30 +36,10 @@ func NewAppleVZExecRunner(cfg AppleVZBuildRunnerConfig) (*AppleVZExecRunner, err
 	return &AppleVZExecRunner{cfg: cfg}, nil
 }
 
-func (r *AppleVZExecRunner) workspaceDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Join(home, ".kindling", "ci-workspace")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-	return dir, nil
-}
-
 func (r *AppleVZExecRunner) Exec(ctx context.Context, run ExecRun) (int, error) {
-	ws, err := r.workspaceDir()
-	if err != nil {
-		return 0, err
-	}
-	if err := replaceWorkspaceFromSource(run.WorkspaceDir, ws); err != nil {
-		return 0, fmt.Errorf("sync workspace into exec VM mount: %w", err)
-	}
-
 	r.mu.Lock()
 	if r.vm == nil {
-		vm, err := newAppleBuilderVM(r.cfg.KernelPath, r.cfg.InitramfsPath, r.cfg.BuilderRootfsDir, ws, "ci")
+		vm, err := newAppleBuilderVM(r.cfg.KernelPath, r.cfg.InitramfsPath, r.cfg.BuilderRootfsDir, run.WorkspaceDir, "ci")
 		if err != nil {
 			r.mu.Unlock()
 			return 0, err
