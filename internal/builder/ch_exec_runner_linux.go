@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -33,6 +34,7 @@ const (
 	chExecVCPU          = 4
 	chExecMemoryMB      = 8192
 	chExecReadyTimeout  = 120 * time.Second
+	chExecMaxSlots      = uint32(1 << 15) // 10.30.0.0/16 split into /31s
 )
 
 var chExecNextSlot atomic.Uint32
@@ -85,6 +87,9 @@ type cloudHypervisorExecVM struct {
 
 	readyOnce sync.Once
 	readyCh   chan struct{}
+
+	diagMu    sync.Mutex
+	diagLines []string
 }
 
 func NewCloudHypervisorExecRunner(cfg CloudHypervisorExecRunnerConfig) (*CloudHypervisorExecRunner, error) {
@@ -97,6 +102,17 @@ func NewCloudHypervisorExecRunner(cfg CloudHypervisorExecRunnerConfig) (*CloudHy
 
 func (r *CloudHypervisorExecRunner) Backend() string { return "cloud_hypervisor" }
 
+func (r *CloudHypervisorExecRunner) Close() error {
+	r.mu.Lock()
+	vm := r.vm
+	r.vm = nil
+	r.mu.Unlock()
+	if vm != nil {
+		vm.Close()
+	}
+	return nil
+}
+
 func (r *CloudHypervisorExecRunner) Exec(ctx context.Context, run ExecRun) (int, error) {
 	r.mu.Lock()
 	if r.vm == nil {
@@ -105,7 +121,7 @@ func (r *CloudHypervisorExecRunner) Exec(ctx context.Context, run ExecRun) (int,
 			r.mu.Unlock()
 			return 0, err
 		}
-		if err := vm.start(ctx); err != nil {
+		if err := vm.start(ctx, run.LogLine); err != nil {
 			vm.Close()
 			r.mu.Unlock()
 			return 0, err
@@ -184,7 +200,12 @@ func newCloudHypervisorExecVM(cfg resolvedCloudHypervisorExecRunnerConfig, works
 		_ = os.RemoveAll(dummy)
 		return nil, err
 	}
-	slot := chExecNextSlot.Add(1) - 1
+	slot, err := reserveCHExecSlot()
+	if err != nil {
+		_ = os.RemoveAll(runtimeDir)
+		_ = os.RemoveAll(dummy)
+		return nil, err
+	}
 	hostGW, guestCIDR, err := chExecIPs(slot)
 	if err != nil {
 		_ = os.RemoveAll(runtimeDir)
@@ -247,7 +268,7 @@ func (v *cloudHypervisorExecVM) Close() {
 	_ = os.RemoveAll(dummyDir)
 }
 
-func (v *cloudHypervisorExecVM) start(parentCtx context.Context) error {
+func (v *cloudHypervisorExecVM) start(parentCtx context.Context, logLine func(string)) error {
 	v.mu.Lock()
 	if v.started {
 		v.mu.Unlock()
@@ -263,15 +284,16 @@ func (v *cloudHypervisorExecVM) start(parentCtx context.Context) error {
 	if err := createCHExecTap(v.tapName, hostAddr); err != nil {
 		return err
 	}
-	if err := v.startVirtiofsd("app", v.dummyAppDir); err != nil {
+	v.emitDiagnostic(logLine, fmt.Sprintf("Starting cloud-hypervisor CI VM with tap=%s guest_ip=%s guest_cid=%d", v.tapName, v.guestIP, v.guestCID))
+	if err := v.startVirtiofsd("app", v.dummyAppDir, logLine); err != nil {
 		removeCHExecTap(v.tapName)
 		return err
 	}
-	if err := v.startVirtiofsd("workspace", v.workspaceDir); err != nil {
+	if err := v.startVirtiofsd("workspace", v.workspaceDir, logLine); err != nil {
 		v.Close()
 		return err
 	}
-	if err := v.startVirtiofsd("builder", v.builderRootfsDir); err != nil {
+	if err := v.startVirtiofsd("builder", v.builderRootfsDir, logLine); err != nil {
 		v.Close()
 		return err
 	}
@@ -304,8 +326,8 @@ func (v *cloudHypervisorExecVM) start(parentCtx context.Context) error {
 		v.Close()
 		return fmt.Errorf("start cloud-hypervisor: %w", err)
 	}
-	go io.Copy(io.Discard, stdout)
-	go io.Copy(io.Discard, stderr)
+	go v.captureProcessOutput(logLine, "cloud-hypervisor", stdout)
+	go v.captureProcessOutput(logLine, "cloud-hypervisor", stderr)
 
 	v.mu.Lock()
 	v.cmd = cmd
@@ -316,7 +338,7 @@ func (v *cloudHypervisorExecVM) start(parentCtx context.Context) error {
 	if err := waitCHExecGuestReady(runCtx, v.readyCh, chExecReadyTimeout); err != nil {
 		cancel()
 		v.Close()
-		return err
+		return fmt.Errorf("%w; diagnostics: %s", err, v.diagnosticTail())
 	}
 
 	go func() {
@@ -329,7 +351,7 @@ func (v *cloudHypervisorExecVM) start(parentCtx context.Context) error {
 func (v *cloudHypervisorExecVM) Exec(ctx context.Context, argv []string, cwd string, extraEnv []string, logLine func(string)) (int, error) {
 	conn, err := chbridge.DialGuestOverUDS(v.socketBase, chExecGuestExecPort)
 	if err != nil {
-		return 0, fmt.Errorf("dial guest exec: %w", err)
+		return 0, fmt.Errorf("dial guest exec: %w; diagnostics: %s", err, v.diagnosticTail())
 	}
 	defer conn.Close()
 
@@ -350,7 +372,7 @@ func (v *cloudHypervisorExecVM) Exec(ctx context.Context, argv []string, cwd str
 	br := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(br, nil)
 	if err != nil {
-		return 0, fmt.Errorf("read exec response: %w", err)
+		return 0, fmt.Errorf("read exec response: %w; diagnostics: %s", err, v.diagnosticTail())
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
@@ -381,7 +403,7 @@ func (v *cloudHypervisorExecVM) Exec(ctx context.Context, argv []string, cwd str
 	return code, nil
 }
 
-func (v *cloudHypervisorExecVM) startVirtiofsd(tag, dir string) error {
+func (v *cloudHypervisorExecVM) startVirtiofsd(tag, dir string, logLine func(string)) error {
 	socketPath := v.virtiofsSocketPath(tag)
 	_ = os.Remove(socketPath)
 	cmd := exec.Command(v.virtiofsdPath, "--socket-path", socketPath, "--shared-dir", dir)
@@ -390,12 +412,13 @@ func (v *cloudHypervisorExecVM) startVirtiofsd(tag, dir string) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start virtiofsd for %s: %w", tag, err)
 	}
-	go io.Copy(io.Discard, stdout)
-	go io.Copy(io.Discard, stderr)
+	v.emitDiagnostic(logLine, fmt.Sprintf("Started virtiofsd for %s from %s", tag, dir))
+	go v.captureProcessOutput(logLine, "virtiofsd["+tag+"]", stdout)
+	go v.captureProcessOutput(logLine, "virtiofsd["+tag+"]", stderr)
 	if err := waitForUnixSocket(socketPath, 5*time.Second); err != nil {
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
-		return fmt.Errorf("wait for virtiofsd socket %s: %w", tag, err)
+		return fmt.Errorf("wait for virtiofsd socket %s: %w; diagnostics: %s", tag, err, v.diagnosticTail())
 	}
 	v.mu.Lock()
 	v.virtiofsds = append(v.virtiofsds, cmd)
@@ -416,12 +439,14 @@ func (v *cloudHypervisorExecVM) startVsockConfigServer(ctx context.Context) erro
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /config", func(w http.ResponseWriter, _ *http.Request) {
+		v.emitDiagnostic(nil, "CI guest requested host config over vsock")
 		cfg := map[string]any{
-			"mode":     "ci",
-			"ip_addr":  v.hostCIDR,
-			"ip_gw":    v.hostGW,
-			"hostname": "kindling-builder",
-			"port":     3000,
+			"mode":        "ci",
+			"ip_addr":     v.hostCIDR,
+			"ip_gw":       v.hostGW,
+			"dns_servers": []string{"1.1.1.1", "8.8.8.8"},
+			"hostname":    "kindling-builder",
+			"port":        3000,
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(cfg)
@@ -430,6 +455,7 @@ func (v *cloudHypervisorExecVM) startVsockConfigServer(ctx context.Context) erro
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.HandleFunc("POST /ready", func(w http.ResponseWriter, _ *http.Request) {
+		v.emitDiagnostic(nil, "CI guest reported ready")
 		v.readyOnce.Do(func() { close(v.readyCh) })
 		w.WriteHeader(http.StatusOK)
 	})
@@ -507,6 +533,58 @@ func chExecIPs(slot uint32) (string, string, error) {
 	return host.String(), guest.String() + "/31", nil
 }
 
+func reserveCHExecSlot() (uint32, error) {
+	start := chExecNextSlot.Add(1) - 1
+	for i := uint32(0); i < chExecMaxSlots; i++ {
+		slot := (start + i) % chExecMaxSlots
+		_, guestCIDR, err := chExecIPs(slot)
+		if err != nil {
+			return 0, err
+		}
+		inUse, err := chExecCIDRInUse(guestCIDR)
+		if err != nil {
+			return 0, err
+		}
+		if !inUse {
+			chExecNextSlot.Store(slot + 1)
+			return slot, nil
+		}
+	}
+	return 0, fmt.Errorf("no available cloud-hypervisor CI network slots")
+}
+
+func chExecCIDRInUse(cidr string) (bool, error) {
+	prefix, err := netip.ParsePrefix(cidr)
+	if err != nil {
+		return false, fmt.Errorf("parse exec CIDR %q: %w", cidr, err)
+	}
+	prefix = prefix.Masked()
+	routes, err := netlink.RouteList(nil, netlink.FAMILY_V4)
+	if err != nil {
+		return false, fmt.Errorf("list IPv4 routes: %w", err)
+	}
+	for _, route := range routes {
+		if route.Dst == nil {
+			continue
+		}
+		if route.Dst.IP == nil {
+			continue
+		}
+		existing, ok := netip.AddrFromSlice(route.Dst.IP)
+		if !ok {
+			continue
+		}
+		ones, bits := route.Dst.Mask.Size()
+		if bits != 32 {
+			continue
+		}
+		if existing == prefix.Addr() && ones == prefix.Bits() {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func chExecTapName(id uuid.UUID, slot uint32) string {
 	return fmt.Sprintf("kci%s%x", id.String()[:8], slot&0xf)
 }
@@ -539,4 +617,43 @@ func removeCHExecTap(tapName string) {
 	if link, err := netlink.LinkByName(tapName); err == nil {
 		_ = netlink.LinkDel(link)
 	}
+}
+
+func (v *cloudHypervisorExecVM) captureProcessOutput(logLine func(string), prefix string, r io.Reader) {
+	scanner := bufio.NewScanner(r)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+	for scanner.Scan() {
+		line := fmt.Sprintf("%s: %s", prefix, strings.TrimSpace(scanner.Text()))
+		v.emitDiagnostic(logLine, line)
+	}
+	if err := scanner.Err(); err != nil {
+		v.emitDiagnostic(logLine, fmt.Sprintf("%s stream error: %v", prefix, err))
+	}
+}
+
+func (v *cloudHypervisorExecVM) emitDiagnostic(logLine func(string), line string) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+	v.diagMu.Lock()
+	v.diagLines = append(v.diagLines, line)
+	if len(v.diagLines) > 80 {
+		v.diagLines = append([]string(nil), v.diagLines[len(v.diagLines)-80:]...)
+	}
+	v.diagMu.Unlock()
+	slog.Info("cloud-hypervisor CI diagnostic", "tap", v.tapName, "message", line)
+	if logLine != nil {
+		logLine(line)
+	}
+}
+
+func (v *cloudHypervisorExecVM) diagnosticTail() string {
+	v.diagMu.Lock()
+	defer v.diagMu.Unlock()
+	if len(v.diagLines) == 0 {
+		return "no diagnostics captured"
+	}
+	return strings.Join(v.diagLines, " | ")
 }

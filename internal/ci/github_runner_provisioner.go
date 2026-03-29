@@ -20,6 +20,10 @@ type execRunner interface {
 	Exec(context.Context, builder.ExecRun) (int, error)
 }
 
+type closableExecRunner interface {
+	Close() error
+}
+
 type vmGitHubRunnerProvisioner struct {
 	backend string
 	exec    execRunner
@@ -60,6 +64,9 @@ func (p *vmGitHubRunnerProvisioner) Run(ctx context.Context, req GitHubRunnerPro
 		return err
 	}
 	defer os.RemoveAll(root)
+	if closer, ok := p.exec.(closableExecRunner); ok {
+		defer closer.Close()
+	}
 
 	if req.LogLine != nil {
 		req.LogLine(fmt.Sprintf("Downloading GitHub Actions runner for labels: %s", strings.Join(req.Target.Labels, ", ")))
@@ -72,20 +79,56 @@ func (p *vmGitHubRunnerProvisioner) Run(ctx context.Context, req GitHubRunnerPro
 	script := `
 set -euo pipefail
 cd /workspace/runner
+echo "[kindling] runner bootstrap starting in $(pwd)"
+mkdir -p /proc /sys /dev/pts /dev/shm
+mount -t proc proc /proc || true
+mount -t sysfs sysfs /sys || true
+mount -t devpts devpts /dev/pts || true
+mount -t tmpfs tmpfs /dev/shm || true
+echo "[kindling] runner contents:"
+ls -la
+if [ -x ./bin/Runner.Listener ]; then
+  echo "[kindling] Runner.Listener info:"
+  file ./bin/Runner.Listener || true
+  ldd ./bin/Runner.Listener || true
+fi
 chmod +x ./config.sh ./run.sh || true
-./config.sh --jitconfig "$KINDLING_GITHUB_JIT_CONFIG" --unattended --disableupdate
+if [ -x ./bin/installdependencies.sh ]; then
+  if find /lib /usr/lib -name 'libicu*.so*' -print -quit | grep -q .; then
+    echo "[kindling] runner dependencies already present"
+  else
+    echo "[kindling] installing runner dependencies"
+    chmod +x ./bin/installdependencies.sh || true
+    ./bin/installdependencies.sh
+  fi
+fi
+echo "[kindling] invoking config.sh"
+./config.sh \
+  --url "$KINDLING_GITHUB_RUNNER_URL" \
+  --token "$KINDLING_GITHUB_RUNNER_TOKEN" \
+  --name "$KINDLING_GITHUB_RUNNER_NAME" \
+  --labels "$KINDLING_GITHUB_RUNNER_LABELS" \
+  --ephemeral \
+  --replace \
+  --unattended \
+  --disableupdate
+echo "[kindling] config.sh completed, invoking run.sh"
 ./run.sh
 `
 	env := []string{
 		"PATH=/usr/local/bin:/usr/bin:/bin:/sbin:/usr/sbin",
 		"HOME=/workspace",
 		"RUNNER_ALLOW_RUNASROOT=1",
-		"KINDLING_GITHUB_JIT_CONFIG=" + req.JITConfig.EncodedJITConfig,
+		"TAR_OPTIONS=--no-same-owner",
+		"KINDLING_GITHUB_RUNNER_URL=" + req.JITConfig.RunnerURL,
+		"KINDLING_GITHUB_RUNNER_TOKEN=" + req.JITConfig.EncodedJITConfig,
+		"KINDLING_GITHUB_RUNNER_NAME=" + strings.TrimSpace(req.RunnerName),
+		"KINDLING_GITHUB_RUNNER_LABELS=" + strings.Join(req.Target.Labels, ","),
 	}
 	code, err := p.exec.Exec(ctx, builder.ExecRun{
 		WorkspaceDir: root,
 		Cwd:          "/workspace/runner",
-		Argv:         []string{"sh", "-lc", script},
+		Argv:         []string{"bash", "-lc", script},
 		Env:          env,
 		LogLine:      req.LogLine,
 	})

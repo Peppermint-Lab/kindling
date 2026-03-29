@@ -19,20 +19,20 @@ func TestHTTPClientGenerateJITConfig(t *testing.T) {
 	t.Parallel()
 
 	var sawAccessToken bool
-	var sawJITConfig bool
+	var sawRegistrationToken bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/app/installations/321/access_tokens":
 			sawAccessToken = true
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"token":"installation-token"}`))
-		case "/orgs/kindlingvm/actions/runners/generate-jitconfig":
-			sawJITConfig = true
+		case "/orgs/kindlingvm/actions/runners/registration-token":
+			sawRegistrationToken = true
 			if got := r.Header.Get("Authorization"); got != "Bearer installation-token" {
 				t.Fatalf("authorization header = %q", got)
 			}
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"encoded_jit_config":"encoded","runner":{"id":77}}`))
+			_, _ = w.Write([]byte(`{"token":"registration-token"}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -64,14 +64,17 @@ func TestHTTPClientGenerateJITConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateJITConfig returned error: %v", err)
 	}
-	if !sawAccessToken || !sawJITConfig {
-		t.Fatalf("expected both API calls, got token=%v jit=%v", sawAccessToken, sawJITConfig)
+	if !sawAccessToken || !sawRegistrationToken {
+		t.Fatalf("expected both API calls, got token=%v registration=%v", sawAccessToken, sawRegistrationToken)
 	}
-	if jit.EncodedJITConfig != "encoded" {
+	if jit.EncodedJITConfig != "registration-token" {
 		t.Fatalf("EncodedJITConfig = %q", jit.EncodedJITConfig)
 	}
-	if jit.RunnerID != 77 {
+	if jit.RunnerID != 0 {
 		t.Fatalf("RunnerID = %d", jit.RunnerID)
+	}
+	if jit.RunnerURL != "https://github.com/kindlingvm" {
+		t.Fatalf("RunnerURL = %q", jit.RunnerURL)
 	}
 }
 

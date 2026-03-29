@@ -40,6 +40,7 @@ type JITConfigRequest struct {
 type JITConfig struct {
 	EncodedJITConfig string
 	RunnerID         int64
+	RunnerURL        string
 }
 
 type DeleteRunnerRequest struct {
@@ -95,40 +96,27 @@ func (c *HTTPClient) GenerateJITConfig(ctx context.Context, req JITConfigRequest
 		return JITConfig{}, err
 	}
 
-	payload, err := json.Marshal(map[string]any{
-		"name":            strings.TrimSpace(req.RunnerName),
-		"runner_group_id": req.Integration.Metadata.RunnerGroupID,
-		"labels":          normalizeLabels(req.Labels),
-		"work_folder":     "_work",
-	})
+	url := fmt.Sprintf("%s/orgs/%s/actions/runners/registration-token", c.baseURL, req.Integration.Metadata.OrgLogin)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte(`{}`)))
 	if err != nil {
-		return JITConfig{}, fmt.Errorf("marshal jit config request: %w", err)
-	}
-
-	url := fmt.Sprintf("%s/orgs/%s/actions/runners/generate-jitconfig", c.baseURL, req.Integration.Metadata.OrgLogin)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		return JITConfig{}, fmt.Errorf("create jit config request: %w", err)
+		return JITConfig{}, fmt.Errorf("create runner registration token request: %w", err)
 	}
 	httpReq.Header.Set("Accept", "application/vnd.github+json")
 	httpReq.Header.Set("Authorization", "Bearer "+token)
 	httpReq.Header.Set("User-Agent", "kindling")
 
 	var resp struct {
-		EncodedJITConfig string `json:"encoded_jit_config"`
-		Runner           struct {
-			ID int64 `json:"id"`
-		} `json:"runner"`
+		Token string `json:"token"`
 	}
 	if err := c.doJSON(httpReq, http.StatusCreated, &resp); err != nil {
 		return JITConfig{}, err
 	}
-	if strings.TrimSpace(resp.EncodedJITConfig) == "" {
-		return JITConfig{}, fmt.Errorf("GitHub JIT config response was empty")
+	if strings.TrimSpace(resp.Token) == "" {
+		return JITConfig{}, fmt.Errorf("GitHub runner registration token response was empty")
 	}
 	return JITConfig{
-		EncodedJITConfig: strings.TrimSpace(resp.EncodedJITConfig),
-		RunnerID:         resp.Runner.ID,
+		EncodedJITConfig: strings.TrimSpace(resp.Token),
+		RunnerURL:        fmt.Sprintf("https://github.com/%s", req.Integration.Metadata.OrgLogin),
 	}, nil
 }
 

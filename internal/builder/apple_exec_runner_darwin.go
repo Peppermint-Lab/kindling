@@ -36,6 +36,17 @@ func NewAppleVZExecRunner(cfg AppleVZBuildRunnerConfig) (*AppleVZExecRunner, err
 	return &AppleVZExecRunner{cfg: cfg}, nil
 }
 
+func (r *AppleVZExecRunner) Close() error {
+	r.mu.Lock()
+	vm := r.vm
+	r.vm = nil
+	r.mu.Unlock()
+	if vm != nil {
+		vm.Close()
+	}
+	return nil
+}
+
 func (r *AppleVZExecRunner) Exec(ctx context.Context, run ExecRun) (int, error) {
 	r.mu.Lock()
 	if r.vm == nil {

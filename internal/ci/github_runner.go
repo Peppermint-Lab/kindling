@@ -188,7 +188,7 @@ func (s *JobService) reconcileGitHubRunnerJob(ctx context.Context, job queries.C
 	if err != nil {
 		return s.failGitHubRunnerJob(ctx, job, err)
 	}
-	_ = s.log(ctx, job.ID, "info", "Received GitHub just-in-time runner configuration")
+	_ = s.log(ctx, job.ID, "info", "Received GitHub runner registration token")
 	if err := s.q.CIJobMarkRunning(ctx, queries.CIJobMarkRunningParams{
 		ID:               job.ID,
 		WorkspaceDir:     job.WorkspaceDir,

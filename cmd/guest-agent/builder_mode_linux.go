@@ -93,8 +93,101 @@ func mountBuilderVolumes() error {
 	if err := unix.Mount("/mnt/workspace", "/mnt/builderroot/workspace", "", unix.MS_BIND, ""); err != nil {
 		return fmt.Errorf("bind workspace into chroot: %w", err)
 	}
+	if err := mountBuilderChrootRuntimeFS(); err != nil {
+		return err
+	}
 
 	log.Println("builder: mounted workspace and builder rootfs")
+	return nil
+}
+
+func mountBuilderChrootRuntimeFS() error {
+	specialMounts := []struct {
+		source string
+		target string
+		fstype string
+	}{
+		{source: "proc", target: "/mnt/builderroot/proc", fstype: "proc"},
+		{source: "sysfs", target: "/mnt/builderroot/sys", fstype: "sysfs"},
+	}
+	for _, m := range specialMounts {
+		if err := mountSpecialIntoChroot(m.source, m.target, m.fstype); err != nil {
+			return fmt.Errorf("mount %s into chroot: %w", m.target, err)
+		}
+	}
+	bindMounts := []struct {
+		source    string
+		target    string
+		recursive bool
+	}{
+		{source: "/dev", target: "/mnt/builderroot/dev", recursive: true},
+		{source: "/dev/pts", target: "/mnt/builderroot/dev/pts", recursive: true},
+	}
+	for _, m := range bindMounts {
+		if err := bindIntoChroot(m.source, m.target, m.recursive); err != nil {
+			return fmt.Errorf("bind %s into chroot: %w", m.source, err)
+		}
+	}
+	fileMounts := []struct {
+		source string
+		target string
+	}{
+		{source: "/etc/resolv.conf", target: "/mnt/builderroot/etc/resolv.conf"},
+		{source: "/etc/hosts", target: "/mnt/builderroot/etc/hosts"},
+	}
+	for _, m := range fileMounts {
+		if err := bindFileIntoChroot(m.source, m.target); err != nil {
+			return fmt.Errorf("bind %s into chroot: %w", m.source, err)
+		}
+	}
+	return nil
+}
+
+func mountSpecialIntoChroot(source, target, fstype string) error {
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		return err
+	}
+	if err := unix.Mount(source, target, fstype, 0, ""); err != nil {
+		if err == unix.EBUSY {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func bindIntoChroot(source, target string, recursive bool) error {
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		return err
+	}
+	flags := uintptr(unix.MS_BIND)
+	if recursive {
+		flags |= unix.MS_REC
+	}
+	if err := unix.Mount(source, target, "", flags, ""); err != nil {
+		if err == unix.EBUSY {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func bindFileIntoChroot(source, target string) error {
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(target, os.O_CREATE, 0o644)
+	if err != nil {
+		return err
+	}
+	file.Close()
+	if err := unix.Mount(source, target, "", unix.MS_BIND, ""); err != nil {
+		if err == unix.EBUSY {
+			return nil
+		}
+		return err
+	}
 	return nil
 }
 
@@ -150,7 +243,14 @@ func handleBuilderExecConn(conn net.Conn, allowAnyExec bool) {
 	// Run argv inside chroot with working directory set via shell so build context resolves.
 	inner := append([]string(nil), req.Argv...)
 	argsJoined := shellQuoteArgs(inner)
-	shScript := fmt.Sprintf("cd %s && exec %s", shellQuoteSingle(cwd), argsJoined)
+	setupScript := `
+mkdir -p /proc /sys /dev/pts /dev/shm
+mount -t proc proc /proc || true
+mount -t sysfs sysfs /sys || true
+mount -t devpts devpts /dev/pts || true
+mount -t tmpfs tmpfs /dev/shm || true
+`
+	shScript := setupScript + "\n" + fmt.Sprintf("cd %s && exec %s", shellQuoteSingle(cwd), argsJoined)
 	cmd := exec.Command("chroot", "/mnt/builderroot", "sh", "-c", shScript)
 	cmd.Env = env
 
