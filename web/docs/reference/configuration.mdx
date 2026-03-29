@@ -1,0 +1,48 @@
+---
+title: Configuration Reference
+description: Important runtime flags, build inputs, and environment knobs to know about.
+---
+
+# Configuration Reference
+
+## Server Flags
+
+Important `kindling serve` flags include:
+
+- `--listen`
+- `--public-url`
+- `--advertise-host`
+- `--dashboard-host`
+- `--components`
+- `--edge-http`
+- `--edge-https`
+- `--acme-email`
+- `--acme-staging`
+
+Check the exact current shape with:
+
+```bash
+go run ./cmd/kindling serve --help
+```
+
+## Common Build And Runtime Inputs
+
+- `DASHBOARD_API_URL` for building dashboard assets
+- `KINDLING_RUNTIME_ADVERTISE_HOST` for runtime URL rewriting when needed
+- Postgres DSN files in `/etc/kindling/postgres.dsn` or `~/.kindling/postgres.dsn`
+
+## Host Tool Expectations
+
+Kindling commonly expects these tools on Linux hosts:
+
+- `buildah`
+- `skopeo`
+- `umoci`
+- `crun`
+- `virt-make-fs`
+- `qemu-img`
+- `cloud-hypervisor` on KVM hosts
+
+## macOS Builder Notes
+
+On macOS, Kindling uses a Linux builder VM and expects a prepared builder rootfs at `~/.kindling/builder-rootfs` containing `buildah`.
