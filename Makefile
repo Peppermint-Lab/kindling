@@ -26,6 +26,18 @@ build:
 		codesign --entitlements contrib/kindling.entitlements --force -s - bin/kindling; \
 	fi
 
+# Build kindling-mac daemon (darwin only, requires CGO for sqlite3)
+kindling-mac:
+	CGO_ENABLED=1 go build -o bin/kindling-mac ./cmd/kindling-mac
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		codesign --entitlements contrib/kindling.entitlements --force -s - bin/kindling-mac; \
+	fi
+
+# Install both binaries
+install-mac: kindling-mac
+	install -m 755 bin/kindling /usr/local/bin/kindling
+	install -m 755 bin/kindling-mac /usr/local/bin/kindling-mac
+
 # Run locally (requires Postgres via `make db`)
 dev: build kernel initramfs
 	./bin/kindling serve

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/spf13/cobra"
 )
@@ -36,6 +37,10 @@ Break-glass: kindling admin ... for direct PostgreSQL operations.`,
 	root.AddCommand(adminCmd())
 	root.AddCommand(debugCmd())
 	root.AddCommand(chBridgeProxyCmd())
+
+	if runtime.GOOS == "darwin" {
+		root.AddCommand(cliLocalCmd())
+	}
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
