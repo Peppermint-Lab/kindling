@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // NormalizeRepo strips URL prefixes and returns owner/repo.
@@ -65,7 +66,8 @@ func ResolveCommit(ctx context.Context, client *http.Client, token, repo, ref st
 }
 
 // DownloadTarball downloads the GitHub repository tarball for ref.
-// token may be empty for public repos.
+// token may be empty for public repos. Retries on transient failures with
+// exponential backoff (max 3 attempts: 5s, 10s, 20s).
 func DownloadTarball(ctx context.Context, client *http.Client, token, repo, ref string) (io.ReadCloser, error) {
 	if client == nil {
 		client = http.DefaultClient
@@ -78,25 +80,56 @@ func DownloadTarball(ctx context.Context, client *http.Client, token, repo, ref 
 	if ref == "" {
 		return nil, fmt.Errorf("empty ref")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://api.github.com/repos/%s/tarball/%s", repo, url.PathEscape(ref)), nil)
-	if err != nil {
-		return nil, fmt.Errorf("create github tarball request: %w", err)
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "kindling")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("execute github tarball request: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
+
+	const maxAttempts = 3
+	delay := 5 * time.Second
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://api.github.com/repos/%s/tarball/%s", repo, url.PathEscape(ref)), nil)
+		if err != nil {
+			return nil, fmt.Errorf("create github tarball request: %w", err)
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("User-Agent", "kindling")
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			if attempt == maxAttempts {
+				return nil, fmt.Errorf("execute github tarball request: %w", err)
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+				delay *= 2
+				continue
+			}
+		}
+		if resp.StatusCode == http.StatusOK {
+			return resp.Body, nil
+		}
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		resp.Body.Close()
+
+		// Retry on rate limit (403) and transient server errors (500, 502, 503).
+		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusInternalServerError ||
+			resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusServiceUnavailable {
+			if attempt == maxAttempts {
+				return nil, fmt.Errorf("github tarball %s after %d attempts: %s", resp.Status, maxAttempts, strings.TrimSpace(string(body)))
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+				delay *= 2
+				continue
+			}
+		}
 		return nil, fmt.Errorf("github tarball %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
-	return resp.Body, nil
+	return nil, fmt.Errorf("exceeded max attempts")
 }
 
 func githubGET(ctx context.Context, client *http.Client, token, reqURL string, out any) error {

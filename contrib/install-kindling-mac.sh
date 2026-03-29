@@ -201,6 +201,7 @@ main() {
   require_cmd go
   require_cmd install
   require_cmd codesign
+  require_cmd gzip
 
   shell_name="$(basename "${SHELL:-unknown}")"
   rc_file="$(shell_rc_file)"
@@ -221,7 +222,6 @@ EOF
 
   source_tar="$TMP_DIR/kindling.tar.gz"
   kernel_url="https://github.com/${REPO}/releases/download/${KERNEL_RELEASE}/vmlinuz-arm64"
-  initramfs_url="https://github.com/${REPO}/releases/download/${KERNEL_RELEASE}/initramfs-arm64.cpio.gz"
 
   echo "Downloading Kindling source from ${SOURCE_URL}..."
   curl -fsSL "$SOURCE_URL" -o "$source_tar"
@@ -246,7 +246,11 @@ EOF
   echo "Downloading guest assets into ${ASSET_DIR}..."
   mkdir -p "$ASSET_DIR"
   curl -fsSL "$kernel_url" -o "${ASSET_DIR}/vmlinuz"
-  curl -fsSL "$initramfs_url" -o "${ASSET_DIR}/initramfs.cpio.gz"
+  echo "Building initramfs from current source..."
+  (
+    cd "$src_dir"
+    KINDLING_DATA="$ASSET_DIR" bash scripts/build-initramfs-local.sh
+  )
   curl -fsSL "$ROOTFS_URL" -o "${ASSET_DIR}/rootfs.tar.gz"
 
   if [[ -f "$CONFIG_PATH" ]]; then

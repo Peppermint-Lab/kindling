@@ -1066,6 +1066,38 @@ WHERE id = $1;
 UPDATE builds SET status = 'failed', failed_at = NOW(), updated_at = NOW()
 WHERE id = $1;
 
+-- name: BuildReleaseLeaseForServer :exec
+-- Releases the build lease for all builds claimed by a dead server.
+UPDATE builds SET processing_by = NULL, updated_at = NOW()
+WHERE processing_by = $1 AND status = 'building';
+
+-- name: BuildResetOrphaned :many
+-- Finds builds claimed by a server that has no recent heartbeat (dead server)
+-- and resets them to 'pending' so another server can retry.
+SELECT b.* FROM builds b
+WHERE b.processing_by IS NOT NULL
+  AND b.status = 'building'
+  AND NOT EXISTS (
+    SELECT 1 FROM servers s WHERE s.id = b.processing_by AND s.last_heartbeat_at > NOW() - INTERVAL '3 minutes'
+  );
+
+-- name: BuildResetStale :many
+-- Finds builds stuck in 'pending' or 'building' with no server assignment
+-- for longer than the stuck timeout, and resets them to 'pending'.
+SELECT b.* FROM builds b
+WHERE b.status IN ('pending', 'building')
+  AND b.updated_at < NOW() - ($1::bigint * INTERVAL '1 second')
+  AND (b.processing_by IS NULL OR NOT EXISTS (
+    SELECT 1 FROM servers s WHERE s.id = b.processing_by AND s.last_heartbeat_at > NOW() - INTERVAL '3 minutes'
+  ));
+
+-- name: BuildResetForRetry :one
+-- Resets a build to 'pending' and clears the lease so it can be retried.
+UPDATE builds
+SET status = 'pending', processing_by = NULL, building_at = NULL, updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING *;
+
 -- name: BuildLogCreate :exec
 INSERT INTO build_logs (id, build_id, message, level)
 VALUES ($1, $2, $3, $4);

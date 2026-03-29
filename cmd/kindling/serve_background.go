@@ -17,6 +17,9 @@ import (
 	"github.com/kindlingvm/kindling/internal/volumeops"
 )
 
+const buildRecoveryInterval = 1 * time.Minute     // interval for build orphan recovery sweep
+const buildRecoveryStuckTimeout = 15 * time.Minute // must match internal/builder/buildStuckTimeout
+
 func runProjectVolumeOperationRecoveryLoop(ctx context.Context, q *queries.Queries, sched *reconciler.Scheduler) {
 	if q == nil || sched == nil {
 		return
@@ -31,6 +34,71 @@ func runProjectVolumeOperationRecoveryLoop(ctx context.Context, q *queries.Queri
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		}
+	}
+}
+
+// runBuildRecoveryLoop periodically finds builds orphaned by dead servers and
+// resets them to 'pending' so the build reconciler can retry them. Only one
+// server in the cluster runs this loop by acquiring a session advisory lock.
+func runBuildRecoveryLoop(ctx context.Context, databaseURL string, q *queries.Queries, buildReconciler *reconciler.Scheduler) {
+	ticker := time.NewTicker(buildRecoveryInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runBuildRecoveryOnce(ctx, databaseURL, q, buildReconciler)
+		}
+	}
+}
+
+func runBuildRecoveryOnce(ctx context.Context, databaseURL string, q *queries.Queries, buildReconciler *reconciler.Scheduler) {
+	leaderConn, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		slog.Debug("build recovery: db connect", "error", err)
+		return
+	}
+	defer leaderConn.Close(context.Background())
+
+	qLeader := queries.New(leaderConn)
+	acquired, err := qLeader.TrySessionAdvisoryLock(ctx, "kindling_build_recovery")
+	if err != nil || !acquired {
+		return
+	}
+
+	orphaned, err := q.BuildResetOrphaned(ctx)
+	if err != nil {
+		slog.Warn("build recovery: find orphaned builds", "error", err)
+		return
+	}
+	for _, b := range orphaned {
+		slog.Warn("build recovery: resetting orphaned build (dead server)",
+			"build_id", b.ID, "processing_by", b.ProcessingBy)
+		if _, err := q.BuildResetForRetry(ctx, b.ID); err != nil {
+			slog.Warn("build recovery: reset orphaned build", "build_id", b.ID, "error", err)
+			continue
+		}
+		if buildReconciler != nil {
+			buildReconciler.ScheduleNow(uuid.UUID(b.ID.Bytes))
+		}
+	}
+
+	stale, err := q.BuildResetStale(ctx, int64(buildRecoveryStuckTimeout/time.Second))
+	if err != nil {
+		slog.Warn("build recovery: find stale builds", "error", err)
+		return
+	}
+	for _, b := range stale {
+		slog.Warn("build recovery: resetting stale build (no server, timed out)",
+			"build_id", b.ID, "status", b.Status)
+		if _, err := q.BuildResetForRetry(ctx, b.ID); err != nil {
+			slog.Warn("build recovery: reset stale build", "build_id", b.ID, "error", err)
+			continue
+		}
+		if buildReconciler != nil {
+			buildReconciler.ScheduleNow(uuid.UUID(b.ID.Bytes))
 		}
 	}
 }

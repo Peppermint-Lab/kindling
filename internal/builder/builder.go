@@ -234,34 +234,7 @@ func (b *Builder) ReconcileBuild(ctx context.Context, buildID uuid.UUID) error {
 }
 
 func (b *Builder) downloadSource(ctx context.Context, repo, commit, githubToken string) (io.ReadCloser, error) {
-	// Normalize repo: strip full URL to owner/repo.
-	repo = strings.TrimPrefix(repo, "https://github.com/")
-	repo = strings.TrimPrefix(repo, "http://github.com/")
-	repo = strings.TrimPrefix(repo, "github.com/")
-	repo = strings.TrimSuffix(repo, ".git")
-
-	url := fmt.Sprintf("https://api.github.com/repos/%s/tarball/%s", repo, commit)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	if githubToken != "" {
-		req.Header.Set("Authorization", "Bearer "+githubToken)
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		return nil, fmt.Errorf("GitHub returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	return resp.Body, nil
+	return githubapi.DownloadTarball(ctx, nil, githubToken, repo, commit)
 }
 
 // prepareBuildContext extracts the GitHub tarball, detects framework, and

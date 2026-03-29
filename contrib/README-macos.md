@@ -24,6 +24,12 @@ The installer follows the usual user-local CLI pattern:
 - adds `~/.local/bin` to your shell config if needed
 - `kindling-mac` starts launchd in the background by default
 
+To pull the latest installer/build and restart the local daemon in place:
+
+```bash
+kindling update
+```
+
 ## Requirements
 
 - macOS 13+ (Ventura or later)

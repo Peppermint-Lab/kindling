@@ -4,4 +4,4 @@ package main
 
 import "github.com/spf13/cobra"
 
-func addLocalCommands(root *cobra.Command) {}
+func addPlatformCommands(root *cobra.Command) {}

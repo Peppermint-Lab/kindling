@@ -444,6 +444,136 @@ func (q *Queries) BuildReleaseLease(ctx context.Context, arg BuildReleaseLeasePa
 	return err
 }
 
+const buildReleaseLeaseForServer = `-- name: BuildReleaseLeaseForServer :exec
+UPDATE builds SET processing_by = NULL, updated_at = NOW()
+WHERE processing_by = $1 AND status = 'building'
+`
+
+// Releases the build lease for all builds claimed by a dead server.
+func (q *Queries) BuildReleaseLeaseForServer(ctx context.Context, processingBy pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, buildReleaseLeaseForServer, processingBy)
+	return err
+}
+
+const buildResetForRetry = `-- name: BuildResetForRetry :one
+UPDATE builds
+SET status = 'pending', processing_by = NULL, building_at = NULL, updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, project_id, service_id, status, github_commit, github_branch, image_id, vm_id, processing_by, building_at, failed_at, created_at, updated_at
+`
+
+// Resets a build to 'pending' and clears the lease so it can be retried.
+func (q *Queries) BuildResetForRetry(ctx context.Context, id pgtype.UUID) (Build, error) {
+	row := q.db.QueryRow(ctx, buildResetForRetry, id)
+	var i Build
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServiceID,
+		&i.Status,
+		&i.GithubCommit,
+		&i.GithubBranch,
+		&i.ImageID,
+		&i.VmID,
+		&i.ProcessingBy,
+		&i.BuildingAt,
+		&i.FailedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const buildResetOrphaned = `-- name: BuildResetOrphaned :many
+SELECT b.id, b.project_id, b.service_id, b.status, b.github_commit, b.github_branch, b.image_id, b.vm_id, b.processing_by, b.building_at, b.failed_at, b.created_at, b.updated_at FROM builds b
+WHERE b.processing_by IS NOT NULL
+  AND b.status = 'building'
+  AND NOT EXISTS (
+    SELECT 1 FROM servers s WHERE s.id = b.processing_by AND s.last_heartbeat_at > NOW() - INTERVAL '3 minutes'
+  )
+`
+
+// Finds builds claimed by a server that has no recent heartbeat (dead server)
+// and resets them to 'pending' so another server can retry.
+func (q *Queries) BuildResetOrphaned(ctx context.Context) ([]Build, error) {
+	rows, err := q.db.Query(ctx, buildResetOrphaned)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Build{}
+	for rows.Next() {
+		var i Build
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.ServiceID,
+			&i.Status,
+			&i.GithubCommit,
+			&i.GithubBranch,
+			&i.ImageID,
+			&i.VmID,
+			&i.ProcessingBy,
+			&i.BuildingAt,
+			&i.FailedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const buildResetStale = `-- name: BuildResetStale :many
+SELECT b.id, b.project_id, b.service_id, b.status, b.github_commit, b.github_branch, b.image_id, b.vm_id, b.processing_by, b.building_at, b.failed_at, b.created_at, b.updated_at FROM builds b
+WHERE b.status IN ('pending', 'building')
+  AND b.updated_at < NOW() - ($1::bigint * INTERVAL '1 second')
+  AND (b.processing_by IS NULL OR NOT EXISTS (
+    SELECT 1 FROM servers s WHERE s.id = b.processing_by AND s.last_heartbeat_at > NOW() - INTERVAL '3 minutes'
+  ))
+`
+
+// Finds builds stuck in 'pending' or 'building' with no server assignment
+// for longer than the stuck timeout, and resets them to 'pending'.
+func (q *Queries) BuildResetStale(ctx context.Context, dollar_1 int64) ([]Build, error) {
+	rows, err := q.db.Query(ctx, buildResetStale, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Build{}
+	for rows.Next() {
+		var i Build
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.ServiceID,
+			&i.Status,
+			&i.GithubCommit,
+			&i.GithubBranch,
+			&i.ImageID,
+			&i.VmID,
+			&i.ProcessingBy,
+			&i.BuildingAt,
+			&i.FailedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const cIJobArtifactCreate = `-- name: CIJobArtifactCreate :exec
 INSERT INTO ci_job_artifacts (id, ci_job_id, name, path)
 VALUES ($1, $2, $3, $4)

@@ -37,7 +37,7 @@ Break-glass: kindling admin ... for direct PostgreSQL operations.`,
 	root.AddCommand(debugCmd())
 	root.AddCommand(chBridgeProxyCmd())
 
-	addLocalCommands(root)
+	addPlatformCommands(root)
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
