@@ -3,6 +3,7 @@ package rpc
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -35,6 +36,42 @@ func limitedHandler() http.Handler {
 	return httputil.BodyLimitMiddleware(testBodyLimit, jsonHandler())
 }
 
+// assertSingleJSONBody verifies that the recorder's body contains
+// exactly one valid JSON object (with no trailing bytes). It returns
+// the decoded APIError-shaped struct for further assertions.
+func assertSingleJSONBody(t *testing.T, rec *httptest.ResponseRecorder) httputil.APIError {
+	t.Helper()
+
+	raw := rec.Body.Bytes()
+	if len(raw) == 0 {
+		t.Fatal("response body is empty, want a single JSON object")
+	}
+
+	// Decode exactly one JSON value.
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	var errBody httputil.APIError
+	if err := dec.Decode(&errBody); err != nil {
+		t.Fatalf("could not decode JSON body: %v\nraw body (%d bytes): %s", err, len(raw), string(raw))
+	}
+
+	// Ensure there are no extra bytes after the first JSON value.
+	trailing, err := io.ReadAll(dec.Buffered())
+	if err != nil {
+		t.Fatalf("error reading trailing bytes: %v", err)
+	}
+	// After the buffered data, also check the rest of the reader.
+	rest, _ := io.ReadAll(dec.Buffered())
+	trailing = append(trailing, rest...)
+
+	// Trim whitespace — a trailing newline from json.Encoder is acceptable.
+	if len(bytes.TrimSpace(trailing)) > 0 {
+		t.Fatalf("response body contains extra bytes after JSON object (%d trailing bytes)\nfull body: %s",
+			len(trailing), string(raw))
+	}
+
+	return errBody
+}
+
 // ---------- VAL-BODYLIMIT-001: Oversized public JSON bodies rejected with 413 ----------
 
 func TestBodyLimit_OversizedPublicRouteReturns413(t *testing.T) {
@@ -57,13 +94,7 @@ func TestBodyLimit_OversizedPublicRouteReturns413(t *testing.T) {
 			t.Fatalf("status = %d, want %d (413 Payload Too Large)", rec.Code, http.StatusRequestEntityTooLarge)
 		}
 
-		var errBody struct {
-			Error string `json:"error"`
-			Code  string `json:"code"`
-		}
-		if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
-			t.Fatalf("could not decode error body: %v", err)
-		}
+		errBody := assertSingleJSONBody(t, rec)
 		if errBody.Code != "payload_too_large" {
 			t.Fatalf("error code = %q, want %q", errBody.Code, "payload_too_large")
 		}
@@ -73,6 +104,9 @@ func TestBodyLimit_OversizedPublicRouteReturns413(t *testing.T) {
 	})
 
 	// Test without Content-Length (chunked — triggers MaxBytesReader path).
+	// This is the critical path for the double-write bug: the handler's
+	// JSON decode fails, it writes a 400+body, and the middleware must
+	// intercept to emit exactly one 413 JSON body with no appended bytes.
 	t.Run("without_content_length", func(t *testing.T) {
 		t.Parallel()
 		body := bytes.NewReader([]byte(oversized))
@@ -86,13 +120,7 @@ func TestBodyLimit_OversizedPublicRouteReturns413(t *testing.T) {
 			t.Fatalf("status = %d, want %d (413 Payload Too Large)", rec.Code, http.StatusRequestEntityTooLarge)
 		}
 
-		var errBody struct {
-			Error string `json:"error"`
-			Code  string `json:"code"`
-		}
-		if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
-			t.Fatalf("could not decode error body: %v", err)
-		}
+		errBody := assertSingleJSONBody(t, rec)
 		if errBody.Code != "payload_too_large" {
 			t.Fatalf("error code = %q, want %q", errBody.Code, "payload_too_large")
 		}
@@ -109,28 +137,43 @@ func TestBodyLimit_OversizedProtectedRouteReturns413(t *testing.T) {
 	// Build a JSON body that exceeds 1 MiB, targeting a protected route.
 	oversized := `{"name":"` + strings.Repeat("B", testBodyLimit+1) + `"}`
 
-	req := httptest.NewRequest(http.MethodPost, "/api/projects", strings.NewReader(oversized))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	// With Content-Length (fast path).
+	t.Run("with_content_length", func(t *testing.T) {
+		t.Parallel()
+		req := httptest.NewRequest(http.MethodPost, "/api/projects", strings.NewReader(oversized))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("status = %d, want %d (413 Payload Too Large)", rec.Code, http.StatusRequestEntityTooLarge)
-	}
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("status = %d, want %d (413 Payload Too Large)", rec.Code, http.StatusRequestEntityTooLarge)
+		}
 
-	// Verify 413 is returned before business logic runs — the handler
-	// should never have seen the decoded body since the middleware
-	// rejected it.
-	var errBody struct {
-		Error string `json:"error"`
-		Code  string `json:"code"`
-	}
-	if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
-		t.Fatalf("could not decode error body: %v", err)
-	}
-	if errBody.Code != "payload_too_large" {
-		t.Fatalf("error code = %q, want %q", errBody.Code, "payload_too_large")
-	}
+		errBody := assertSingleJSONBody(t, rec)
+		if errBody.Code != "payload_too_large" {
+			t.Fatalf("error code = %q, want %q", errBody.Code, "payload_too_large")
+		}
+	})
+
+	// Without Content-Length (chunked — exercises the double-write path).
+	t.Run("without_content_length", func(t *testing.T) {
+		t.Parallel()
+		body := bytes.NewReader([]byte(oversized))
+		req := httptest.NewRequest(http.MethodPost, "/api/projects", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.ContentLength = -1
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("status = %d, want %d (413 Payload Too Large)", rec.Code, http.StatusRequestEntityTooLarge)
+		}
+
+		errBody := assertSingleJSONBody(t, rec)
+		if errBody.Code != "payload_too_large" {
+			t.Fatalf("error code = %q, want %q", errBody.Code, "payload_too_large")
+		}
+	})
 }
 
 // ---------- VAL-BODYLIMIT-003: Normal-sized requests continue to reach handlers ----------
@@ -244,6 +287,11 @@ func TestBodyLimit_OneBytePastLimitRejected(t *testing.T) {
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want %d (1 byte past limit)", rec.Code, http.StatusRequestEntityTooLarge)
 	}
+
+	errBody := assertSingleJSONBody(t, rec)
+	if errBody.Code != "payload_too_large" {
+		t.Fatalf("error code = %q, want %q", errBody.Code, "payload_too_large")
+	}
 }
 
 // ---------- JSON error body on 413 ----------
@@ -269,14 +317,8 @@ func TestBodyLimit_413HasInformativeJSONBody(t *testing.T) {
 		t.Fatalf("Content-Type = %q, want application/json", ct)
 	}
 
-	// Verify JSON structure matches APIError.
-	var errBody struct {
-		Error string `json:"error"`
-		Code  string `json:"code"`
-	}
-	if err := json.NewDecoder(rec.Body).Decode(&errBody); err != nil {
-		t.Fatalf("413 response is not valid JSON: %v", err)
-	}
+	// Verify the body is exactly one valid JSON object with no trailing bytes.
+	errBody := assertSingleJSONBody(t, rec)
 	if errBody.Code != "payload_too_large" {
 		t.Fatalf("error code = %q, want %q", errBody.Code, "payload_too_large")
 	}
@@ -304,5 +346,139 @@ func TestBodyLimit_GETRequestsUnaffected(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET request status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+// ---------- Double-write prevention: single 413 response with no concatenated bodies ----------
+
+// TestBodyLimit_SingleResponseNoDoubleWrite verifies the core fix: when
+// MaxBytesReader fires during a handler read and the handler writes its
+// own error (e.g., 400 + JSON body), the middleware must emit exactly
+// one 413 response body. Before the fix, the handler's error JSON was
+// appended after the middleware's 413 JSON, producing concatenated
+// invalid JSON.
+func TestBodyLimit_SingleResponseNoDoubleWrite(t *testing.T) {
+	t.Parallel()
+
+	handler := limitedHandler()
+
+	// Build a body that is slightly over the limit. With ContentLength
+	// unknown, the handler will read the full body, hit MaxBytesError,
+	// and try to write its own error response.
+	oversized := `{"data":"` + strings.Repeat("D", testBodyLimit+512) + `"}`
+
+	routes := []struct {
+		name string
+		path string
+	}{
+		{"public_login", "/api/auth/login"},
+		{"public_bootstrap", "/api/auth/bootstrap"},
+		{"protected_projects", "/api/projects"},
+	}
+
+	for _, tc := range routes {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Force chunked path (no Content-Length) to exercise the
+			// MaxBytesReader → handler error → middleware intercept flow.
+			body := bytes.NewReader([]byte(oversized))
+			req := httptest.NewRequest(http.MethodPost, tc.path, body)
+			req.Header.Set("Content-Type", "application/json")
+			req.ContentLength = -1
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+			}
+
+			// The critical assertion: response body must be exactly one
+			// valid JSON object with no appended/concatenated bytes.
+			errBody := assertSingleJSONBody(t, rec)
+			if errBody.Code != "payload_too_large" {
+				t.Fatalf("error code = %q, want %q", errBody.Code, "payload_too_large")
+			}
+		})
+	}
+}
+
+// TestBodyLimit_HandlerMultipleWritesDiscarded verifies that even if a
+// handler calls Write() multiple times after the body limit fires, all
+// writes are silently discarded.
+func TestBodyLimit_HandlerMultipleWritesDiscarded(t *testing.T) {
+	t.Parallel()
+
+	// A handler that writes multiple chunks to the response body after
+	// failing to decode the request.
+	multiWriteHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var v map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&v); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			// Write multiple times — all should be discarded by the middleware.
+			w.Write([]byte(`{"error":"bad`))
+			w.Write([]byte(`_request","code":"invalid_json"}`))
+			w.Write([]byte("\nextra trailing data"))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := httputil.BodyLimitMiddleware(testBodyLimit, multiWriteHandler)
+
+	oversized := `{"data":"` + strings.Repeat("M", testBodyLimit+1) + `"}`
+	body := bytes.NewReader([]byte(oversized))
+	req := httptest.NewRequest(http.MethodPost, "/api/test", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.ContentLength = -1
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+
+	errBody := assertSingleJSONBody(t, rec)
+	if errBody.Code != "payload_too_large" {
+		t.Fatalf("error code = %q, want %q", errBody.Code, "payload_too_large")
+	}
+}
+
+// TestBodyLimit_FastPathSingleResponse verifies that the Content-Length
+// fast path also produces exactly one JSON body (no double-write risk
+// on this path, but assert for completeness).
+func TestBodyLimit_FastPathSingleResponse(t *testing.T) {
+	t.Parallel()
+
+	handler := limitedHandler()
+
+	oversized := `{"data":"` + strings.Repeat("F", testBodyLimit+1) + `"}`
+
+	routes := []struct {
+		name string
+		path string
+	}{
+		{"public_login", "/api/auth/login"},
+		{"protected_projects", "/api/projects"},
+	}
+
+	for _, tc := range routes {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(oversized))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+			}
+
+			errBody := assertSingleJSONBody(t, rec)
+			if errBody.Code != "payload_too_large" {
+				t.Fatalf("error code = %q, want %q", errBody.Code, "payload_too_large")
+			}
+		})
 	}
 }

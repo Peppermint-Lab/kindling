@@ -76,11 +76,14 @@ func (t *bodyLimitTracker) isExceeded() bool {
 
 // bodyLimitResponseWriter intercepts WriteHeader to convert error
 // responses caused by body-too-large into proper 413 responses.
+// Once a 413 has been emitted, all subsequent Write calls from
+// the handler are silently discarded to prevent concatenated bodies.
 type bodyLimitResponseWriter struct {
 	http.ResponseWriter
 	maxBytes    int64
 	tracker     *bodyLimitTracker
 	wroteHeader bool
+	hijacked    bool // true after middleware emits its own 413 response
 }
 
 func (bw *bodyLimitResponseWriter) WriteHeader(code int) {
@@ -92,6 +95,7 @@ func (bw *bodyLimitResponseWriter) WriteHeader(code int) {
 	// If the body limit was exceeded and the handler is reporting an
 	// error (typically 400 from a failed JSON decode), override to 413.
 	if bw.tracker.isExceeded() && code >= 400 && code < 500 {
+		bw.hijacked = true
 		WriteAPIError(bw.ResponseWriter, http.StatusRequestEntityTooLarge,
 			"payload_too_large",
 			"request body too large (limit "+strconv.FormatInt(bw.maxBytes, 10)+" bytes)")
@@ -104,6 +108,11 @@ func (bw *bodyLimitResponseWriter) WriteHeader(code int) {
 func (bw *bodyLimitResponseWriter) Write(b []byte) (int, error) {
 	if !bw.wroteHeader {
 		bw.WriteHeader(http.StatusOK)
+	}
+	// If the middleware already emitted a 413 response, discard the
+	// handler's body bytes to avoid concatenated JSON error payloads.
+	if bw.hijacked {
+		return len(b), nil
 	}
 	return bw.ResponseWriter.Write(b)
 }
