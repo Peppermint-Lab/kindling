@@ -4959,7 +4959,7 @@ func (q *Queries) OrgUserSSHKeysActive(ctx context.Context, organizationID pgtyp
 }
 
 const organizationByID = `-- name: OrganizationByID :one
-SELECT id, name, slug, created_at, updated_at FROM organizations WHERE id = $1
+SELECT id, name, slug, email_domain, created_at, updated_at FROM organizations WHERE id = $1
 `
 
 func (q *Queries) OrganizationByID(ctx context.Context, id pgtype.UUID) (Organization, error) {
@@ -4969,6 +4969,7 @@ func (q *Queries) OrganizationByID(ctx context.Context, id pgtype.UUID) (Organiz
 		&i.ID,
 		&i.Name,
 		&i.Slug,
+		&i.EmailDomain,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -4979,13 +4980,13 @@ const organizationCreate = `-- name: OrganizationCreate :one
 WITH inserted AS (
     INSERT INTO organizations (id, name, slug)
     VALUES ($1, $2, $3)
-    RETURNING id, name, slug, created_at, updated_at
+    RETURNING id, name, slug, email_domain, created_at, updated_at
 ), network AS (
     INSERT INTO org_networks (organization_id, cidr)
     SELECT id, ((SELECT COALESCE(MAX(cidr), '172.19.255.0/24'::CIDR) FROM org_networks) + 1)::CIDR
     FROM inserted
 )
-SELECT id, name, slug, created_at, updated_at FROM inserted
+SELECT id, name, slug, email_domain, created_at, updated_at FROM inserted
 `
 
 type OrganizationCreateParams struct {
@@ -4995,11 +4996,12 @@ type OrganizationCreateParams struct {
 }
 
 type OrganizationCreateRow struct {
-	ID        pgtype.UUID        `json:"id"`
-	Name      string             `json:"name"`
-	Slug      string             `json:"slug"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	ID          pgtype.UUID        `json:"id"`
+	Name        string             `json:"name"`
+	Slug        string             `json:"slug"`
+	EmailDomain string             `json:"email_domain"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) OrganizationCreate(ctx context.Context, arg OrganizationCreateParams) (OrganizationCreateRow, error) {
@@ -5009,6 +5011,30 @@ func (q *Queries) OrganizationCreate(ctx context.Context, arg OrganizationCreate
 		&i.ID,
 		&i.Name,
 		&i.Slug,
+		&i.EmailDomain,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const organizationFindByEmailDomain = `-- name: OrganizationFindByEmailDomain :one
+
+SELECT id, name, slug, email_domain, created_at, updated_at FROM organizations
+WHERE LOWER(email_domain) = LOWER($1)
+  AND email_domain <> ''
+LIMIT 1
+`
+
+// OAuth domain-aware membership queries --
+func (q *Queries) OrganizationFindByEmailDomain(ctx context.Context, lower string) (Organization, error) {
+	row := q.db.QueryRow(ctx, organizationFindByEmailDomain, lower)
+	var i Organization
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Slug,
+		&i.EmailDomain,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -5016,7 +5042,7 @@ func (q *Queries) OrganizationCreate(ctx context.Context, arg OrganizationCreate
 }
 
 const organizationMembershipByUserAndOrg = `-- name: OrganizationMembershipByUserAndOrg :one
-SELECT id, organization_id, user_id, role, created_at FROM organization_memberships
+SELECT id, organization_id, user_id, role, status, created_at FROM organization_memberships
 WHERE user_id = $1 AND organization_id = $2
 `
 
@@ -5033,6 +5059,31 @@ func (q *Queries) OrganizationMembershipByUserAndOrg(ctx context.Context, arg Or
 		&i.OrganizationID,
 		&i.UserID,
 		&i.Role,
+		&i.Status,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const organizationMembershipByUserAndOrgWithStatus = `-- name: OrganizationMembershipByUserAndOrgWithStatus :one
+SELECT id, organization_id, user_id, role, status, created_at FROM organization_memberships
+WHERE user_id = $1 AND organization_id = $2
+`
+
+type OrganizationMembershipByUserAndOrgWithStatusParams struct {
+	UserID         pgtype.UUID `json:"user_id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+}
+
+func (q *Queries) OrganizationMembershipByUserAndOrgWithStatus(ctx context.Context, arg OrganizationMembershipByUserAndOrgWithStatusParams) (OrganizationMembership, error) {
+	row := q.db.QueryRow(ctx, organizationMembershipByUserAndOrgWithStatus, arg.UserID, arg.OrganizationID)
+	var i OrganizationMembership
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.UserID,
+		&i.Role,
+		&i.Status,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -5041,7 +5092,7 @@ func (q *Queries) OrganizationMembershipByUserAndOrg(ctx context.Context, arg Or
 const organizationMembershipCreate = `-- name: OrganizationMembershipCreate :one
 INSERT INTO organization_memberships (id, organization_id, user_id, role)
 VALUES ($1, $2, $3, $4)
-RETURNING id, organization_id, user_id, role, created_at
+RETURNING id, organization_id, user_id, role, status, created_at
 `
 
 type OrganizationMembershipCreateParams struct {
@@ -5064,6 +5115,116 @@ func (q *Queries) OrganizationMembershipCreate(ctx context.Context, arg Organiza
 		&i.OrganizationID,
 		&i.UserID,
 		&i.Role,
+		&i.Status,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const organizationMembershipCreateWithStatus = `-- name: OrganizationMembershipCreateWithStatus :one
+INSERT INTO organization_memberships (id, organization_id, user_id, role, status)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, organization_id, user_id, role, status, created_at
+`
+
+type OrganizationMembershipCreateWithStatusParams struct {
+	ID             pgtype.UUID `json:"id"`
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	UserID         pgtype.UUID `json:"user_id"`
+	Role           string      `json:"role"`
+	Status         string      `json:"status"`
+}
+
+func (q *Queries) OrganizationMembershipCreateWithStatus(ctx context.Context, arg OrganizationMembershipCreateWithStatusParams) (OrganizationMembership, error) {
+	row := q.db.QueryRow(ctx, organizationMembershipCreateWithStatus,
+		arg.ID,
+		arg.OrganizationID,
+		arg.UserID,
+		arg.Role,
+		arg.Status,
+	)
+	var i OrganizationMembership
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.UserID,
+		&i.Role,
+		&i.Status,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const organizationMembershipListPendingByOrg = `-- name: OrganizationMembershipListPendingByOrg :many
+SELECT m.id, m.organization_id, m.user_id, m.role, m.status, m.created_at, u.email, u.display_name
+FROM organization_memberships m
+INNER JOIN users u ON u.id = m.user_id
+WHERE m.organization_id = $1 AND m.status = 'pending'
+ORDER BY m.created_at ASC
+`
+
+type OrganizationMembershipListPendingByOrgRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	Role           string             `json:"role"`
+	Status         string             `json:"status"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	Email          string             `json:"email"`
+	DisplayName    string             `json:"display_name"`
+}
+
+func (q *Queries) OrganizationMembershipListPendingByOrg(ctx context.Context, organizationID pgtype.UUID) ([]OrganizationMembershipListPendingByOrgRow, error) {
+	rows, err := q.db.Query(ctx, organizationMembershipListPendingByOrg, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrganizationMembershipListPendingByOrgRow{}
+	for rows.Next() {
+		var i OrganizationMembershipListPendingByOrgRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.UserID,
+			&i.Role,
+			&i.Status,
+			&i.CreatedAt,
+			&i.Email,
+			&i.DisplayName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const organizationMembershipUpdateStatus = `-- name: OrganizationMembershipUpdateStatus :one
+UPDATE organization_memberships
+SET status = $3
+WHERE organization_id = $1 AND user_id = $2
+RETURNING id, organization_id, user_id, role, status, created_at
+`
+
+type OrganizationMembershipUpdateStatusParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	UserID         pgtype.UUID `json:"user_id"`
+	Status         string      `json:"status"`
+}
+
+func (q *Queries) OrganizationMembershipUpdateStatus(ctx context.Context, arg OrganizationMembershipUpdateStatusParams) (OrganizationMembership, error) {
+	row := q.db.QueryRow(ctx, organizationMembershipUpdateStatus, arg.OrganizationID, arg.UserID, arg.Status)
+	var i OrganizationMembership
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.UserID,
+		&i.Role,
+		&i.Status,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -5109,10 +5270,24 @@ func (q *Queries) OrganizationMembershipUpsertOwner(ctx context.Context, arg Org
 	return err
 }
 
+const organizationUpdateEmailDomain = `-- name: OrganizationUpdateEmailDomain :exec
+UPDATE organizations SET email_domain = $2, updated_at = NOW() WHERE id = $1
+`
+
+type OrganizationUpdateEmailDomainParams struct {
+	ID          pgtype.UUID `json:"id"`
+	EmailDomain string      `json:"email_domain"`
+}
+
+func (q *Queries) OrganizationUpdateEmailDomain(ctx context.Context, arg OrganizationUpdateEmailDomainParams) error {
+	_, err := q.db.Exec(ctx, organizationUpdateEmailDomain, arg.ID, arg.EmailDomain)
+	return err
+}
+
 const organizationsForUser = `-- name: OrganizationsForUser :many
-SELECT o.id, o.name, o.slug, o.created_at, o.updated_at FROM organizations o
+SELECT o.id, o.name, o.slug, o.email_domain, o.created_at, o.updated_at FROM organizations o
 INNER JOIN organization_memberships m ON m.organization_id = o.id
-WHERE m.user_id = $1
+WHERE m.user_id = $1 AND m.status = 'active'
 ORDER BY o.name ASC
 `
 
@@ -5129,6 +5304,7 @@ func (q *Queries) OrganizationsForUser(ctx context.Context, userID pgtype.UUID) 
 			&i.ID,
 			&i.Name,
 			&i.Slug,
+			&i.EmailDomain,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -5143,7 +5319,7 @@ func (q *Queries) OrganizationsForUser(ctx context.Context, userID pgtype.UUID) 
 }
 
 const organizationsListAll = `-- name: OrganizationsListAll :many
-SELECT id, name, slug, created_at, updated_at FROM organizations ORDER BY name ASC
+SELECT id, name, slug, email_domain, created_at, updated_at FROM organizations ORDER BY name ASC
 `
 
 func (q *Queries) OrganizationsListAll(ctx context.Context) ([]Organization, error) {
@@ -5159,6 +5335,7 @@ func (q *Queries) OrganizationsListAll(ctx context.Context) ([]Organization, err
 			&i.ID,
 			&i.Name,
 			&i.Slug,
+			&i.EmailDomain,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {

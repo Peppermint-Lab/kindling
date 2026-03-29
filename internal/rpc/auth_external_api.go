@@ -445,13 +445,72 @@ func (a *API) resolveExternalLogin(ctx context.Context, provider string, identit
 	if err != nil {
 		return queries.User{}, fmt.Errorf("create user: %w", err)
 	}
-	personalName := externalIdentityDisplayName(identity)
-	if personalName == "" {
-		personalName = user.Email
+
+	// Domain-aware org matching for OAuth users.
+	emailDomain := extractEmailDomain(identity.Email)
+	domainMatched := false
+
+	if emailDomain != "" && !isConsumerDomain(emailDomain) {
+		// Business domain: check if any org claims this domain.
+		matchedOrg, lookupErr := a.q.OrganizationFindByEmailDomain(ctx, emailDomain)
+		if lookupErr == nil {
+			// Found a matching org — check if user is already an active member.
+			existingMembership, memErr := a.q.OrganizationMembershipByUserAndOrgWithStatus(ctx, queries.OrganizationMembershipByUserAndOrgWithStatusParams{
+				UserID:         user.ID,
+				OrganizationID: matchedOrg.ID,
+			})
+			if errors.Is(memErr, pgx.ErrNoRows) {
+				// No membership yet — create pending membership (idempotent).
+				_, createErr := a.q.OrganizationMembershipCreateWithStatus(ctx, queries.OrganizationMembershipCreateWithStatusParams{
+					ID:             pgtype.UUID{Bytes: uuid.New(), Valid: true},
+					OrganizationID: matchedOrg.ID,
+					UserID:         user.ID,
+					Role:           "member",
+					Status:         "pending",
+				})
+				if createErr != nil && !isPgUniqueViolation(createErr) {
+					return queries.User{}, fmt.Errorf("create pending membership: %w", createErr)
+				}
+				domainMatched = true
+			} else if memErr == nil {
+				// Already has a membership — if active, they'll login normally.
+				// If pending or rejected, don't re-create.
+				if existingMembership.Status == "active" {
+					domainMatched = false // let normal flow handle it
+				} else {
+					// pending or rejected — domain matched, no new org
+					domainMatched = true
+				}
+			} else {
+				return queries.User{}, fmt.Errorf("check membership: %w", memErr)
+			}
+		} else if !errors.Is(lookupErr, pgx.ErrNoRows) {
+			return queries.User{}, fmt.Errorf("lookup org by domain: %w", lookupErr)
+		}
+		// If no matching org found (ErrNoRows), fall through to create new org.
 	}
-	if _, err := a.createOwnedOrganizationForUser(ctx, user, personalName+"'s Workspace", identity.Login); err != nil {
-		return queries.User{}, fmt.Errorf("create personal organization: %w", err)
+
+	if !domainMatched {
+		// No domain match (or consumer domain or no match found) — create personal org.
+		personalName := externalIdentityDisplayName(identity)
+		if personalName == "" {
+			personalName = user.Email
+		}
+		org, err := a.createOwnedOrganizationForUser(ctx, user, personalName+"'s Workspace", identity.Login)
+		if err != nil {
+			return queries.User{}, fmt.Errorf("create personal organization: %w", err)
+		}
+		// Set the email domain on the new org so future users with the same domain can match.
+		if emailDomain != "" && !isConsumerDomain(emailDomain) {
+			if err := a.q.OrganizationUpdateEmailDomain(ctx, queries.OrganizationUpdateEmailDomainParams{
+				ID:          org.ID,
+				EmailDomain: emailDomain,
+			}); err != nil {
+				return queries.User{}, fmt.Errorf("set org email domain: %w", err)
+			}
+		}
 	}
+
 	if provider == "github" {
 		orgIDs, err := a.resolveGitHubOrganizationIDs(ctx, orgLogins)
 		if err != nil {

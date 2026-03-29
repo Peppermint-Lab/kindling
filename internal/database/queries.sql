@@ -1949,7 +1949,7 @@ WHERE user_id = $1 AND organization_id = $2;
 -- name: OrganizationsForUser :many
 SELECT o.* FROM organizations o
 INNER JOIN organization_memberships m ON m.organization_id = o.id
-WHERE m.user_id = $1
+WHERE m.user_id = $1 AND m.status = 'active'
 ORDER BY o.name ASC;
 
 -- name: OrganizationsListAll :many
@@ -2301,3 +2301,36 @@ WHERE project_id = $1
   AND bucket_start <= $3
 GROUP BY bucket_start
 ORDER BY bucket_start ASC;
+
+-- OAuth domain-aware membership queries --
+
+-- name: OrganizationFindByEmailDomain :one
+SELECT * FROM organizations
+WHERE LOWER(email_domain) = LOWER($1)
+  AND email_domain <> ''
+LIMIT 1;
+
+-- name: OrganizationUpdateEmailDomain :exec
+UPDATE organizations SET email_domain = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: OrganizationMembershipByUserAndOrgWithStatus :one
+SELECT * FROM organization_memberships
+WHERE user_id = $1 AND organization_id = $2;
+
+-- name: OrganizationMembershipCreateWithStatus :one
+INSERT INTO organization_memberships (id, organization_id, user_id, role, status)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING *;
+
+-- name: OrganizationMembershipUpdateStatus :one
+UPDATE organization_memberships
+SET status = $3
+WHERE organization_id = $1 AND user_id = $2
+RETURNING *;
+
+-- name: OrganizationMembershipListPendingByOrg :many
+SELECT m.*, u.email, u.display_name
+FROM organization_memberships m
+INNER JOIN users u ON u.id = m.user_id
+WHERE m.organization_id = $1 AND m.status = 'pending'
+ORDER BY m.created_at ASC;
