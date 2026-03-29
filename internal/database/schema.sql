@@ -498,6 +498,7 @@ CREATE TABLE IF NOT EXISTS sandboxes (
     expires_at           TIMESTAMPTZ,
     published_http_port  INT CHECK (published_http_port IS NULL OR (published_http_port > 0 AND published_http_port <= 65535)),
     runtime_url          TEXT NOT NULL DEFAULT '',
+    ssh_host_public_key  TEXT NOT NULL DEFAULT '',
     failure_message      TEXT NOT NULL DEFAULT '',
     created_by_user_id   UUID REFERENCES users(id) ON DELETE SET NULL,
     deleted_at           TIMESTAMPTZ,

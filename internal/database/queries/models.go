@@ -386,6 +386,7 @@ type Sandbox struct {
 	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
 	PublishedHttpPort  pgtype.Int4        `json:"published_http_port"`
 	RuntimeUrl         string             `json:"runtime_url"`
+	SshHostPublicKey   string             `json:"ssh_host_public_key"`
 	FailureMessage     string             `json:"failure_message"`
 	CreatedByUserID    pgtype.UUID        `json:"created_by_user_id"`
 	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`

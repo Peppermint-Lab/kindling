@@ -25,6 +25,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/auth"
 	kcli "github.com/kindlingvm/kindling/internal/cli"
 	"github.com/kindlingvm/kindling/internal/shellwire"
+	"github.com/kindlingvm/kindling/internal/sshtrust"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -448,7 +449,7 @@ func cliSandboxSSHCmd() *cobra.Command {
 	var sandboxID string
 	cmd := &cobra.Command{
 		Use:   "ssh --sandbox <uuid> [-- <ssh args...>]",
-		Short: "Open an SSH session to a running sandbox using the local ssh client",
+		Short: "Open an SSH session to a running sandbox using the local ssh client with managed host-key verification",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(sandboxID)
@@ -458,6 +459,19 @@ func cliSandboxSSHCmd() *cobra.Command {
 			if _, err := uuid.Parse(id); err != nil {
 				return fmt.Errorf("invalid sandbox id: %w", err)
 			}
+			c, err := mustRemoteClient()
+			if err != nil {
+				return fmt.Errorf("create client: %w", err)
+			}
+			sandbox, err := fetchSandboxSummary(cmd.Context(), c, id)
+			if err != nil {
+				return fmt.Errorf("fetch sandbox: %w", err)
+			}
+			knownHostsPath, err := writeSandboxKnownHosts(id, sandbox.SSHHostPublicKey)
+			if err != nil {
+				return fmt.Errorf("prepare sandbox ssh trust: %w", err)
+			}
+			defer os.Remove(knownHostsPath)
 			exe, err := os.Executable()
 			if err != nil {
 				return fmt.Errorf("locate current binary: %w", err)
@@ -474,11 +488,12 @@ func cliSandboxSSHCmd() *cobra.Command {
 			}
 			sshArgs := []string{
 				"-o", "ProxyCommand=" + strings.Join(proxyParts, " "),
-				"-o", "StrictHostKeyChecking=no",
-				"-o", "UserKnownHostsFile=/dev/null",
+				"-o", "StrictHostKeyChecking=yes",
+				"-o", "GlobalKnownHostsFile=/dev/null",
+				"-o", "UserKnownHostsFile=" + knownHostsPath,
 			}
 			sshArgs = append(sshArgs, args...)
-			sshArgs = append(sshArgs, "kindling@sandbox-"+id[:8])
+			sshArgs = append(sshArgs, "kindling@"+sandboxSSHHostAlias(id))
 			sshCmd := exec.CommandContext(cmd.Context(), "ssh", sshArgs...)
 			sshCmd.Stdin = os.Stdin
 			sshCmd.Stdout = os.Stdout
@@ -660,6 +675,11 @@ type sandboxExecResponse struct {
 	Output   string `json:"output"`
 }
 
+type sandboxSummary struct {
+	ID               string `json:"id"`
+	SSHHostPublicKey string `json:"ssh_host_public_key"`
+}
+
 type sandboxUpgradedConn struct {
 	net.Conn
 	reader *bufio.Reader
@@ -667,6 +687,47 @@ type sandboxUpgradedConn struct {
 
 func (c *sandboxUpgradedConn) Read(p []byte) (int, error) {
 	return c.reader.Read(p)
+}
+
+func fetchSandboxSummary(ctx context.Context, c *kcli.Client, sandboxID string) (sandboxSummary, error) {
+	var out sandboxSummary
+	if err := c.DoJSON(ctx, http.MethodGet, "/api/sandboxes/"+sandboxID, nil, &out); err != nil {
+		return sandboxSummary{}, err
+	}
+	return out, nil
+}
+
+func sandboxSSHHostAlias(sandboxID string) string {
+	return "sandbox-" + sandboxID[:8]
+}
+
+func writeSandboxKnownHosts(sandboxID, publicKey string) (string, error) {
+	line, err := sshtrust.KnownHostsLine(sandboxSSHHostAlias(sandboxID), publicKey)
+	if err != nil {
+		if strings.TrimSpace(publicKey) == "" {
+			return "", fmt.Errorf("sandbox SSH host key is not ready yet; ensure the sandbox is running and the guest image includes sshd and ssh-keygen")
+		}
+		return "", err
+	}
+	f, err := os.CreateTemp("", "kindling-sandbox-known-hosts-*")
+	if err != nil {
+		return "", err
+	}
+	path := f.Name()
+	if _, err := f.WriteString(line); err != nil {
+		f.Close()
+		os.Remove(path)
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(path)
+		return "", err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		os.Remove(path)
+		return "", err
+	}
+	return path, nil
 }
 
 func runSandboxExec(cmd *cobra.Command, sandboxID, cwd string, env []string, argv []string) error {

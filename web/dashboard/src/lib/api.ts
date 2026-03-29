@@ -121,6 +121,7 @@ export type Sandbox = {
   expires_at?: string | null
   published_http_port?: number | null
   runtime_url?: string
+  ssh_host_public_key?: string
   failure_message?: string
   created_at?: string | null
   updated_at?: string | null

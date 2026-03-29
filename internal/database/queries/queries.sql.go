@@ -7633,7 +7633,7 @@ SET vm_id = $2,
     runtime_url = $4,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 type SandboxAttachVMParams struct {
@@ -7675,6 +7675,7 @@ func (q *Queries) SandboxAttachVM(ctx context.Context, arg SandboxAttachVMParams
 		&i.ExpiresAt,
 		&i.PublishedHttpPort,
 		&i.RuntimeUrl,
+		&i.SshHostPublicKey,
 		&i.FailureMessage,
 		&i.CreatedByUserID,
 		&i.DeletedAt,
@@ -7690,7 +7691,7 @@ SET vm_id = NULL,
     runtime_url = '',
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 func (q *Queries) SandboxClearVM(ctx context.Context, id pgtype.UUID) (Sandbox, error) {
@@ -7720,6 +7721,7 @@ func (q *Queries) SandboxClearVM(ctx context.Context, id pgtype.UUID) (Sandbox, 
 		&i.ExpiresAt,
 		&i.PublishedHttpPort,
 		&i.RuntimeUrl,
+		&i.SshHostPublicKey,
 		&i.FailureMessage,
 		&i.CreatedByUserID,
 		&i.DeletedAt,
@@ -7735,15 +7737,15 @@ INSERT INTO sandboxes (
   id, org_id, name, host_group, backend, arch, desired_state, observed_state,
   server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb,
   env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at,
-  published_http_port, runtime_url, failure_message, created_by_user_id
+  published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id
 )
 VALUES (
   $1, $2, $3, $4, $5, $6, $7, $8,
   $9, $10, $11, $12, $13, $14, $15,
   $16, $17, $18, $19, $20, $21,
-  $22, $23, $24, $25
+  $22, $23, $24, $25, $26
 )
-RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 type SandboxCreateParams struct {
@@ -7770,6 +7772,7 @@ type SandboxCreateParams struct {
 	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
 	PublishedHttpPort  pgtype.Int4        `json:"published_http_port"`
 	RuntimeUrl         string             `json:"runtime_url"`
+	SshHostPublicKey   string             `json:"ssh_host_public_key"`
 	FailureMessage     string             `json:"failure_message"`
 	CreatedByUserID    pgtype.UUID        `json:"created_by_user_id"`
 }
@@ -7800,6 +7803,7 @@ func (q *Queries) SandboxCreate(ctx context.Context, arg SandboxCreateParams) (S
 		arg.ExpiresAt,
 		arg.PublishedHttpPort,
 		arg.RuntimeUrl,
+		arg.SshHostPublicKey,
 		arg.FailureMessage,
 		arg.CreatedByUserID,
 	)
@@ -7828,6 +7832,7 @@ func (q *Queries) SandboxCreate(ctx context.Context, arg SandboxCreateParams) (S
 		&i.ExpiresAt,
 		&i.PublishedHttpPort,
 		&i.RuntimeUrl,
+		&i.SshHostPublicKey,
 		&i.FailureMessage,
 		&i.CreatedByUserID,
 		&i.DeletedAt,
@@ -7838,7 +7843,7 @@ func (q *Queries) SandboxCreate(ctx context.Context, arg SandboxCreateParams) (S
 }
 
 const sandboxFindByServerID = `-- name: SandboxFindByServerID :many
-SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes
+SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes
 WHERE server_id = $1
   AND deleted_at IS NULL
 ORDER BY updated_at DESC
@@ -7877,6 +7882,7 @@ func (q *Queries) SandboxFindByServerID(ctx context.Context, serverID pgtype.UUI
 			&i.ExpiresAt,
 			&i.PublishedHttpPort,
 			&i.RuntimeUrl,
+			&i.SshHostPublicKey,
 			&i.FailureMessage,
 			&i.CreatedByUserID,
 			&i.DeletedAt,
@@ -7894,7 +7900,7 @@ func (q *Queries) SandboxFindByServerID(ctx context.Context, serverID pgtype.UUI
 }
 
 const sandboxFirstByID = `-- name: SandboxFirstByID :one
-SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes WHERE id = $1
+SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes WHERE id = $1
 `
 
 func (q *Queries) SandboxFirstByID(ctx context.Context, id pgtype.UUID) (Sandbox, error) {
@@ -7924,6 +7930,7 @@ func (q *Queries) SandboxFirstByID(ctx context.Context, id pgtype.UUID) (Sandbox
 		&i.ExpiresAt,
 		&i.PublishedHttpPort,
 		&i.RuntimeUrl,
+		&i.SshHostPublicKey,
 		&i.FailureMessage,
 		&i.CreatedByUserID,
 		&i.DeletedAt,
@@ -7934,7 +7941,7 @@ func (q *Queries) SandboxFirstByID(ctx context.Context, id pgtype.UUID) (Sandbox
 }
 
 const sandboxFirstByIDAndOrg = `-- name: SandboxFirstByIDAndOrg :one
-SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes
+SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes
 WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL
 `
 
@@ -7970,6 +7977,7 @@ func (q *Queries) SandboxFirstByIDAndOrg(ctx context.Context, arg SandboxFirstBy
 		&i.ExpiresAt,
 		&i.PublishedHttpPort,
 		&i.RuntimeUrl,
+		&i.SshHostPublicKey,
 		&i.FailureMessage,
 		&i.CreatedByUserID,
 		&i.DeletedAt,
@@ -7980,7 +7988,7 @@ func (q *Queries) SandboxFirstByIDAndOrg(ctx context.Context, arg SandboxFirstBy
 }
 
 const sandboxListByOrg = `-- name: SandboxListByOrg :many
-SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes
+SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes
 WHERE org_id = $1 AND deleted_at IS NULL
 ORDER BY updated_at DESC
 `
@@ -8018,6 +8026,7 @@ func (q *Queries) SandboxListByOrg(ctx context.Context, orgID pgtype.UUID) ([]Sa
 			&i.ExpiresAt,
 			&i.PublishedHttpPort,
 			&i.RuntimeUrl,
+			&i.SshHostPublicKey,
 			&i.FailureMessage,
 			&i.CreatedByUserID,
 			&i.DeletedAt,
@@ -8041,7 +8050,7 @@ SET observed_state = 'deleted',
     runtime_url = '',
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 func (q *Queries) SandboxMarkDeleted(ctx context.Context, id pgtype.UUID) (Sandbox, error) {
@@ -8071,6 +8080,7 @@ func (q *Queries) SandboxMarkDeleted(ctx context.Context, id pgtype.UUID) (Sandb
 		&i.ExpiresAt,
 		&i.PublishedHttpPort,
 		&i.RuntimeUrl,
+		&i.SshHostPublicKey,
 		&i.FailureMessage,
 		&i.CreatedByUserID,
 		&i.DeletedAt,
@@ -8562,7 +8572,7 @@ UPDATE sandboxes
 SET desired_state = $2,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 type SandboxUpdateDesiredStateParams struct {
@@ -8597,6 +8607,7 @@ func (q *Queries) SandboxUpdateDesiredState(ctx context.Context, arg SandboxUpda
 		&i.ExpiresAt,
 		&i.PublishedHttpPort,
 		&i.RuntimeUrl,
+		&i.SshHostPublicKey,
 		&i.FailureMessage,
 		&i.CreatedByUserID,
 		&i.DeletedAt,
@@ -8626,7 +8637,7 @@ SET observed_state = $2,
     failure_message = $4,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 type SandboxUpdateObservedStateParams struct {
@@ -8668,6 +8679,7 @@ func (q *Queries) SandboxUpdateObservedState(ctx context.Context, arg SandboxUpd
 		&i.ExpiresAt,
 		&i.PublishedHttpPort,
 		&i.RuntimeUrl,
+		&i.SshHostPublicKey,
 		&i.FailureMessage,
 		&i.CreatedByUserID,
 		&i.DeletedAt,
@@ -8685,7 +8697,7 @@ SET host_group = $2,
     server_id = $5,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 type SandboxUpdatePlacementParams struct {
@@ -8729,6 +8741,7 @@ func (q *Queries) SandboxUpdatePlacement(ctx context.Context, arg SandboxUpdateP
 		&i.ExpiresAt,
 		&i.PublishedHttpPort,
 		&i.RuntimeUrl,
+		&i.SshHostPublicKey,
 		&i.FailureMessage,
 		&i.CreatedByUserID,
 		&i.DeletedAt,
@@ -8743,7 +8756,7 @@ UPDATE sandboxes
 SET published_http_port = $2,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 type SandboxUpdatePublishPortParams struct {
@@ -8778,6 +8791,57 @@ func (q *Queries) SandboxUpdatePublishPort(ctx context.Context, arg SandboxUpdat
 		&i.ExpiresAt,
 		&i.PublishedHttpPort,
 		&i.RuntimeUrl,
+		&i.SshHostPublicKey,
+		&i.FailureMessage,
+		&i.CreatedByUserID,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const sandboxUpdateSSHHostPublicKey = `-- name: SandboxUpdateSSHHostPublicKey :one
+UPDATE sandboxes
+SET ssh_host_public_key = $2,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+`
+
+type SandboxUpdateSSHHostPublicKeyParams struct {
+	ID               pgtype.UUID `json:"id"`
+	SshHostPublicKey string      `json:"ssh_host_public_key"`
+}
+
+func (q *Queries) SandboxUpdateSSHHostPublicKey(ctx context.Context, arg SandboxUpdateSSHHostPublicKeyParams) (Sandbox, error) {
+	row := q.db.QueryRow(ctx, sandboxUpdateSSHHostPublicKey, arg.ID, arg.SshHostPublicKey)
+	var i Sandbox
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.HostGroup,
+		&i.Backend,
+		&i.Arch,
+		&i.DesiredState,
+		&i.ObservedState,
+		&i.ServerID,
+		&i.VmID,
+		&i.TemplateID,
+		&i.BaseImageRef,
+		&i.Vcpu,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.EnvJson,
+		&i.GitRepo,
+		&i.GitRef,
+		&i.AutoSuspendSeconds,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.PublishedHttpPort,
+		&i.RuntimeUrl,
+		&i.SshHostPublicKey,
 		&i.FailureMessage,
 		&i.CreatedByUserID,
 		&i.DeletedAt,
@@ -8788,7 +8852,7 @@ func (q *Queries) SandboxUpdatePublishPort(ctx context.Context, arg SandboxUpdat
 }
 
 const sandboxesDueForExpiry = `-- name: SandboxesDueForExpiry :many
-SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes
+SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes
 WHERE deleted_at IS NULL
   AND expires_at IS NOT NULL
   AND expires_at <= NOW()
@@ -8827,6 +8891,7 @@ func (q *Queries) SandboxesDueForExpiry(ctx context.Context) ([]Sandbox, error) 
 			&i.ExpiresAt,
 			&i.PublishedHttpPort,
 			&i.RuntimeUrl,
+			&i.SshHostPublicKey,
 			&i.FailureMessage,
 			&i.CreatedByUserID,
 			&i.DeletedAt,
@@ -8844,7 +8909,7 @@ func (q *Queries) SandboxesDueForExpiry(ctx context.Context) ([]Sandbox, error) 
 }
 
 const sandboxesDueForIdleSuspend = `-- name: SandboxesDueForIdleSuspend :many
-SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes
+SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes
 WHERE deleted_at IS NULL
   AND desired_state = 'running'
   AND observed_state = 'running'
@@ -8886,6 +8951,7 @@ func (q *Queries) SandboxesDueForIdleSuspend(ctx context.Context) ([]Sandbox, er
 			&i.ExpiresAt,
 			&i.PublishedHttpPort,
 			&i.RuntimeUrl,
+			&i.SshHostPublicKey,
 			&i.FailureMessage,
 			&i.CreatedByUserID,
 			&i.DeletedAt,

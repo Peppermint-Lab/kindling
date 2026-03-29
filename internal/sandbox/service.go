@@ -18,6 +18,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	kruntime "github.com/kindlingvm/kindling/internal/runtime"
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
+	"github.com/kindlingvm/kindling/internal/sshtrust"
 )
 
 const (
@@ -26,6 +27,7 @@ const (
 
 	DefaultBaseImageRef      = "docker.io/library/alpine:latest"
 	DefaultPublishedHTTPPort = 3000
+	sandboxSSHHostKeyPrefix  = "KINDLING_SSH_HOST_PUBLIC_KEY="
 )
 
 type Service struct {
@@ -628,8 +630,9 @@ func (s *Service) syncSandboxSSHAccess(ctx context.Context, sb queries.Sandbox) 
 	if err := access.WriteGuestFile(ctx, uuid.UUID(sb.ID.Bytes), authKeysPath, []byte(content)); err != nil {
 		return err
 	}
-	script := `
+	script := fmt.Sprintf(`
 set -eu
+sandbox_id=%q
 if ! id -u kindling >/dev/null 2>&1; then
   if command -v useradd >/dev/null 2>&1; then
     useradd -m -s /bin/sh kindling || true
@@ -655,12 +658,65 @@ if command -v sshd >/dev/null 2>&1; then
 elif [ -x /usr/sbin/sshd ]; then
   sshd_bin="/usr/sbin/sshd"
 fi
-if [ -n "$sshd_bin" ]; then
-  mkdir -p /run/sshd
-  pgrep -x sshd >/dev/null 2>&1 || "$sshd_bin" || true
+ssh_keygen_bin=""
+if command -v ssh-keygen >/dev/null 2>&1; then
+  ssh_keygen_bin="$(command -v ssh-keygen)"
+elif [ -x /usr/bin/ssh-keygen ]; then
+  ssh_keygen_bin="/usr/bin/ssh-keygen"
 fi
-`
-	_, err = access.ExecGuest(ctx, uuid.UUID(sb.ID.Bytes), []string{"/bin/sh", "-lc", script}, "/", nil)
+host_key_path="/etc/ssh/kindling_host_ed25519_key"
+host_key_marker="/etc/ssh/kindling_host_ed25519_key.sandbox-id"
+managed_pidfile="/run/kindling-sshd.pid"
+host_pub=""
+restart_sshd=0
+if [ -n "$sshd_bin" ] && [ -n "$ssh_keygen_bin" ]; then
+  mkdir -p /etc/ssh
+  current_marker=""
+  if [ -f "$host_key_marker" ]; then
+    current_marker="$(cat "$host_key_marker" 2>/dev/null || true)"
+  fi
+  if [ ! -f "$host_key_path" ] || [ ! -f "$host_key_path.pub" ] || [ "$current_marker" != "$sandbox_id" ]; then
+    rm -f "$host_key_path" "$host_key_path.pub"
+    "$ssh_keygen_bin" -q -t ed25519 -N '' -f "$host_key_path" >/dev/null
+    printf '%%s\n' "$sandbox_id" > "$host_key_marker"
+    restart_sshd=1
+  fi
+  if [ ! -f "$managed_pidfile" ] || ! kill -0 "$(cat "$managed_pidfile" 2>/dev/null)" 2>/dev/null; then
+    restart_sshd=1
+  fi
+  if [ "$restart_sshd" -eq 1 ]; then
+    if command -v pkill >/dev/null 2>&1; then
+      pkill -x sshd >/dev/null 2>&1 || true
+    fi
+    mkdir -p /run/sshd
+    "$sshd_bin" -o HostKey="$host_key_path" -o PidFile="$managed_pidfile" >/dev/null 2>&1 || true
+  fi
+  if [ -f "$host_key_path.pub" ]; then
+    host_pub="$(tr -d '\r' < "$host_key_path.pub")"
+  fi
+fi
+if [ -n "$host_pub" ]; then
+  printf '%%s%%s\n' %q "$host_pub"
+fi
+`, uuid.UUID(sb.ID.Bytes).String(), sandboxSSHHostKeyPrefix)
+	result, err := access.ExecGuest(ctx, uuid.UUID(sb.ID.Bytes), []string{"/bin/sh", "-lc", script}, "/", nil)
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("sync sandbox ssh access: exit code %d: %s", result.ExitCode, strings.TrimSpace(result.Output))
+	}
+	hostKey, err := sshtrust.ExtractMarkedAuthorizedKey(result.Output, sandboxSSHHostKeyPrefix)
+	if err != nil {
+		return fmt.Errorf("parse sandbox ssh host key: %w", err)
+	}
+	if hostKey == sb.SshHostPublicKey {
+		return nil
+	}
+	_, err = s.Q.SandboxUpdateSSHHostPublicKey(ctx, queries.SandboxUpdateSSHHostPublicKeyParams{
+		ID:               sb.ID,
+		SshHostPublicKey: hostKey,
+	})
 	return err
 }
 

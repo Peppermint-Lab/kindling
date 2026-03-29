@@ -38,6 +38,7 @@ type sandboxOut struct {
 	ExpiresAt          *string           `json:"expires_at,omitempty"`
 	PublishedHTTPPort  *int32            `json:"published_http_port,omitempty"`
 	RuntimeURL         string            `json:"runtime_url,omitempty"`
+	SSHHostPublicKey   string            `json:"ssh_host_public_key,omitempty"`
 	FailureMessage     string            `json:"failure_message,omitempty"`
 	CreatedAt          *string           `json:"created_at,omitempty"`
 	UpdatedAt          *string           `json:"updated_at,omitempty"`
@@ -92,6 +93,7 @@ func sandboxToOut(sb queries.Sandbox, ports []queries.SandboxPublishedPort) sand
 		LastUsedAt:         formatTS(sb.LastUsedAt),
 		ExpiresAt:          formatTS(sb.ExpiresAt),
 		RuntimeURL:         sb.RuntimeUrl,
+		SSHHostPublicKey:   strings.TrimSpace(sb.SshHostPublicKey),
 		FailureMessage:     strings.TrimSpace(sb.FailureMessage),
 		CreatedAt:          formatTS(sb.CreatedAt),
 		UpdatedAt:          formatTS(sb.UpdatedAt),
@@ -287,6 +289,7 @@ func (a *API) createSandbox(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:          expiresAt,
 		PublishedHttpPort:  optionalInt4(req.PublishedHTTPPort),
 		RuntimeUrl:         "",
+		SshHostPublicKey:   "",
 		FailureMessage:     "",
 		CreatedByUserID:    pgtype.UUID{Bytes: p.UserID, Valid: p.UserID != uuid.Nil},
 	})

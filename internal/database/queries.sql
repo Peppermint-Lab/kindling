@@ -1504,13 +1504,13 @@ INSERT INTO sandboxes (
   id, org_id, name, host_group, backend, arch, desired_state, observed_state,
   server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb,
   env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at,
-  published_http_port, runtime_url, failure_message, created_by_user_id
+  published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id
 )
 VALUES (
   $1, $2, $3, $4, $5, $6, $7, $8,
   $9, $10, $11, $12, $13, $14, $15,
   $16, $17, $18, $19, $20, $21,
-  $22, $23, $24, $25
+  $22, $23, $24, $25, $26
 )
 RETURNING *;
 
@@ -1571,6 +1571,13 @@ WHERE id = $1
 -- name: SandboxUpdatePublishPort :one
 UPDATE sandboxes
 SET published_http_port = $2,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: SandboxUpdateSSHHostPublicKey :one
+UPDATE sandboxes
+SET ssh_host_public_key = $2,
     updated_at = NOW()
 WHERE id = $1
 RETURNING *;

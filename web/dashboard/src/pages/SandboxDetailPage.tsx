@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useParams } from "react-router-dom"
+import { CopyIcon, ShieldCheckIcon } from "lucide-react"
 import { api, type Sandbox, type SandboxAccessEvent } from "@/lib/api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -7,6 +8,44 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { SandboxTerminal } from "@/components/sandbox-terminal"
+
+async function copyText(label: string, text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    console.warn("clipboard failed", label)
+  }
+}
+
+function decodeOpenSSHPublicKey(publicKey: string): Uint8Array | null {
+  const parts = publicKey.trim().split(/\s+/)
+  if (parts.length < 2) return null
+  try {
+    return Uint8Array.from(atob(parts[1]), (char) => char.charCodeAt(0))
+  } catch {
+    return null
+  }
+}
+
+async function sshPublicKeyFingerprint(publicKey: string): Promise<string | null> {
+  const bytes = decodeOpenSSHPublicKey(publicKey)
+  if (!bytes) return null
+  const digestInput =
+    bytes.buffer instanceof ArrayBuffer
+      ? bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+      : new Uint8Array(bytes).buffer
+  const digest = await crypto.subtle.digest("SHA-256", digestInput)
+  const encoded = btoa(String.fromCharCode(...new Uint8Array(digest))).replace(/=+$/, "")
+  return `SHA256:${encoded}`
+}
+
+function compactSSHKey(publicKey: string): string {
+  const parts = publicKey.trim().split(/\s+/)
+  if (parts.length < 2) return publicKey.trim()
+  const body = parts[1]
+  if (body.length <= 24) return `${parts[0]} ${body}`
+  return `${parts[0]} ${body.slice(0, 16)}...${body.slice(-8)}`
+}
 
 export function SandboxDetailPage() {
   const { id = "" } = useParams()
@@ -16,6 +55,7 @@ export function SandboxDetailPage() {
   const [events, setEvents] = useState<SandboxAccessEvent[]>([])
   const [targetPort, setTargetPort] = useState("3000")
   const [hostname, setHostname] = useState("")
+  const [sshFingerprint, setSSHFingerprint] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const load = async () => {
@@ -31,6 +71,7 @@ export function SandboxDetailPage() {
       setLogs(logsValue)
       setStats(statsValue)
       setEvents(eventsValue)
+      setSSHFingerprint(sandboxValue.ssh_host_public_key ? await sshPublicKeyFingerprint(sandboxValue.ssh_host_public_key) : null)
       setTargetPort(String(sandboxValue.published_http_port ?? sandboxValue.published_ports?.[0]?.target_port ?? 3000))
       setHostname(sandboxValue.published_ports?.[0]?.public_hostname ?? "")
     } catch (err) {
@@ -43,6 +84,7 @@ export function SandboxDetailPage() {
   }, [id])
 
   const sshCommand = useMemo(() => `kindling sandbox ssh --sandbox ${id}`, [id])
+  const sshHostKeySummary = sandbox?.ssh_host_public_key ? compactSSHKey(sandbox.ssh_host_public_key) : null
 
   if (!sandbox) {
     return (
@@ -94,11 +136,48 @@ export function SandboxDetailPage() {
         <Card>
           <CardHeader>
             <CardTitle>SSH</CardTitle>
-            <CardDescription>Real SSH client access rides through the control plane proxy.</CardDescription>
+            <CardDescription>Real SSH client access rides through the control plane proxy with a managed host key.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <pre className="overflow-x-auto rounded-md bg-muted/50 p-3 font-mono text-xs">{sshCommand}</pre>
             <p className="text-xs text-muted-foreground">Add keys under Settings → SSH Keys, then use the CLI command above.</p>
+            {sandbox.ssh_host_public_key ? (
+              <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <ShieldCheckIcon className="size-4 text-muted-foreground" />
+                  Managed Host Trust
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Fingerprint</p>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <code className="flex-1 rounded-md border bg-background px-3 py-2 font-mono text-xs break-all">
+                      {sshFingerprint || "Calculating…"}
+                    </code>
+                    <Button type="button" variant="outline" size="sm" onClick={() => sshFingerprint && void copyText("sandbox-ssh-fingerprint", sshFingerprint)} disabled={!sshFingerprint}>
+                      <CopyIcon className="mr-2 size-3" />
+                      Copy
+                    </Button>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Host Key</p>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <code className="flex-1 rounded-md border bg-background px-3 py-2 font-mono text-xs break-all">
+                      {sshHostKeySummary}
+                    </code>
+                    <Button type="button" variant="outline" size="sm" onClick={() => void copyText("sandbox-ssh-host-key", sandbox.ssh_host_public_key ?? "")}>
+                      <CopyIcon className="mr-2 size-3" />
+                      Copy
+                    </Button>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">Kindling records this sandbox's host key and the CLI verifies it before connecting.</p>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+                Host key not ready yet. Start the sandbox and ensure the guest image includes `sshd` and `ssh-keygen`.
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
