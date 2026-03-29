@@ -47,6 +47,7 @@ type Snapshot struct {
 	ACMEStaging   bool
 
 	ColdStartTimeout                  time.Duration
+	ColdStartTimeoutSet               bool // true when explicitly configured (DB/env), false when using default
 	ScaleToZeroIdleSeconds            int64
 	ServiceBaseDomain                 string
 	PreviewBaseDomain                 string
@@ -105,6 +106,7 @@ func LoadSnapshot(ctx context.Context, q *queries.Queries, serverID uuid.UUID, m
 	if v := strings.TrimSpace(settings[SettingColdStartTimeout]); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			s.ColdStartTimeout = d
+			s.ColdStartTimeoutSet = true
 		}
 	}
 	if v := strings.TrimSpace(settings[SettingScaleToZeroIdleSeconds]); v != "" {

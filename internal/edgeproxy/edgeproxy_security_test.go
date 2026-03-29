@@ -553,13 +553,12 @@ func TestHTTPSWriteTimeout_ExplicitBoundaryExpands(t *testing.T) {
 	}
 }
 
-// TestHTTPSWriteTimeout_StartWiresHTTPSServer verifies that Start() creates
-// the HTTPS server with the correct write timeout from the Service. This tests
-// the actual runtime wiring, not just the Service struct field.
-func TestHTTPSWriteTimeout_StartWiresHTTPSServer(t *testing.T) {
+// TestHTTPSWriteTimeout_NewWiresHTTPServer verifies that New() creates the
+// HTTP server with httpServerWriteTimeout, and that the httpsWriteTimeout
+// field (which Start() wires into the HTTPS server) has the expected value.
+func TestHTTPSWriteTimeout_NewWiresHTTPServer(t *testing.T) {
 	t.Parallel()
 
-	// Use default config (zero ColdStartTimeout).
 	svc, err := New(Config{
 		HTTPAddr:  "127.0.0.1:0",
 		HTTPSAddr: "127.0.0.1:0",
@@ -568,17 +567,13 @@ func TestHTTPSWriteTimeout_StartWiresHTTPSServer(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	// Start() creates the httpsServer and wires the timeout.
-	// We can't actually start listening (no TLS certs), but Start() assigns
-	// s.httpsServer before the goroutine calls ListenAndServeTLS.
-	// Instead, verify the field is wired correctly after New().
+	// Verify the HTTPS write timeout field that Start() wires into the server.
 	if svc.httpsWriteTimeout != 30*time.Second {
 		t.Fatalf("service httpsWriteTimeout = %v, want 30s", svc.httpsWriteTimeout)
 	}
 
-	// The httpsServer is only created in Start(), but we verified the timeout
-	// field that Start() wires into the server. Verify the HTTP server (created
-	// in New()) uses the separate httpServerWriteTimeout, not the HTTPS one.
+	// Verify the HTTP server (created in New()) uses the separate
+	// httpServerWriteTimeout, not the HTTPS timeout.
 	if svc.httpServer.WriteTimeout != httpServerWriteTimeout {
 		t.Fatalf("httpServer.WriteTimeout = %v, want %v",
 			svc.httpServer.WriteTimeout, httpServerWriteTimeout)

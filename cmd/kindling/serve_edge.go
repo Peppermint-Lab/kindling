@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -111,7 +112,16 @@ func startEdgeProxy(
 	if !components.edge || snap.EdgeHTTPSAddr == "" {
 		return nil
 	}
-	coldStart := snap.ColdStartTimeout
+	// Only pass the cold-start timeout to the edge proxy when the user
+	// explicitly configured it. The snapshot always defaults ColdStartTimeout
+	// to 2m, but passing that default into edgeproxy.Config makes New() treat
+	// it as explicit, inflating the HTTPS write timeout above 30s. Leaving it
+	// zero tells the edge proxy to use its own defaults (2m for cold-start
+	// waiting, 30s for write timeout).
+	var coldStart time.Duration
+	if snap.ColdStartTimeoutSet {
+		coldStart = snap.ColdStartTimeout
+	}
 	edgeHTTP := snap.EdgeHTTPAddr
 	if edgeHTTP == "" {
 		edgeHTTP = ":80"

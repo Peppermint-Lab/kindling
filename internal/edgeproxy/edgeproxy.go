@@ -128,6 +128,9 @@ type Service struct {
 	serverID          pgtype.UUID
 }
 
+// HTTPSWriteTimeout returns the computed HTTPS write timeout for this service.
+func (s *Service) HTTPSWriteTimeout() time.Duration { return s.httpsWriteTimeout }
+
 func previewLookupShouldReturnGone(lookup queries.DomainEdgeLookupRow) bool {
 	return lookup.PreviewClosedAt.Valid && strings.HasPrefix(lookup.DomainKind, "preview_")
 }
