@@ -14,6 +14,7 @@ fi
 
 install -d -m 0755 /usr/local/lib/kindling
 install -m 0755 "${REPO}/contrib/kindling-serve.sh" /usr/local/lib/kindling/serve.sh
+install -m 0755 "${REPO}/scripts/setup-networking.sh" /usr/local/lib/kindling/setup-networking.sh
 
 install -d -m 0755 /etc/kindling
 ENV_DST=/etc/kindling/kindling.env
@@ -44,8 +45,12 @@ sed \
   -e "s|^WorkingDirectory=.*|WorkingDirectory=${KINDLING_HOME}|" \
   "${REPO}/contrib/systemd/kindling@.service" > /etc/systemd/system/kindling@.service
 
+install -m 0644 "${REPO}/contrib/systemd/kindling-networking.service" /etc/systemd/system/kindling-networking.service
+
 systemctl daemon-reload
+systemctl enable --now kindling-networking.service
 echo "Installed kindling.service and kindling@.service."
+echo "Installed and enabled kindling-networking.service."
 echo "Split-mode run: systemctl enable --now kindling@edge kindling@api kindling@worker"
 echo "Legacy run: systemctl enable --now kindling"
 echo "After each manual rebuild of bin/kindling (non-Makefile), restore capabilities:"

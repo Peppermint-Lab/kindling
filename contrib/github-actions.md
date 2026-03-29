@@ -133,6 +133,8 @@ Kernel builds are slow; a persistent tree under `KINDLING_KERNEL_WORKDIR` is cac
 
 One-time: [setup-kindling-prod.sh](setup-kindling-prod.sh), edited `/etc/kindling/kindling.env`, and `systemctl enable --now kindling`. The workflow only updates binaries, static dashboard files, and optionally kernel/initramfs artifacts — it does **not** run database migrations.
 
+Production installs now also enable `kindling-networking.service`, which reapplies the host `iptables` and `net.ipv4.ip_forward=1` settings Kindling’s TAP-backed microVMs need after every boot. Override the detected interface or CIDRs in `/etc/kindling/kindling.env` with `KINDLING_VM_EGRESS_IFACE`, `KINDLING_VM_EGRESS_CIDRS`, or `KINDLING_VM_TAP_PREFIXES` if your host uses non-default routing.
+
 ## Manual deploy options
 
 **`workflow_dispatch`** on `Deploy production` allows forcing a kernel or initramfs rebuild without touching those paths.

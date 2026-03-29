@@ -3,6 +3,8 @@ Description=Kindling %i component
 Documentation=https://github.com/Peppermint-Lab/kindling
 After=network-online.target
 Wants=network-online.target
+After=kindling-networking.service
+Wants=kindling-networking.service
 
 [Service]
 Type=simple

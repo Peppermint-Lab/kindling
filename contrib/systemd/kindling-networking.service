@@ -1,0 +1,15 @@
+[Unit]
+Description=Kindling VM networking
+Documentation=https://github.com/Peppermint-Lab/kindling
+After=network-online.target
+Wants=network-online.target
+Before=kindling.service kindling@edge.service kindling@api.service kindling@worker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/kindling/kindling.env
+ExecStart=/usr/local/lib/kindling/setup-networking.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
