@@ -1533,6 +1533,13 @@ SET desired_state = $2,
 WHERE id = $1
 RETURNING *;
 
+-- name: SandboxUpdateSettings :one
+UPDATE sandboxes
+SET auto_suspend_seconds = $2,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
 -- name: SandboxUpdatePlacement :one
 UPDATE sandboxes
 SET host_group = $2,

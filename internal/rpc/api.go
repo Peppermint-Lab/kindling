@@ -161,6 +161,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sandboxes", a.listSandboxes)
 	mux.HandleFunc("POST /api/sandboxes", a.createSandbox)
 	mux.HandleFunc("GET /api/sandboxes/{id}", a.getSandbox)
+	mux.HandleFunc("PATCH /api/sandboxes/{id}", a.patchSandbox)
 	mux.HandleFunc("DELETE /api/sandboxes/{id}", a.deleteSandbox)
 	mux.HandleFunc("POST /api/sandboxes/{id}/start", a.startSandbox)
 	mux.HandleFunc("POST /api/sandboxes/{id}/stop", a.stopSandbox)

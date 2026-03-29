@@ -682,6 +682,8 @@ export type ProjectDomain = {
 export const api = {
   listSandboxes: () => request<Sandbox[]>("/api/sandboxes"),
   getSandbox: (id: string) => request<Sandbox>(`/api/sandboxes/${id}`),
+  updateSandbox: (id: string, data: { auto_suspend_seconds?: number }) =>
+    request<Sandbox>(`/api/sandboxes/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   sandboxAction: (id: string, action: "start" | "stop" | "suspend" | "resume") =>
     request<Sandbox>(`/api/sandboxes/${id}/${action}`, { method: "POST", body: JSON.stringify({}) }),
   publishSandboxHTTP: (id: string, targetPort: number, hostname?: string) =>

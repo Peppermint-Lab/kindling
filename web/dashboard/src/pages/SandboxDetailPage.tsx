@@ -55,6 +55,8 @@ export function SandboxDetailPage() {
   const [events, setEvents] = useState<SandboxAccessEvent[]>([])
   const [targetPort, setTargetPort] = useState("3000")
   const [hostname, setHostname] = useState("")
+  const [autoSuspendEnabled, setAutoSuspendEnabled] = useState(false)
+  const [autoSuspendSeconds, setAutoSuspendSeconds] = useState("900")
   const [sshFingerprint, setSSHFingerprint] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -74,6 +76,8 @@ export function SandboxDetailPage() {
       setSSHFingerprint(sandboxValue.ssh_host_public_key ? await sshPublicKeyFingerprint(sandboxValue.ssh_host_public_key) : null)
       setTargetPort(String(sandboxValue.published_http_port ?? sandboxValue.published_ports?.[0]?.target_port ?? 3000))
       setHostname(sandboxValue.published_ports?.[0]?.public_hostname ?? "")
+      setAutoSuspendEnabled(sandboxValue.auto_suspend_seconds > 0)
+      setAutoSuspendSeconds(String(sandboxValue.auto_suspend_seconds > 0 ? sandboxValue.auto_suspend_seconds : 900))
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load sandbox")
     }
@@ -130,6 +134,7 @@ export function SandboxDetailPage() {
             <p><span className="font-medium">Resources:</span> {sandbox.vcpu} vCPU / {sandbox.memory_mb} MB / {sandbox.disk_gb} GB</p>
             <p><span className="font-medium">Git:</span> {sandbox.git_repo || "—"} {sandbox.git_ref ? `(${sandbox.git_ref})` : ""}</p>
             <p><span className="font-medium">Last used:</span> {sandbox.last_used_at ? new Date(sandbox.last_used_at).toLocaleString() : "—"}</p>
+            <p><span className="font-medium">Auto-suspend:</span> {sandbox.auto_suspend_seconds > 0 ? `${sandbox.auto_suspend_seconds}s` : "Always on"}</p>
           </CardContent>
         </Card>
 
@@ -181,6 +186,52 @@ export function SandboxDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Lifecycle</CardTitle>
+          <CardDescription>Sandboxes are always on by default. Opt into idle auto-suspend only when you want it.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-[auto_160px_auto] md:items-end">
+          <label className="flex items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={autoSuspendEnabled}
+              onChange={(e) => setAutoSuspendEnabled(e.target.checked)}
+            />
+            <span>
+              <span className="block font-medium">Enable auto-suspend</span>
+              <span className="block text-muted-foreground">When disabled, the sandbox stays on until you stop or delete it.</span>
+            </span>
+          </label>
+          <div className="space-y-2">
+            <Label htmlFor="sandbox-auto-suspend">Idle timeout (seconds)</Label>
+            <Input
+              id="sandbox-auto-suspend"
+              type="number"
+              min="1"
+              step="1"
+              value={autoSuspendSeconds}
+              disabled={!autoSuspendEnabled}
+              onChange={(e) => setAutoSuspendSeconds(e.target.value)}
+            />
+          </div>
+          <Button
+            className="self-end"
+            onClick={() => {
+              const next = autoSuspendEnabled ? Number(autoSuspendSeconds || "0") : 0
+              if (autoSuspendEnabled && (!Number.isFinite(next) || next <= 0)) {
+                setError("Auto-suspend timeout must be a positive number of seconds")
+                return
+              }
+              void api.updateSandbox(id, { auto_suspend_seconds: next }).then(load)
+            }}
+          >
+            Save Lifecycle
+          </Button>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

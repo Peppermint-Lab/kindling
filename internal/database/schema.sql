@@ -530,7 +530,7 @@ CREATE TABLE IF NOT EXISTS sandboxes (
     env_json             JSONB NOT NULL DEFAULT '{}'::jsonb,
     git_repo             TEXT NOT NULL DEFAULT '',
     git_ref              TEXT NOT NULL DEFAULT '',
-    auto_suspend_seconds BIGINT NOT NULL DEFAULT 900,
+    auto_suspend_seconds BIGINT NOT NULL DEFAULT 0,
     last_used_at         TIMESTAMPTZ,
     expires_at           TIMESTAMPTZ,
     published_http_port  INT CHECK (published_http_port IS NULL OR (published_http_port > 0 AND published_http_port <= 65535)),
@@ -546,6 +546,20 @@ CREATE TABLE IF NOT EXISTS sandboxes (
 CREATE INDEX IF NOT EXISTS idx_sandboxes_org_id ON sandboxes(org_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sandboxes_server_id ON sandboxes(server_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_sandboxes_expires_at ON sandboxes(expires_at) WHERE expires_at IS NOT NULL AND deleted_at IS NULL;
+
+DO $$ BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'sandboxes'
+          AND column_name = 'auto_suspend_seconds'
+          AND COALESCE(column_default, '') NOT IN ('0', '0::bigint')
+    ) THEN
+        ALTER TABLE sandboxes ALTER COLUMN auto_suspend_seconds SET DEFAULT 0;
+        UPDATE sandboxes SET auto_suspend_seconds = 0 WHERE auto_suspend_seconds <> 0;
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS sandbox_templates (
     id                 UUID PRIMARY KEY,

@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -120,6 +121,13 @@ func sandboxToOut(sb queries.Sandbox, ports []queries.SandboxPublishedPort) sand
 		}
 	}
 	return out
+}
+
+func normalizeSandboxAutoSuspendSeconds(v int64) (int64, error) {
+	if v < 0 {
+		return 0, errors.New("auto_suspend_seconds must be >= 0")
+	}
+	return v, nil
 }
 
 func sandboxTemplateToOut(tpl queries.SandboxTemplate) sandboxTemplateOut {
@@ -260,9 +268,10 @@ func (a *API) createSandbox(w http.ResponseWriter, r *http.Request) {
 	if diskGb <= 0 {
 		diskGb = 10
 	}
-	autoSuspend := req.AutoSuspendSeconds
-	if autoSuspend <= 0 {
-		autoSuspend = 900
+	autoSuspend, err := normalizeSandboxAutoSuspendSeconds(req.AutoSuspendSeconds)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
 	}
 
 	row, err := a.q.SandboxCreate(r.Context(), queries.SandboxCreateParams{
@@ -323,6 +332,54 @@ func (a *API) getSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 	ports, _ := a.q.SandboxPublishedPortsBySandboxID(r.Context(), row.ID)
 	writeJSON(w, http.StatusOK, sandboxToOut(row, ports))
+}
+
+func (a *API) patchSandbox(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !requireOrgAdmin(w, p) {
+		return
+	}
+	id, err := parseUUID(r.PathValue("id"))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox id")
+		return
+	}
+	sb, err := a.q.SandboxFirstByIDAndOrg(r.Context(), queries.SandboxFirstByIDAndOrgParams{
+		ID:    id,
+		OrgID: p.OrganizationID,
+	})
+	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "not_found", "sandbox not found")
+		return
+	}
+	var req struct {
+		AutoSuspendSeconds *int64 `json:"auto_suspend_seconds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid json body")
+		return
+	}
+	if req.AutoSuspendSeconds == nil {
+		writeJSON(w, http.StatusOK, sandboxToOut(sb, nil))
+		return
+	}
+	autoSuspend, err := normalizeSandboxAutoSuspendSeconds(*req.AutoSuspendSeconds)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+	sb, err = a.q.SandboxUpdateSettings(r.Context(), queries.SandboxUpdateSettingsParams{
+		ID:                 sb.ID,
+		AutoSuspendSeconds: autoSuspend,
+	})
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_sandbox", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sandboxToOut(sb, nil))
 }
 
 func (a *API) deleteSandbox(w http.ResponseWriter, r *http.Request) {
@@ -547,7 +604,7 @@ func (a *API) cloneSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 		EnvJson:            []byte(`{}`),
 		GitRepo:            "",
 		GitRef:             "",
-		AutoSuspendSeconds: 900,
+		AutoSuspendSeconds: 0,
 		LastUsedAt:         pgtype.Timestamptz{},
 		ExpiresAt:          pgtype.Timestamptz{},
 		PublishedHttpPort:  pgtype.Int4{},

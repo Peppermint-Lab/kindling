@@ -62,6 +62,7 @@ export function SandboxesPage() {
               <CardContent className="space-y-2 text-sm text-muted-foreground">
                 <p>{sandbox.backend || "pending backend"} / {sandbox.arch || "pending arch"}</p>
                 <p>{sandbox.vcpu} vCPU, {sandbox.memory_mb} MB RAM, {sandbox.disk_gb} GB disk</p>
+                <p>{sandbox.auto_suspend_seconds > 0 ? `Auto-suspends after ${sandbox.auto_suspend_seconds}s idle` : "Always on"}</p>
                 <p className="truncate">{sandbox.runtime_url || "No runtime URL yet"}</p>
               </CardContent>
             </Card>

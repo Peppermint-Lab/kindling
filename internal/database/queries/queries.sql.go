@@ -9028,6 +9028,56 @@ func (q *Queries) SandboxUpdateSSHHostPublicKey(ctx context.Context, arg Sandbox
 	return i, err
 }
 
+const sandboxUpdateSettings = `-- name: SandboxUpdateSettings :one
+UPDATE sandboxes
+SET auto_suspend_seconds = $2,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+`
+
+type SandboxUpdateSettingsParams struct {
+	ID                 pgtype.UUID `json:"id"`
+	AutoSuspendSeconds int64       `json:"auto_suspend_seconds"`
+}
+
+func (q *Queries) SandboxUpdateSettings(ctx context.Context, arg SandboxUpdateSettingsParams) (Sandbox, error) {
+	row := q.db.QueryRow(ctx, sandboxUpdateSettings, arg.ID, arg.AutoSuspendSeconds)
+	var i Sandbox
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.HostGroup,
+		&i.Backend,
+		&i.Arch,
+		&i.DesiredState,
+		&i.ObservedState,
+		&i.ServerID,
+		&i.VmID,
+		&i.TemplateID,
+		&i.BaseImageRef,
+		&i.Vcpu,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.EnvJson,
+		&i.GitRepo,
+		&i.GitRef,
+		&i.AutoSuspendSeconds,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.PublishedHttpPort,
+		&i.RuntimeUrl,
+		&i.SshHostPublicKey,
+		&i.FailureMessage,
+		&i.CreatedByUserID,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const sandboxesDueForExpiry = `-- name: SandboxesDueForExpiry :many
 SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes
 WHERE deleted_at IS NULL
