@@ -171,3 +171,54 @@ func TestReadAndWriteGuestFileHTTP(t *testing.T) {
 		<-done
 	})
 }
+
+func TestStreamGuestHTTP(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer server.Close()
+
+		req, err := http.ReadRequest(bufio.NewReader(server))
+		if err != nil {
+			t.Errorf("read request: %v", err)
+			return
+		}
+		if req.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", req.Method)
+		}
+		if req.URL.Path != "/exec-stream" {
+			t.Errorf("path = %s, want /exec-stream", req.URL.Path)
+		}
+		if got := req.Header.Get("Upgrade"); got != "kindling-shell" {
+			t.Errorf("upgrade = %q", got)
+		}
+		resp := &http.Response{
+			StatusCode: http.StatusSwitchingProtocols,
+			Status:     "101 Switching Protocols",
+			ProtoMajor: 1,
+			ProtoMinor: 1,
+			Header:     make(http.Header),
+		}
+		resp.Header.Set("Connection", "Upgrade")
+		resp.Header.Set("Upgrade", "kindling-shell")
+		_ = resp.Write(server)
+		_, _ = server.Write([]byte("shell-ready"))
+	}()
+
+	stream, err := streamGuestHTTP(context.Background(), client, []string{"/bin/sh"}, "/workspace", nil)
+	if err != nil {
+		t.Fatalf("streamGuestHTTP: %v", err)
+	}
+	defer stream.Close()
+	buf := make([]byte, len("shell-ready"))
+	if _, err := io.ReadFull(stream, buf); err != nil {
+		t.Fatalf("read upgraded stream: %v", err)
+	}
+	if string(buf) != "shell-ready" {
+		t.Fatalf("stream payload = %q", string(buf))
+	}
+	<-done
+}

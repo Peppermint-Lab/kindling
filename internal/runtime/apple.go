@@ -551,6 +551,25 @@ func (r *AppleRuntime) ExecGuest(ctx context.Context, id uuid.UUID, argv []strin
 	return execGuestHTTP(ctx, conn, argv, cwd, env)
 }
 
+func (r *AppleRuntime) StreamGuest(ctx context.Context, id uuid.UUID, argv []string, cwd string, env []string) (io.ReadWriteCloser, error) {
+	r.mu.Lock()
+	ai, ok := r.instances[id]
+	r.mu.Unlock()
+	if !ok || ai.vsock == nil {
+		return nil, ErrInstanceNotRunning
+	}
+	conn, err := ai.vsock.Connect(GuestControlVsockPort)
+	if err != nil {
+		return nil, err
+	}
+	stream, err := streamGuestHTTP(ctx, conn, argv, cwd, env)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return stream, nil
+}
+
 func (r *AppleRuntime) ReadGuestFile(ctx context.Context, id uuid.UUID, filePath string) ([]byte, error) {
 	r.mu.Lock()
 	ai, ok := r.instances[id]

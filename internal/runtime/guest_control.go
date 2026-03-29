@@ -28,6 +28,15 @@ type guestExecJSON struct {
 	Output   string `json:"output"`
 }
 
+type upgradedGuestConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (c *upgradedGuestConn) Read(p []byte) (int, error) {
+	return c.reader.Read(p)
+}
+
 func execGuestHTTP(ctx context.Context, c net.Conn, argv []string, cwd string, env []string) (GuestExecResult, error) {
 	body, err := json.Marshal(guestExecRequest{Argv: argv, Cwd: cwd, Env: env})
 	if err != nil {
@@ -75,6 +84,40 @@ func writeGuestFileHTTP(ctx context.Context, c net.Conn, filePath string, data [
 		return fmt.Errorf("guest write file: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
 	}
 	return nil
+}
+
+func streamGuestHTTP(ctx context.Context, c net.Conn, argv []string, cwd string, env []string) (io.ReadWriteCloser, error) {
+	body, err := json.Marshal(guestExecRequest{Argv: argv, Cwd: cwd, Env: env})
+	if err != nil {
+		return nil, err
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = c.SetDeadline(deadline)
+	} else {
+		_ = c.SetDeadline(time.Now().Add(guestControlDefaultTimeout))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost/exec-stream", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "kindling-shell")
+	if err := req.Write(c); err != nil {
+		return nil, err
+	}
+	reader := bufio.NewReader(c)
+	resp, err := http.ReadResponse(reader, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		defer resp.Body.Close()
+		msg, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("guest stream: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+	}
+	_ = c.SetDeadline(time.Time{})
+	return &upgradedGuestConn{Conn: c, reader: reader}, nil
 }
 
 func doGuestHTTPRequest(ctx context.Context, c net.Conn, method, reqPath string, body io.Reader, contentType string) (*http.Response, error) {

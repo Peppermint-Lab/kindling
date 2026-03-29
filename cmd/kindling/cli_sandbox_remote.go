@@ -1,10 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,6 +20,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/auth"
 	kcli "github.com/kindlingvm/kindling/internal/cli"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 func cliSandboxRemoteCmd() *cobra.Command {
@@ -416,15 +422,11 @@ func cliSandboxShellCmd() *cobra.Command {
 	var sandboxID, cwd, shellPath string
 	var env []string
 	cmd := &cobra.Command{
-		Use:   "shell --sandbox <uuid> -- <shell-snippet>",
-		Short: "Run a shell snippet inside a running sandbox",
-		Args:  cobra.ArbitraryArgs,
+		Use:   "shell --sandbox <uuid>",
+		Short: "Open an interactive shell inside a running sandbox",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				return fmt.Errorf("shell snippet is required after --")
-			}
-			runArgs := []string{strings.TrimSpace(shellPath), "-lc", strings.Join(args, " ")}
-			return runSandboxExec(cmd, sandboxID, cwd, env, runArgs)
+			return runSandboxShell(cmd, sandboxID, cwd, shellPath, env)
 		},
 	}
 	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
@@ -536,6 +538,15 @@ type sandboxExecResponse struct {
 	Output   string `json:"output"`
 }
 
+type sandboxUpgradedConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (c *sandboxUpgradedConn) Read(p []byte) (int, error) {
+	return c.reader.Read(p)
+}
+
 func runSandboxExec(cmd *cobra.Command, sandboxID, cwd string, env []string, argv []string) error {
 	id := strings.TrimSpace(sandboxID)
 	if id == "" {
@@ -565,6 +576,62 @@ func runSandboxExec(cmd *cobra.Command, sandboxID, cwd string, env []string, arg
 	}
 	if out.ExitCode != 0 {
 		return fmt.Errorf("sandbox command exited with code %d", out.ExitCode)
+	}
+	return nil
+}
+
+func runSandboxShell(cmd *cobra.Command, sandboxID, cwd, shellPath string, env []string) error {
+	id := strings.TrimSpace(sandboxID)
+	if id == "" {
+		return fmt.Errorf("--sandbox is required")
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		return fmt.Errorf("invalid sandbox id: %w", err)
+	}
+	c, err := mustRemoteClient()
+	if err != nil {
+		return fmt.Errorf("create client: %w", err)
+	}
+	reqPath := "/api/sandboxes/" + id + "/shell?shell=" + url.QueryEscape(strings.TrimSpace(shellPath))
+	if strings.TrimSpace(cwd) != "" {
+		reqPath += "&cwd=" + url.QueryEscape(strings.TrimSpace(cwd))
+	}
+	for _, item := range env {
+		reqPath += "&env=" + url.QueryEscape(strings.TrimSpace(item))
+	}
+	stream, err := sandboxUpgradeRequest(cmd.Context(), c, http.MethodGet, reqPath, "kindling-shell")
+	if err != nil {
+		return fmt.Errorf("open sandbox shell: %w", err)
+	}
+	defer stream.Close()
+
+	var oldState *term.State
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		state, err := term.MakeRaw(int(os.Stdin.Fd()))
+		if err == nil {
+			oldState = state
+			defer term.Restore(int(os.Stdin.Fd()), state)
+		}
+	}
+
+	copyErr := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(stream, os.Stdin)
+		_ = stream.Close()
+		copyErr <- err
+	}()
+
+	_, outErr := io.Copy(os.Stdout, stream)
+	_ = stream.Close()
+	inErr := <-copyErr
+	if oldState != nil {
+		fmt.Fprintln(os.Stdout)
+	}
+	if outErr != nil && !errors.Is(outErr, net.ErrClosed) && !errors.Is(outErr, io.EOF) {
+		return outErr
+	}
+	if inErr != nil && !errors.Is(inErr, net.ErrClosed) && !errors.Is(inErr, io.EOF) {
+		return inErr
 	}
 	return nil
 }
@@ -634,6 +701,73 @@ func sandboxRawRequest(cmd *cobra.Command, c *kcli.Client, method, path string, 
 		req.Header.Set("Cookie", auth.SessionCookieName+"="+strings.TrimSpace(c.SessionToken))
 	}
 	return c.HTTP.Do(req)
+}
+
+func sandboxUpgradeRequest(ctx context.Context, c *kcli.Client, method, path, upgrade string) (io.ReadWriteCloser, error) {
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	baseURL, err := url.Parse(c.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	host := baseURL.Host
+	if !strings.Contains(host, ":") {
+		if baseURL.Scheme == "https" {
+			host = net.JoinHostPort(host, "443")
+		} else {
+			host = net.JoinHostPort(host, "80")
+		}
+	}
+	dialer := &net.Dialer{}
+	var conn net.Conn
+	switch baseURL.Scheme {
+	case "https":
+		conn, err = tls.DialWithDialer(dialer, "tcp", host, &tls.Config{ServerName: baseURL.Hostname()})
+	default:
+		conn, err = dialer.DialContext(ctx, "tcp", host)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	targetURL := *baseURL
+	targetURL.Path = path
+	targetURL.RawQuery = ""
+	if strings.Contains(path, "?") {
+		rawPath, rawQuery, _ := strings.Cut(path, "?")
+		targetURL.Path = rawPath
+		targetURL.RawQuery = rawQuery
+	}
+	req, err := http.NewRequestWithContext(ctx, method, targetURL.String(), nil)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", upgrade)
+	if strings.TrimSpace(c.APIKey) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(c.APIKey))
+	} else if strings.TrimSpace(c.SessionToken) != "" {
+		req.Header.Set("Cookie", auth.SessionCookieName+"="+strings.TrimSpace(c.SessionToken))
+	}
+	if err := req.Write(conn); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	reader := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(reader, req)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		_ = conn.Close()
+		return nil, fmt.Errorf("upgrade failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return &sandboxUpgradedConn{Conn: conn, reader: reader}, nil
 }
 
 func sandboxResponseError(resp *http.Response, action string) error {

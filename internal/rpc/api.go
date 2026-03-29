@@ -170,6 +170,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/sandboxes/{id}/publish-http", a.publishSandboxHTTP)
 	mux.HandleFunc("POST /api/sandboxes/{id}/unpublish-http", a.unpublishSandboxHTTP)
 	mux.HandleFunc("POST /api/sandboxes/{id}/exec", a.execSandbox)
+	mux.HandleFunc("GET /api/sandboxes/{id}/shell", a.sandboxShell)
 	mux.HandleFunc("POST /api/sandboxes/{id}/copy-in", a.copyIntoSandbox)
 	mux.HandleFunc("GET /api/sandboxes/{id}/copy-out", a.copyOutOfSandbox)
 	mux.HandleFunc("GET /api/sandboxes/{id}/logs", a.sandboxLogs)

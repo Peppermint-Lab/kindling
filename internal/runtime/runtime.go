@@ -5,6 +5,7 @@ package runtime
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"os"
 	"time"
@@ -175,6 +176,12 @@ type GuestAccess interface {
 	ExecGuest(ctx context.Context, id uuid.UUID, argv []string, cwd string, env []string) (GuestExecResult, error)
 	ReadGuestFile(ctx context.Context, id uuid.UUID, path string) ([]byte, error)
 	WriteGuestFile(ctx context.Context, id uuid.UUID, path string, data []byte) error
+}
+
+// GuestStreamAccess is implemented by runtimes that can proxy a live bidirectional
+// stdio session into a currently running guest on the local worker.
+type GuestStreamAccess interface {
+	StreamGuest(ctx context.Context, id uuid.UUID, argv []string, cwd string, env []string) (io.ReadWriteCloser, error)
 }
 
 // Detect returns the best available runtime for this host.

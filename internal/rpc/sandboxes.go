@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -655,6 +656,67 @@ func (a *API) execSandbox(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *API) sandboxShell(w http.ResponseWriter, r *http.Request) {
+	p, ok := mustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	sb, ok := a.requireSandboxAccess(w, r, p)
+	if !ok {
+		return
+	}
+	access, ok := a.sandboxStreamAccess(w, sb)
+	if !ok {
+		return
+	}
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		writeAPIError(w, http.StatusInternalServerError, "sandbox_shell", "http hijacking is unavailable")
+		return
+	}
+	shellPath := strings.TrimSpace(r.URL.Query().Get("shell"))
+	if shellPath == "" {
+		shellPath = "/bin/sh"
+	}
+	cwd := strings.TrimSpace(r.URL.Query().Get("cwd"))
+	env := append([]string(nil), r.URL.Query()["env"]...)
+	stream, err := access.StreamGuest(r.Context(), uuid.UUID(sb.ID.Bytes), []string{shellPath}, cwd, env)
+	if err != nil {
+		writeAPIErrorFromErr(w, http.StatusConflict, "sandbox_shell", err)
+		return
+	}
+	conn, rw, err := hj.Hijack()
+	if err != nil {
+		_ = stream.Close()
+		return
+	}
+	if _, err := rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: kindling-shell\r\n\r\n"); err != nil {
+		_ = stream.Close()
+		_ = conn.Close()
+		return
+	}
+	if err := rw.Flush(); err != nil {
+		_ = stream.Close()
+		_ = conn.Close()
+		return
+	}
+
+	done := make(chan struct{}, 2)
+	go func() {
+		_, _ = io.Copy(stream, conn)
+		done <- struct{}{}
+	}()
+	go func() {
+		_, _ = io.Copy(conn, stream)
+		done <- struct{}{}
+	}()
+	<-done
+	_ = a.q.SandboxUpdateLastUsedAt(context.Background(), sb.ID)
+	_ = stream.Close()
+	_ = conn.Close()
+	<-done
+}
+
 func (a *API) copyIntoSandbox(w http.ResponseWriter, r *http.Request) {
 	p, ok := mustPrincipal(w, r)
 	if !ok {
@@ -860,6 +922,19 @@ func (a *API) sandboxGuestAccess(w http.ResponseWriter, sb queries.Sandbox) (kru
 	access, ok := rt.(kruntime.GuestAccess)
 	if !ok {
 		writeAPIError(w, http.StatusNotImplemented, "sandbox_runtime", "guest access is not implemented for this runtime")
+		return nil, false
+	}
+	return access, true
+}
+
+func (a *API) sandboxStreamAccess(w http.ResponseWriter, sb queries.Sandbox) (kruntime.GuestStreamAccess, bool) {
+	rt, ok := a.sandboxLocalRuntime(w, sb)
+	if !ok {
+		return nil, false
+	}
+	access, ok := rt.(kruntime.GuestStreamAccess)
+	if !ok {
+		writeAPIError(w, http.StatusNotImplemented, "sandbox_runtime", "live shell streaming is not implemented for this runtime")
 		return nil, false
 	}
 	return access, true

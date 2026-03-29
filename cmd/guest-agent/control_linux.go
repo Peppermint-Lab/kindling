@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -15,7 +16,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"log"
+
+	"github.com/creack/pty"
 )
 
 const guestControlVsockPort uint32 = 1028
@@ -61,6 +63,8 @@ func handleControlConn(c net.Conn) {
 	switch {
 	case req.Method == http.MethodPost && req.URL.Path == "/exec":
 		handleExecRequest(c, req)
+	case req.Method == http.MethodPost && req.URL.Path == "/exec-stream":
+		handleExecStream(c, req)
 	case req.Method == http.MethodGet && req.URL.Path == "/fs":
 		handleReadFile(c, req)
 	case req.Method == http.MethodPut && req.URL.Path == "/fs":
@@ -71,26 +75,12 @@ func handleControlConn(c net.Conn) {
 }
 
 func handleExecRequest(c net.Conn, req *http.Request) {
-	var payload guestExecRequest
-	if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+	payload, err := decodeGuestExecRequest(req)
+	if err != nil {
 		writeControlString(c, http.StatusBadRequest, "invalid json")
 		return
 	}
-	if len(payload.Argv) == 0 {
-		writeControlString(c, http.StatusBadRequest, "missing argv")
-		return
-	}
-	cmd := exec.Command(payload.Argv[0], payload.Argv[1:]...)
-	cwd := strings.TrimSpace(payload.Cwd)
-	if cwd == "" {
-		if _, err := os.Stat("/app"); err == nil {
-			cwd = "/app"
-		} else {
-			cwd = "/"
-		}
-	}
-	cmd.Dir = cwd
-	cmd.Env = append(os.Environ(), payload.Env...)
+	cmd := guestExecCmd(payload)
 	out, err := cmd.CombinedOutput()
 	exitCode := 0
 	if err != nil {
@@ -102,6 +92,33 @@ func handleExecRequest(c net.Conn, req *http.Request) {
 	}
 	b, _ := json.Marshal(guestExecResponse{ExitCode: exitCode, Output: string(out)})
 	writeControlBytes(c, http.StatusOK, "application/json", b)
+}
+
+func handleExecStream(c net.Conn, req *http.Request) {
+	payload, err := decodeGuestExecRequest(req)
+	if err != nil {
+		writeControlString(c, http.StatusBadRequest, "invalid json")
+		return
+	}
+	cmd := guestExecCmd(payload)
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		writeControlString(c, http.StatusInternalServerError, "pty start failed")
+		return
+	}
+	defer ptmx.Close()
+
+	writeSwitchingProtocols(c, "kindling-shell")
+
+	copyDone := make(chan struct{}, 1)
+	go func() {
+		_, _ = io.Copy(ptmx, c)
+		_ = ptmx.Close()
+		copyDone <- struct{}{}
+	}()
+	_, _ = io.Copy(c, ptmx)
+	<-copyDone
+	_ = cmd.Wait()
 }
 
 func handleReadFile(c net.Conn, req *http.Request) {
@@ -148,6 +165,45 @@ func requestedGuestPath(u *url.URL) (string, error) {
 	return filepath.Clean(p), nil
 }
 
+func decodeGuestExecRequest(req *http.Request) (guestExecRequest, error) {
+	var payload guestExecRequest
+	if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+		return guestExecRequest{}, err
+	}
+	if len(payload.Argv) == 0 {
+		return guestExecRequest{}, fmt.Errorf("missing argv")
+	}
+	return payload, nil
+}
+
+func guestExecCmd(payload guestExecRequest) *exec.Cmd {
+	cmd := exec.Command(payload.Argv[0], payload.Argv[1:]...)
+	cwd := strings.TrimSpace(payload.Cwd)
+	if cwd == "" {
+		if _, err := os.Stat("/app"); err == nil {
+			cwd = "/app"
+		} else {
+			cwd = "/"
+		}
+	}
+	cmd.Dir = cwd
+	cmd.Env = append(os.Environ(), payload.Env...)
+	if !hasEnvKey(payload.Env, "TERM") {
+		cmd.Env = append(cmd.Env, "TERM=xterm-256color")
+	}
+	return cmd
+}
+
+func hasEnvKey(env []string, key string) bool {
+	prefix := strings.TrimSpace(key) + "="
+	for _, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func writeControlString(c net.Conn, status int, msg string) {
 	writeControlBytes(c, status, "text/plain; charset=utf-8", []byte(msg))
 }
@@ -163,6 +219,19 @@ func writeControlBytes(c net.Conn, status int, contentType string, body []byte) 
 		Body:          io.NopCloser(bytes.NewReader(body)),
 	}
 	resp.Header.Set("Content-Type", contentType)
+	_ = resp.Write(c)
+}
+
+func writeSwitchingProtocols(c net.Conn, upgrade string) {
+	resp := &http.Response{
+		StatusCode: http.StatusSwitchingProtocols,
+		Status:     fmt.Sprintf("%d %s", http.StatusSwitchingProtocols, http.StatusText(http.StatusSwitchingProtocols)),
+		ProtoMajor: 1,
+		ProtoMinor: 1,
+		Header:     make(http.Header),
+	}
+	resp.Header.Set("Connection", "Upgrade")
+	resp.Header.Set("Upgrade", upgrade)
 	_ = resp.Write(c)
 }
 
