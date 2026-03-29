@@ -46,7 +46,14 @@ Notes:
 - Kindling looks for the Postgres DSN in `/etc/kindling/postgres.dsn` first, then `~/.kindling/postgres.dsn`, and otherwise falls back to `postgres://kindling:kindling@127.0.0.1:5432/kindling?sslmode=disable`.
 - On first boot, `bin/kindling serve --public-url https://your-hostname` can seed the public API URL, and `bin/kindling serve --advertise-host 203.0.113.10` can seed the host/IP used for browser-openable runtime URLs.
 
-See [Getting Started on Linux](docs/getting-started-linux.md) for the full setup, prerequisites, and troubleshooting guide.
+See the Obsidian vault at `~/Desktop/vault/Kindling/` for all documentation. Key starting points:
+
+- [[Kindling/notes/Getting Started]] — new host setup and operations
+- [[Kindling/notes/Development]] — contributor workflow
+- [[Kindling/notes/Architecture]] — control-plane model, reconcilers, runtimes
+- [[Kindling/Spec]] — product spec and roadmap
+
+The `docs/` directory in this repo contains only thin pointers to the vault.
 
 ## CLI Overview
 
@@ -65,7 +72,7 @@ Run `go run ./cmd/kindling --help` or `bin/kindling --help` for the current comm
 
 ## Development
 
-Contributor workflows are documented in [Development](docs/development.md). The short version:
+See [[Kindling/notes/Development]] for the full contributor guide. The short version:
 
 - `make build` builds the main binary
 - `make dev` builds and starts the local server path
@@ -75,10 +82,15 @@ Contributor workflows are documented in [Development](docs/development.md). The 
 
 ## Docs
 
-- [Getting Started on Linux](docs/getting-started-linux.md)
-- [Development](docs/development.md)
-- [Architecture](docs/architecture.md)
-- [Internal DNS Runtime](docs/internal-dns-runtime.md)
+All canonical documentation lives in the Obsidian vault at `~/Desktop/vault/Kindling/`:
+
+- [[Kindling/notes/Getting Started]] — new host setup
+- [[Kindling/notes/Development]] — contributor workflow
+- [[Kindling/notes/Architecture]] — control-plane model and runtimes
+- [[Kindling/Spec]] — product spec and roadmap
+- [[Kindling/notes/Operations]] — production deployment and day-two operations
+
+The `docs/` directory in this repo contains thin pointers only.
 
 ## Project Layout
 
