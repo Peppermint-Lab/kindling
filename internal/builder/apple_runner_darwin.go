@@ -35,7 +35,7 @@ func NewAppleVZBuildRunner(cfg AppleVZBuildRunnerConfig) (*AppleVZBuildRunner, e
 	}
 	st, err := os.Stat(cfg.BuilderRootfsDir)
 	if err != nil || !st.IsDir() {
-		return nil, fmt.Errorf("builder rootfs directory %q missing — unpack a Linux rootfs with buildah here (see CLAUDE.md)", cfg.BuilderRootfsDir)
+		return nil, fmt.Errorf("builder rootfs directory %q missing — unpack a Linux rootfs with buildah here (see AGENTS.md)", cfg.BuilderRootfsDir)
 	}
 	buildahOK := false
 	for _, p := range []string{"usr/bin/buildah", "bin/buildah", "sbin/buildah"} {

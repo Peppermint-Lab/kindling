@@ -13,7 +13,7 @@ import (
 // TestAppleBuilderVM_BuildahVersion boots the Apple VZ builder microVM and runs `buildah version`
 // inside the guest chroot. Requires:
 //   - ~/.kindling/vmlinuz.bin, initramfs.cpio.gz (same as kindling serve on macOS)
-//   - ~/.kindling/builder-rootfs with Linux buildah tree (see CLAUDE.md)
+//   - ~/.kindling/builder-rootfs with Linux buildah tree (see AGENTS.md)
 //
 // Opt-in: KINDLING_BUILDER_VM_E2E=1
 //

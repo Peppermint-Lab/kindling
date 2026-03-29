@@ -22,7 +22,7 @@ func debugBuilderVMSmokeCmd() *cobra.Command {
 		Use:   "builder-vm-smoke",
 		Short: "Boot the Apple VZ builder VM and run `buildah version` in the guest",
 		Long: `Requires ~/.kindling/vmlinuz.bin, initramfs.cpio.gz, and builder-rootfs with Linux buildah
-(see CLAUDE.md). On macOS the kindling binary must be signed with the Virtualization entitlement—use "make build" not raw "go build".`,
+(see AGENTS.md). On macOS the kindling binary must be signed with the Virtualization entitlement—use "make build" not raw "go build".`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := builder.SmokeTestAppleBuilderVM(cmd.Context()); err != nil {
 				return fmt.Errorf("builder VM smoke test: %w", err)
