@@ -1,9 +1,9 @@
 # ~/.kindling-mac.yaml
 # Configuration for kindling-mac daemon (local Linux microVMs on macOS)
 
-# Persistent slicer VM — your day-to-day Linux environment (like WSL).
-slicer:
-  name: "slicer-1"
+# Persistent box VM — your day-to-day Linux environment (like WSL).
+box:
+  name: "box-1"
   cpus: 4
   memory_mb: 8192
   disk_mb: 51200        # 50 GB
@@ -13,8 +13,8 @@ slicer:
     #   guest_path: "/workspace"
   rosetta: false        # Enable x86_64 binary translation (Apple Silicon)
 
-# Ephemeral sbox VMs — disposable VMs for agents and CI workloads.
-sbox:
+# Ephemeral temp VMs — disposable VMs for agents and CI workloads.
+temp:
   cpus: 4
   memory_mb: 8192
   disk_mb: 20480        # 20 GB

@@ -3,19 +3,38 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"strings"
+	"sync"
+	"syscall"
+
+	"github.com/kindlingvm/kindling/internal/shellwire"
+	"golang.org/x/term"
 )
 
 // localAPIClient is a client for the kindling-mac daemon's Unix socket HTTP API.
 type localAPIClient struct {
 	socketPath string
 	transport  *http.Transport
+}
+
+type localUpgradedConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+func (c *localUpgradedConn) Read(p []byte) (int, error) {
+	return c.reader.Read(p)
 }
 
 func newLocalAPI(socketPath string) *localAPIClient {
@@ -110,4 +129,162 @@ func (a *localAPIClient) ListVMs(ctx context.Context) error {
 		fmt.Printf("%-36s  %-12s  %-8s  %s\n", vm["id"], vm["host_group"], vm["status"], vm["name"])
 	}
 	return nil
+}
+
+func (a *localAPIClient) RunShell(ctx context.Context, id string, argv []string, cwd string, env []string) error {
+	stream, err := a.openShell(ctx, id, argv, cwd, env)
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+
+	var oldState *term.State
+	stdinFD := int(os.Stdin.Fd())
+	if term.IsTerminal(stdinFD) {
+		state, err := term.MakeRaw(stdinFD)
+		if err == nil {
+			oldState = state
+			defer term.Restore(stdinFD, state)
+		}
+	}
+
+	enc := shellwire.NewEncoder(stream)
+	dec := shellwire.NewDecoder(stream)
+	var writeMu sync.Mutex
+	sendFrame := func(frame shellwire.Frame) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return enc.Encode(frame)
+	}
+	if term.IsTerminal(stdinFD) {
+		if width, height, err := term.GetSize(stdinFD); err == nil {
+			_ = sendFrame(shellwire.Frame{Type: "resize", Width: width, Height: height})
+		}
+	}
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGWINCH)
+	defer signal.Stop(sigCh)
+	go func() {
+		for range sigCh {
+			if !term.IsTerminal(stdinFD) {
+				continue
+			}
+			width, height, err := term.GetSize(stdinFD)
+			if err != nil {
+				continue
+			}
+			_ = sendFrame(shellwire.Frame{Type: "resize", Width: width, Height: height})
+		}
+	}()
+
+	copyErr := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if n > 0 {
+				if werr := sendFrame(shellwire.Frame{Type: "stdin", Data: string(buf[:n])}); werr != nil {
+					copyErr <- werr
+					return
+				}
+			}
+			if err != nil {
+				copyErr <- err
+				return
+			}
+		}
+	}()
+
+	var exitCode int
+	var sawExit bool
+	var outErr error
+	for {
+		frame, err := dec.Decode()
+		if err != nil {
+			outErr = err
+			break
+		}
+		switch frame.Type {
+		case "stdout", "stderr":
+			if frame.Data != "" {
+				if _, err := io.WriteString(os.Stdout, frame.Data); err != nil {
+					outErr = err
+				}
+			}
+		case "error":
+			if frame.Error != "" {
+				_, _ = fmt.Fprintln(os.Stderr, frame.Error)
+			}
+		case "exit":
+			sawExit = true
+			if frame.ExitCode != nil {
+				exitCode = *frame.ExitCode
+			}
+		}
+		if outErr != nil || sawExit {
+			break
+		}
+	}
+	if oldState != nil {
+		fmt.Fprintln(os.Stdout)
+	}
+	_ = stream.Close()
+	if outErr != nil && !errors.Is(outErr, net.ErrClosed) && !errors.Is(outErr, io.EOF) {
+		return outErr
+	}
+	if sawExit && exitCode != 0 {
+		return fmt.Errorf("shell exited with code %d", exitCode)
+	}
+	select {
+	case inErr := <-copyErr:
+		if inErr != nil && !errors.Is(inErr, net.ErrClosed) && !errors.Is(inErr, io.EOF) {
+			return inErr
+		}
+	default:
+	}
+	return nil
+}
+
+func (a *localAPIClient) openShell(ctx context.Context, id string, argv []string, cwd string, env []string) (io.ReadWriteCloser, error) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", a.socketPath)
+	if err != nil {
+		return nil, fmt.Errorf("connect to kindling-mac daemon (is it running?): %w", err)
+	}
+
+	reqBody, err := json.Marshal(map[string]any{
+		"id":   id,
+		"argv": argv,
+		"cwd":  cwd,
+		"env":  env,
+	})
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost/vm.shell", bytes.NewReader(reqBody))
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "kindling-shell-v1")
+	if err := req.Write(conn); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	reader := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(reader, req)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		defer resp.Body.Close()
+		msg, _ := io.ReadAll(resp.Body)
+		conn.Close()
+		return nil, fmt.Errorf("open shell: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+	}
+	return &localUpgradedConn{Conn: conn, reader: reader}, nil
 }

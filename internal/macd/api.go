@@ -1,6 +1,7 @@
 package macd
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -48,12 +48,12 @@ func (s *Server) Serve(ctx context.Context) error {
 	mux.HandleFunc("/vm.delete", withVMManager(s.mgr, s.handleVMDelete))
 	mux.HandleFunc("/vm.shell", withVMManager(s.mgr, s.handleVMShell))
 	mux.HandleFunc("/vm.exec", withVMManager(s.mgr, s.handleVMExec))
-	mux.HandleFunc("/slicer.start", withVMManager(s.mgr, s.handleSlicerStart))
-	mux.HandleFunc("/slicer.stop", withVMManager(s.mgr, s.handleSlicerStop))
-	mux.HandleFunc("/slicer.status", withVMManager(s.mgr, s.handleSlicerStatus))
-	mux.HandleFunc("/sbox.create", withVMManager(s.mgr, s.handleSBoxCreate))
-	mux.HandleFunc("/sbox.list", withVMManager(s.mgr, s.handleSBoxList))
-	mux.HandleFunc("/sbox.delete", withVMManager(s.mgr, s.handleSBoxDelete))
+	mux.HandleFunc("/box.start", withVMManager(s.mgr, s.handleBoxStart))
+	mux.HandleFunc("/box.stop", withVMManager(s.mgr, s.handleBoxStop))
+	mux.HandleFunc("/box.status", withVMManager(s.mgr, s.handleBoxStatus))
+	mux.HandleFunc("/temp.create", withVMManager(s.mgr, s.handleTempCreate))
+	mux.HandleFunc("/temp.list", withVMManager(s.mgr, s.handleTempList))
+	mux.HandleFunc("/temp.delete", withVMManager(s.mgr, s.handleTempDelete))
 	mux.HandleFunc("/template.list", withVMManager(s.mgr, s.handleTemplateList))
 	mux.HandleFunc("/template.capture", withVMManager(s.mgr, s.handleTemplateCapture))
 	mux.HandleFunc("/template.delete", withVMManager(s.mgr, s.handleTemplateDelete))
@@ -173,17 +173,52 @@ func (s *Server) handleVMDelete(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleVMShell(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ID string `json:"id"`
+		ID   string   `json:"id"`
+		Argv []string `json:"argv"`
+		Cwd  string   `json:"cwd"`
+		Env  []string `json:"env"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, 400, "decode request: %v", err)
 		return
 	}
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		writeError(w, 500, "shell: hijacking not supported")
+		return
+	}
 	mgr := vmManagerFrom(r.Context())
-	if err := mgr.Shell(r.Context(), req.ID); err != nil {
+	stream, err := mgr.OpenShell(r.Context(), req.ID, req.Argv, req.Cwd, req.Env)
+	if err != nil {
 		writeError(w, 500, "shell: %v", err)
 		return
 	}
+	conn, rw, err := hijacker.Hijack()
+	if err != nil {
+		stream.Close()
+		return
+	}
+	client := &upgradedConn{Conn: conn, reader: rw.Reader}
+	resp := &http.Response{
+		StatusCode: http.StatusSwitchingProtocols,
+		Status:     fmt.Sprintf("%d %s", http.StatusSwitchingProtocols, http.StatusText(http.StatusSwitchingProtocols)),
+		ProtoMajor: 1,
+		ProtoMinor: 1,
+		Header:     make(http.Header),
+	}
+	resp.Header.Set("Connection", "Upgrade")
+	resp.Header.Set("Upgrade", "kindling-shell-v1")
+	if err := resp.Write(rw); err != nil {
+		stream.Close()
+		conn.Close()
+		return
+	}
+	if err := rw.Flush(); err != nil {
+		stream.Close()
+		conn.Close()
+		return
+	}
+	proxyBidirectional(client, stream)
 }
 
 func (s *Server) handleVMExec(w http.ResponseWriter, r *http.Request) {
@@ -373,7 +408,7 @@ func (a *API) do(ctx context.Context, method, path string, body, out any) error 
 
 func (a *API) SlicerStatus(ctx context.Context) (*VM, error) {
 	var out VM
-	err := a.do(ctx, http.MethodGet, "/slicer.status", nil, &out)
+	err := a.do(ctx, http.MethodGet, "/box.status", nil, &out)
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +417,7 @@ func (a *API) SlicerStatus(ctx context.Context) (*VM, error) {
 
 func (a *API) SlicerStart(ctx context.Context) (*VM, error) {
 	var out VM
-	err := a.do(ctx, http.MethodPost, "/slicer.start", nil, &out)
+	err := a.do(ctx, http.MethodPost, "/box.start", nil, &out)
 	if err != nil {
 		return nil, err
 	}
@@ -390,12 +425,12 @@ func (a *API) SlicerStart(ctx context.Context) (*VM, error) {
 }
 
 func (a *API) SlicerStop(ctx context.Context) error {
-	return a.do(ctx, http.MethodPost, "/slicer.stop", nil, nil)
+	return a.do(ctx, http.MethodPost, "/box.stop", nil, nil)
 }
 
 func (a *API) SBoxCreate(ctx context.Context, template string) (*VM, error) {
 	var out VM
-	err := a.do(ctx, http.MethodPost, "/sbox.create", map[string]string{"template": template}, &out)
+	err := a.do(ctx, http.MethodPost, "/temp.create", map[string]string{"template": template}, &out)
 	if err != nil {
 		return nil, err
 	}
@@ -404,12 +439,12 @@ func (a *API) SBoxCreate(ctx context.Context, template string) (*VM, error) {
 
 func (a *API) SBoxList(ctx context.Context) ([]VM, error) {
 	var out []VM
-	err := a.do(ctx, http.MethodGet, "/sbox.list", nil, &out)
+	err := a.do(ctx, http.MethodGet, "/temp.list", nil, &out)
 	return out, err
 }
 
 func (a *API) SBoxDelete(ctx context.Context, id string) error {
-	return a.do(ctx, http.MethodPost, "/sbox.delete", map[string]string{"id": id}, nil)
+	return a.do(ctx, http.MethodPost, "/temp.delete", map[string]string{"id": id}, nil)
 }
 
 func (a *API) VMList(ctx context.Context) ([]VM, error) {
@@ -445,4 +480,23 @@ func (a *API) TemplateList(ctx context.Context) ([]Template, error) {
 	var out []Template
 	err := a.do(ctx, http.MethodGet, "/template.list", nil, &out)
 	return out, err
+}
+
+func proxyBidirectional(client *upgradedConn, upstream io.ReadWriteCloser) {
+	done := make(chan struct{}, 2)
+	go func() {
+		defer func() { done <- struct{}{} }()
+		_, _ = io.Copy(upstream, client)
+		_ = upstream.Close()
+	}()
+	go func() {
+		defer func() { done <- struct{}{} }()
+		reader := bufio.NewReader(upstream)
+		_, _ = io.Copy(client, reader)
+		_ = client.Close()
+	}()
+	<-done
+	_ = upstream.Close()
+	_ = client.Close()
+	<-done
 }

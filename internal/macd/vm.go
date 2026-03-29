@@ -3,17 +3,14 @@
 package macd
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,7 +24,7 @@ const (
 
 	// Vsock ports for guest ↔ host communication.
 	vsockConfigPort    = 1024
-	vsockExecPort      = 1027
+	vsockControlPort   = 1028
 	vsockStatsPort     = 1026
 	vsockTCPBridgePort = 1025
 
@@ -68,9 +65,10 @@ type Manager struct {
 // NewManager creates a VM manager backed by the given config and store.
 func NewManager(cfg *Config, store *Store) *Manager {
 	return &Manager{
-		cfg:   cfg,
-		store: store,
-		vms:   make(map[string]*localVM),
+		cfg:    cfg,
+		store:  store,
+		logger: slog.Default(),
+		vms:    make(map[string]*localVM),
 	}
 }
 
@@ -102,7 +100,7 @@ func (m *Manager) StopBox(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	vm, err := m.store.Slicer()
+	vm, err := m.store.Box()
 	if err != nil {
 		return err
 	}
@@ -424,6 +422,9 @@ func (m *Manager) bootVM(ctx context.Context, vm *VM, hostGroup string, cfg Grou
 		return nil, fmt.Errorf("host tcp listen: %w", err)
 	}
 	lvm.hostPort = hostLn.Addr().(*net.TCPAddr).Port
+	if err := m.store.UpdateVMHostPort(vm.ID, lvm.hostPort); err != nil {
+		m.logger.Warn("failed to update vm host port", "id", vm.ID, "err", err)
+	}
 
 	go lvm.forwardHostTCP(runCtx, hostLn, vsockDev)
 	go lvm.monitorVM(runCtx)
@@ -596,7 +597,7 @@ func (m *Manager) Exec(ctx context.Context, id string, argv []string, cwd string
 		return 0, "", fmt.Errorf("vm not running: %s", id)
 	}
 
-	conn, err := lvm.vsock.Connect(vsockExecPort)
+	conn, err := lvm.vsock.Connect(vsockControlPort)
 	if err != nil {
 		return 0, "", fmt.Errorf("vsock connect: %w", err)
 	}
@@ -606,81 +607,35 @@ func (m *Manager) Exec(ctx context.Context, id string, argv []string, cwd string
 		cwd = "/app"
 	}
 
-	payload, _ := json.Marshal(map[string]any{
-		"argv": argv,
-		"cwd":  cwd,
-		"env":  extraEnv,
-	})
-	reqStr := fmt.Sprintf("POST /exec HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
-		len(payload), string(payload))
-	if _, err := io.WriteString(conn, reqStr); err != nil {
-		return 0, "", err
-	}
-
-	br := bufio.NewReader(conn)
-	resp, err := http.ReadResponse(br, nil)
-	if err != nil {
-		return 0, "", fmt.Errorf("read response: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	lines := strings.Split(strings.TrimSuffix(string(body), "\n"), "\n")
-	code := -1
-	var outputLines []string
-	for _, line := range lines {
-		if strings.HasPrefix(line, "KINDLING_EXIT_CODE ") {
-			if c, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "KINDLING_EXIT_CODE "))); err == nil {
-				code = c
-			}
-			continue
-		}
-		if line != "" {
-			outputLines = append(outputLines, line)
-		}
-	}
-	return code, strings.Join(outputLines, "\n"), nil
+	return execGuestHTTP(ctx, conn, argv, cwd, extraEnv)
 }
 
-// Shell opens an interactive shell in a VM using vsock exec.
-func (m *Manager) Shell(ctx context.Context, id string) error {
-	return m.ExecStreaming(ctx, id, []string{"sh"}, "/app", nil)
-}
-
-// ExecStreaming runs a command and pipes stdin/stdout for interactive use.
-func (m *Manager) ExecStreaming(ctx context.Context, id string, argv []string, cwd string, extraEnv []string) error {
+// OpenShell opens a proxied interactive shell stream to the guest control server.
+func (m *Manager) OpenShell(ctx context.Context, id string, argv []string, cwd string, extraEnv []string) (io.ReadWriteCloser, error) {
 	m.mu.Lock()
 	lvm, ok := m.vms[id]
 	m.mu.Unlock()
 
 	if !ok || lvm.vsock == nil {
-		return fmt.Errorf("vm not running: %s", id)
+		return nil, fmt.Errorf("vm not running: %s", id)
 	}
 
-	conn, err := lvm.vsock.Connect(vsockExecPort)
+	conn, err := lvm.vsock.Connect(vsockControlPort)
 	if err != nil {
-		return fmt.Errorf("vsock connect: %w", err)
+		return nil, fmt.Errorf("vsock connect: %w", err)
 	}
-	defer conn.Close()
-
 	if cwd == "" {
 		cwd = "/app"
 	}
-
-	payload, _ := json.Marshal(map[string]any{
-		"argv": argv,
-		"cwd":  cwd,
-		"env":  extraEnv,
-	})
-	reqStr := fmt.Sprintf("POST /exec HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
-		len(payload), string(payload))
-	if _, err := io.WriteString(conn, reqStr); err != nil {
-		return err
+	if len(argv) == 0 {
+		argv = []string{"sh"}
 	}
-
-	// Stream the response directly to stdout.
-	_, err = io.Copy(os.Stdout, conn)
-	return err
+	stream, err := streamGuestHTTP(ctx, conn, argv, cwd, extraEnv)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return stream, nil
 }
 
 // ToPublic converts a localVM to a public VM info struct.
@@ -694,6 +649,7 @@ func (lvm *localVM) ToPublic() *VM {
 		Name:      lvm.name,
 		HostGroup: lvm.hostGroup,
 		Status:    status,
+		HostPort:  lvm.hostPort,
 		CreatedAt: time.Now(),
 	}
 }

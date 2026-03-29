@@ -77,12 +77,12 @@ func (s *Store) ListVMs(hostGroup string) ([]VM, error) {
 	var err error
 	if hostGroup != "" {
 		rows, err = s.db.Query(
-			"SELECT id, name, host_group, status, arch, cpus, memory_mb, disk_mb, created_at, template FROM vms WHERE host_group = ? ORDER BY created_at",
+			"SELECT id, name, host_group, status, arch, cpus, memory_mb, disk_mb, created_at, template, host_port FROM vms WHERE host_group = ? ORDER BY created_at",
 			hostGroup,
 		)
 	} else {
 		rows, err = s.db.Query(
-			"SELECT id, name, host_group, status, arch, cpus, memory_mb, disk_mb, created_at, template FROM vms ORDER BY created_at",
+			"SELECT id, name, host_group, status, arch, cpus, memory_mb, disk_mb, created_at, template, host_port FROM vms ORDER BY created_at",
 		)
 	}
 	if err != nil {

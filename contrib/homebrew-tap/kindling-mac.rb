@@ -11,11 +11,43 @@ class KindlingMac < Formula
     end
   end
 
+  resource "kindling" do
+    url "https://github.com/kindlingvm/kindling/releases/download/v0.1.0/kindling"
+    sha256 "TODO: fill in after first release"
+  end
+
   def install
-    bin.install "kindling-mac" => "kindling-mac"
-    bin.install "kindling" => "kindling"
-    etc.install "contrib/kindling-mac.yaml" => "kindling-mac.yaml"
-    plist.install "contrib/kindling-mac.plist"
+    bin.install Dir["*"].first => "kindling-mac"
+    resource("kindling").stage do
+      bin.install Dir["*"].first => "kindling"
+    end
+    (etc/"kindling-mac.yaml").write <<~EOS
+      # ~/.kindling-mac.yaml
+      # Configuration for kindling-mac daemon (local Linux microVMs on macOS)
+
+      box:
+        name: "box-1"
+        cpus: 4
+        memory_mb: 8192
+        disk_mb: 51200
+        auto_start: true
+        shared_folders: []
+        rosetta: false
+
+      temp:
+        cpus: 4
+        memory_mb: 8192
+        disk_mb: 20480
+        shared_folders: []
+        rosetta: false
+
+      daemon:
+        socket_path: "~/.kindling-mac/kindling-mac.sock"
+        state_db: "~/.kindling-mac/state.db"
+        guest_agent_path: "~/.kindling-mac/guest-agent"
+        kernel_path: "~/.kindling-mac/vmlinuz"
+        initramfs_path: "~/.kindling-mac/initramfs.cpio.gz"
+    EOS
   end
 
   def post_install

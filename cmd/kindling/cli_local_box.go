@@ -96,19 +96,7 @@ func cliLocalBoxShellCmd() *cobra.Command {
 			if id == "" {
 				return fmt.Errorf("box not configured")
 			}
-			// Shell is an interactive exec.
-			var req = map[string]any{"id": id, "argv": []string{"sh"}, "cwd": "/app", "env": []string{}}
-			var out struct {
-				ExitCode int    `json:"exit_code"`
-				Output   string `json:"output"`
-			}
-			if err := api.doContext(cmd.Context(), "POST", "/vm.shell", req, &out); err != nil {
-				return err
-			}
-			if out.ExitCode != 0 {
-				return fmt.Errorf("shell exited with code %d", out.ExitCode)
-			}
-			return nil
+			return api.RunShell(cmd.Context(), id, []string{"sh"}, "/app", nil)
 		},
 	}
 }
