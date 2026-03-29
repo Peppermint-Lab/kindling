@@ -5,6 +5,8 @@ import {
   type Project,
   type Service,
   type Deployment,
+  type CIJob,
+  type CIWorkflow,
   type PreviewEnvironment,
   type GitHubSetup,
   type GitHead,
@@ -44,6 +46,7 @@ import {
   GlobeIcon,
   BarChart3Icon,
   ChevronRightIcon,
+  GitBranchIcon,
   GitPullRequestIcon,
   KeyRoundIcon,
   HardDriveIcon,
@@ -117,6 +120,40 @@ function formatBytes(n: number): string {
     i++
   }
   return `${v.toFixed(i === 0 ? 0 : 1)} ${u[i]}`
+}
+
+function ciStatusVariant(status: CIJob["status"]): "default" | "secondary" | "destructive" | "outline" {
+  switch (status) {
+    case "successful":
+      return "default"
+    case "failed":
+      return "destructive"
+    case "canceled":
+      return "outline"
+    default:
+      return "secondary"
+  }
+}
+
+function ciStatusLabel(status: CIJob["status"]): string {
+  switch (status) {
+    case "queued":
+      return "Queued"
+    case "running":
+      return "Running"
+    case "successful":
+      return "Successful"
+    case "failed":
+      return "Failed"
+    case "canceled":
+      return "Canceled"
+    default:
+      return status
+  }
+}
+
+function isTerminalCIJob(status: CIJob["status"]): boolean {
+  return status === "successful" || status === "failed" || status === "canceled"
 }
 
 function MiniBars({ values, label }: { values: number[]; label?: string }) {
@@ -197,6 +234,11 @@ export function ProjectDetailPage() {
   const [secretValue, setSecretValue] = useState("")
   const [secretSaving, setSecretSaving] = useState(false)
   const [deletingSecretId, setDeletingSecretId] = useState<string | null>(null)
+  const [ciJobs, setCIJobs] = useState<CIJob[]>([])
+  const [ciJobsLoading, setCIJobsLoading] = useState(false)
+  const [ciWorkflows, setCIWorkflows] = useState<CIWorkflow[]>([])
+  const [ciWorkflowsLoading, setCIWorkflowsLoading] = useState(false)
+  const [ciCancelingId, setCICancelingId] = useState<string | null>(null)
 
   const [mainTab, setMainTab] = useState("overview")
   const [usageCurrent, setUsageCurrent] = useState<UsageCurrent | null>(null)
@@ -256,6 +298,32 @@ export function ProjectDetailPage() {
     }
   }, [])
 
+  const loadCIJobs = useCallback(async (projectId: string) => {
+    setCIJobsLoading(true)
+    try {
+      const list = await api.listProjectCIJobs(projectId)
+      setCIJobs(list)
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not load CI jobs")
+      setCIJobs([])
+    } finally {
+      setCIJobsLoading(false)
+    }
+  }, [])
+
+  const loadCIWorkflows = useCallback(async () => {
+    setCIWorkflowsLoading(true)
+    try {
+      const list = await api.listCIWorkflows()
+      setCIWorkflows(list)
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not load workflows")
+      setCIWorkflows([])
+    } finally {
+      setCIWorkflowsLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (!id || mainTab !== "usage") return
     void loadUsage()
@@ -270,6 +338,20 @@ export function ProjectDetailPage() {
     if (!id || mainTab !== "secrets") return
     void loadSecrets(id)
   }, [id, mainTab, loadSecrets])
+
+  useEffect(() => {
+    if (!id || mainTab !== "ci") return
+    void loadCIJobs(id)
+    void loadCIWorkflows()
+  }, [id, mainTab, loadCIJobs, loadCIWorkflows])
+
+  useEffect(() => {
+    if (!id || mainTab !== "ci") return
+    const interval = window.setInterval(() => {
+      void loadCIJobs(id)
+    }, 4000)
+    return () => window.clearInterval(interval)
+  }, [id, mainTab, loadCIJobs])
 
   useEffect(() => {
     if (!id || mainTab !== "previews") return
@@ -413,6 +495,8 @@ export function ProjectDetailPage() {
     setSecrets([])
     setSecretName("")
     setSecretValue("")
+    setCIJobs([])
+    setCIWorkflows([])
   }, [id])
 
   useEffect(() => {
@@ -806,6 +890,20 @@ export function ProjectDetailPage() {
     }
   }
 
+  const handleCancelCIJob = async (jobId: string) => {
+    setCICancelingId(jobId)
+    try {
+      await api.cancelCIJob(jobId)
+      if (id) {
+        await loadCIJobs(id)
+      }
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not cancel CI job")
+    } finally {
+      setCICancelingId(null)
+    }
+  }
+
   if (loading) {
     return (
       <PageContainer size="wide">
@@ -882,6 +980,10 @@ export function ProjectDetailPage() {
             <TabsTrigger value="deployments">
               <LayoutListIcon className="size-4" />
               Deployments
+            </TabsTrigger>
+            <TabsTrigger value="ci">
+              <GitBranchIcon className="size-4" />
+              CI
             </TabsTrigger>
             <TabsTrigger value="previews">
               <GitPullRequestIcon className="size-4" />
@@ -1809,6 +1911,127 @@ export function ProjectDetailPage() {
                 </ul>
               </Surface>
             )}
+          </TabsContent>
+
+          {/* ── CI ─────────────────────────────────────────── */}
+          <TabsContent value="ci" className="space-y-4 min-w-0">
+            <Surface>
+              <SurfaceHeader>
+                <SurfaceTitle>CI jobs</SurfaceTitle>
+                <SurfaceDescription>
+                  Workflow-native CI runs for this project, including execution backend, logs, and artifacts.
+                </SurfaceDescription>
+              </SurfaceHeader>
+              {ciJobsLoading && ciJobs.length === 0 ? (
+                <SurfaceBody className="space-y-3">
+                  <Skeleton className="h-20 rounded-xl" />
+                  <Skeleton className="h-20 rounded-xl" />
+                </SurfaceBody>
+              ) : ciJobs.length === 0 ? (
+                <SurfaceBody>
+                  <EmptyState
+                    icon={<GitBranchIcon className="size-8" />}
+                    title="No CI jobs yet"
+                    description="Remote workflow runs will show up here once you submit them through Kindling CI."
+                    className="py-12"
+                  />
+                </SurfaceBody>
+              ) : (
+                <SurfaceBody className="p-0">
+                  <ul className="divide-y">
+                    {ciJobs.map((job) => (
+                      <li key={job.id}>
+                        <div className="flex items-center gap-2 pr-3">
+                          <Link to={`/ci/jobs/${job.id}`} className="list-row group min-w-0 flex-1 pr-0">
+                            <div className="flex min-w-0 flex-col gap-1.5">
+                              <div className="flex flex-wrap items-center gap-2 min-w-0">
+                                <Badge variant={ciStatusVariant(job.status)}>{ciStatusLabel(job.status)}</Badge>
+                                <span className="font-medium truncate">{job.workflow_name || "Workflow"}</span>
+                                {job.selected_job_id ? (
+                                  <span className="font-mono text-xs text-muted-foreground">{job.selected_job_id}</span>
+                                ) : null}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                <span>{job.execution_backend || "pending backend"}</span>
+                                <span>•</span>
+                                <span>{job.require_microvm ? "MicroVM required" : "Host fallback allowed"}</span>
+                                {job.exit_code != null ? (
+                                  <>
+                                    <span>•</span>
+                                    <span>Exit {job.exit_code}</span>
+                                  </>
+                                ) : null}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-muted-foreground shrink-0">
+                                {job.created_at ? new Date(job.created_at).toLocaleString() : ""}
+                              </span>
+                              <ChevronRightIcon className="size-4 text-muted-foreground/40 shrink-0 transition-transform group-hover:translate-x-0.5" />
+                            </div>
+                          </Link>
+                          {!isTerminalCIJob(job.status) ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={ciCancelingId === job.id}
+                              onClick={() => void handleCancelCIJob(job.id)}
+                            >
+                              {ciCancelingId === job.id ? "Canceling…" : "Cancel"}
+                            </Button>
+                          ) : null}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </SurfaceBody>
+              )}
+            </Surface>
+
+            <Surface>
+              <SurfaceHeader>
+                <SurfaceTitle>Workflow catalog</SurfaceTitle>
+                <SurfaceDescription>
+                  Workflows discovered under <span className="font-mono">.github/workflows</span> on the control plane.
+                </SurfaceDescription>
+              </SurfaceHeader>
+              {ciWorkflowsLoading && ciWorkflows.length === 0 ? (
+                <SurfaceBody className="space-y-3">
+                  <Skeleton className="h-24 rounded-xl" />
+                </SurfaceBody>
+              ) : ciWorkflows.length === 0 ? (
+                <SurfaceBody>
+                  <p className="text-sm text-muted-foreground">No workflows discovered.</p>
+                </SurfaceBody>
+              ) : (
+                <SurfaceBody className="space-y-3">
+                  {ciWorkflows.map((workflow) => (
+                    <div key={workflow.stem} className="rounded-lg border p-3 space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-medium">{workflow.name || workflow.stem}</p>
+                        <Badge variant="secondary" className="font-mono">{workflow.stem}</Badge>
+                      </div>
+                      <p className="font-mono text-xs text-muted-foreground break-all">{workflow.file}</p>
+                      <div className="flex flex-wrap gap-2 text-xs">
+                        {Object.entries(workflow.triggers || {})
+                          .filter(([, enabled]) => enabled)
+                          .map(([trigger]) => (
+                            <Badge key={trigger} variant="outline">{trigger}</Badge>
+                          ))}
+                      </div>
+                      <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                        {workflow.jobs.map((job) => (
+                          <span key={job.id} className="rounded-md bg-muted px-2 py-1 font-mono">
+                            {job.id}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </SurfaceBody>
+              )}
+            </Surface>
           </TabsContent>
 
           {/* ── PR previews ─────────────────────────────────── */}

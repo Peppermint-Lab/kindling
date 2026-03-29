@@ -297,6 +297,54 @@ export type BuildLog = {
   created_at: string
 }
 
+export type CIJob = {
+  id: string
+  project_id: string
+  status: "queued" | "running" | "successful" | "failed" | "canceled"
+  source: "local_workflow_run" | "github_actions_runner" | string
+  workflow_name: string
+  workflow_file: string
+  selected_job_id?: string
+  event_name?: string
+  inputs?: Record<string, string>
+  require_microvm: boolean
+  execution_backend?: string
+  exit_code?: number | null
+  error_message?: string
+  started_at?: string | null
+  finished_at?: string | null
+  canceled_at?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export type CIJobLog = {
+  id: string
+  ci_job_id: string
+  message: string
+  level: string
+  created_at: string
+}
+
+export type CIJobArtifact = {
+  id: string
+  name: string
+  path: string
+  created_at?: string | null
+}
+
+export type CIWorkflow = {
+  stem: string
+  name: string
+  file: string
+  triggers?: Record<string, boolean>
+  inputs?: Record<string, string>
+  jobs: Array<{
+    id: string
+    name: string
+  }>
+}
+
 export type Server = {
   id: string
   hostname: string
@@ -807,6 +855,18 @@ export const api = {
 
   listDeployments: (projectId: string) =>
     request<Deployment[]>(`/api/projects/${projectId}/deployments`),
+  listProjectCIJobs: (projectId: string) =>
+    request<CIJob[]>(`/api/projects/${projectId}/ci/jobs`),
+  listCIWorkflows: () =>
+    request<CIWorkflow[]>("/api/ci/workflows"),
+  getCIJob: (id: string) =>
+    request<CIJob>(`/api/ci/jobs/${id}`),
+  getCIJobLogs: (id: string) =>
+    request<CIJobLog[]>(`/api/ci/jobs/${id}/logs`),
+  getCIJobArtifacts: (id: string) =>
+    request<CIJobArtifact[]>(`/api/ci/jobs/${id}/artifacts`),
+  cancelCIJob: (id: string) =>
+    request<{ status: string }>(`/api/ci/jobs/${id}/cancel`, { method: "POST", body: JSON.stringify({}) }),
   listServiceDeployments: (serviceId: string) =>
     request<Deployment[]>(`/api/services/${serviceId}/deployments`),
 
