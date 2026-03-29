@@ -1094,6 +1094,47 @@ CREATE TABLE IF NOT EXISTS build_logs (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- CI jobs
+CREATE TABLE IF NOT EXISTS ci_jobs (
+    id                 UUID PRIMARY KEY,
+    project_id         UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    status             TEXT NOT NULL DEFAULT 'queued'
+        CHECK (status IN ('queued', 'running', 'successful', 'failed', 'canceled')),
+    source             TEXT NOT NULL DEFAULT 'local_workflow_run'
+        CHECK (source IN ('local_workflow_run', 'github_actions_runner')),
+    workflow_name      TEXT NOT NULL DEFAULT '',
+    workflow_file      TEXT NOT NULL DEFAULT '',
+    selected_job_id    TEXT NOT NULL DEFAULT '',
+    event_name         TEXT NOT NULL DEFAULT '',
+    input_values       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    input_archive_path TEXT NOT NULL DEFAULT '',
+    workspace_dir      TEXT NOT NULL DEFAULT '',
+    processing_by      UUID REFERENCES servers(id),
+    exit_code          INT,
+    error_message      TEXT NOT NULL DEFAULT '',
+    started_at         TIMESTAMPTZ,
+    finished_at        TIMESTAMPTZ,
+    canceled_at        TIMESTAMPTZ,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ci_job_logs (
+    id          UUID PRIMARY KEY,
+    ci_job_id   UUID NOT NULL REFERENCES ci_jobs(id) ON DELETE CASCADE,
+    message     TEXT NOT NULL,
+    level       TEXT NOT NULL DEFAULT 'info',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ci_job_artifacts (
+    id          UUID PRIMARY KEY,
+    ci_job_id   UUID NOT NULL REFERENCES ci_jobs(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    path        TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- VM logs
 CREATE TABLE IF NOT EXISTS vm_logs (
     id          UUID PRIMARY KEY,
@@ -1296,8 +1337,12 @@ CREATE INDEX IF NOT EXISTS idx_vms_server_id ON vms(server_id);
 CREATE INDEX IF NOT EXISTS idx_vms_status ON vms(status) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_builds_project_id ON builds(project_id);
 CREATE INDEX IF NOT EXISTS idx_builds_status ON builds(status);
+CREATE INDEX IF NOT EXISTS idx_ci_jobs_project_id ON ci_jobs(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ci_jobs_status ON ci_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_deployments_project_id ON deployments(project_id);
 CREATE INDEX IF NOT EXISTS idx_build_logs_build_id ON build_logs(build_id);
+CREATE INDEX IF NOT EXISTS idx_ci_job_logs_job_id ON ci_job_logs(ci_job_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_ci_job_artifacts_job_id ON ci_job_artifacts(ci_job_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_vm_logs_vm_id ON vm_logs(vm_id);
 CREATE INDEX IF NOT EXISTS idx_domains_project_id ON domains(project_id);
 CREATE INDEX IF NOT EXISTS idx_domains_deployment_id ON domains(deployment_id);

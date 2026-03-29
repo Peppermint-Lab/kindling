@@ -1068,6 +1068,90 @@ VALUES ($1, $2, $3, $4);
 -- name: BuildLogsByBuildID :many
 SELECT * FROM build_logs WHERE build_id = $1 ORDER BY created_at;
 
+-- CI jobs --
+
+-- name: CIJobCreate :one
+INSERT INTO ci_jobs (
+  id, project_id, status, source, workflow_name, workflow_file, selected_job_id,
+  event_name, input_values, input_archive_path, workspace_dir, error_message
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+RETURNING *;
+
+-- name: CIJobFirstByID :one
+SELECT * FROM ci_jobs WHERE id = $1;
+
+-- name: CIJobFirstByIDAndOrg :one
+SELECT j.*
+FROM ci_jobs j
+JOIN projects p ON p.id = j.project_id
+WHERE j.id = $1 AND p.org_id = $2;
+
+-- name: CIJobFindByProjectID :many
+SELECT * FROM ci_jobs WHERE project_id = $1 ORDER BY created_at DESC;
+
+-- name: CIJobClaimLease :one
+UPDATE ci_jobs SET processing_by = $2, updated_at = NOW()
+WHERE id = $1 AND status = 'queued' AND (processing_by IS NULL OR processing_by = $2)
+RETURNING *;
+
+-- name: CIJobReleaseLease :exec
+UPDATE ci_jobs SET processing_by = NULL, updated_at = NOW()
+WHERE id = $1 AND processing_by = $2;
+
+-- name: CIJobMarkRunning :exec
+UPDATE ci_jobs
+SET status = 'running',
+    workspace_dir = $2,
+    started_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1;
+
+-- name: CIJobMarkSuccessful :exec
+UPDATE ci_jobs
+SET status = 'successful',
+    exit_code = $2,
+    finished_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1;
+
+-- name: CIJobMarkFailed :exec
+UPDATE ci_jobs
+SET status = 'failed',
+    exit_code = $2,
+    error_message = $3,
+    finished_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1;
+
+-- name: CIJobMarkCanceled :exec
+UPDATE ci_jobs
+SET status = 'canceled',
+    canceled_at = NOW(),
+    finished_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1;
+
+-- name: CIJobUpdateInputArchivePath :exec
+UPDATE ci_jobs SET input_archive_path = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: CIJobLogCreate :exec
+INSERT INTO ci_job_logs (id, ci_job_id, message, level)
+VALUES ($1, $2, $3, $4);
+
+-- name: CIJobLogsByJobID :many
+SELECT * FROM ci_job_logs WHERE ci_job_id = $1 ORDER BY created_at;
+
+-- name: CIJobArtifactDeleteByJobID :exec
+DELETE FROM ci_job_artifacts WHERE ci_job_id = $1;
+
+-- name: CIJobArtifactCreate :exec
+INSERT INTO ci_job_artifacts (id, ci_job_id, name, path)
+VALUES ($1, $2, $3, $4);
+
+-- name: CIJobArtifactsByJobID :many
+SELECT * FROM ci_job_artifacts WHERE ci_job_id = $1 ORDER BY created_at, name;
+
 -- Deployments --
 
 -- name: DeploymentCreate :one

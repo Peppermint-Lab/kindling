@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/kindlingvm/kindling/internal/bootstrap"
+	"github.com/kindlingvm/kindling/internal/ci"
 	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database"
 	"github.com/kindlingvm/kindling/internal/database/queries"
@@ -163,12 +164,16 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	var recs reconcilers
 	var deployer *deploy.Deployer
 	var rt crunrt.Runtime
+	var ciSvc interface {
+		Cancel(context.Context, uuid.UUID) error
+		CreateLocalWorkflowJob(context.Context, ci.CreateJobRequest) (queries.CiJob, error)
+	}
 	if components.worker {
 		w, werr := setupWorker(ctx, q, db, serverID, cfgMgr, snap, notifyRouteChange)
 		if werr != nil {
 			return werr
 		}
-		rt, deployer, recs = w.rt, w.deployer, w.recs
+		rt, deployer, ciSvc, recs = w.rt, w.deployer, w.ciSvc, w.recs
 		if err := startWorkerInternalDNS(ctx, q, rt); err != nil {
 			return err
 		}
@@ -219,6 +224,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		q:                    q,
 		deploymentReconciler: recs.deployment,
 		buildReconciler:      recs.build,
+		ciJobReconciler:      recs.ciJob,
 		vmReconciler:         recs.vm,
 		domainReconciler:     recs.domain,
 		serverReconciler:     recs.server,
@@ -252,7 +258,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 
 	// API server.
 	if components.api {
-		return startAPIServer(ctx, q, cfgMgr, dashboardEvents, recs.deployment, listenAddr)
+		return startAPIServer(ctx, q, cfgMgr, dashboardEvents, recs.deployment, recs.ciJob, ciSvc, listenAddr)
 	}
 
 	<-ctx.Done()

@@ -444,6 +444,439 @@ func (q *Queries) BuildReleaseLease(ctx context.Context, arg BuildReleaseLeasePa
 	return err
 }
 
+const cIJobArtifactCreate = `-- name: CIJobArtifactCreate :exec
+INSERT INTO ci_job_artifacts (id, ci_job_id, name, path)
+VALUES ($1, $2, $3, $4)
+`
+
+type CIJobArtifactCreateParams struct {
+	ID      pgtype.UUID `json:"id"`
+	CiJobID pgtype.UUID `json:"ci_job_id"`
+	Name    string      `json:"name"`
+	Path    string      `json:"path"`
+}
+
+func (q *Queries) CIJobArtifactCreate(ctx context.Context, arg CIJobArtifactCreateParams) error {
+	_, err := q.db.Exec(ctx, cIJobArtifactCreate,
+		arg.ID,
+		arg.CiJobID,
+		arg.Name,
+		arg.Path,
+	)
+	return err
+}
+
+const cIJobArtifactDeleteByJobID = `-- name: CIJobArtifactDeleteByJobID :exec
+DELETE FROM ci_job_artifacts WHERE ci_job_id = $1
+`
+
+func (q *Queries) CIJobArtifactDeleteByJobID(ctx context.Context, ciJobID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, cIJobArtifactDeleteByJobID, ciJobID)
+	return err
+}
+
+const cIJobArtifactsByJobID = `-- name: CIJobArtifactsByJobID :many
+SELECT id, ci_job_id, name, path, created_at FROM ci_job_artifacts WHERE ci_job_id = $1 ORDER BY created_at, name
+`
+
+func (q *Queries) CIJobArtifactsByJobID(ctx context.Context, ciJobID pgtype.UUID) ([]CiJobArtifact, error) {
+	rows, err := q.db.Query(ctx, cIJobArtifactsByJobID, ciJobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CiJobArtifact{}
+	for rows.Next() {
+		var i CiJobArtifact
+		if err := rows.Scan(
+			&i.ID,
+			&i.CiJobID,
+			&i.Name,
+			&i.Path,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const cIJobClaimLease = `-- name: CIJobClaimLease :one
+UPDATE ci_jobs SET processing_by = $2, updated_at = NOW()
+WHERE id = $1 AND status = 'queued' AND (processing_by IS NULL OR processing_by = $2)
+RETURNING id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at
+`
+
+type CIJobClaimLeaseParams struct {
+	ID           pgtype.UUID `json:"id"`
+	ProcessingBy pgtype.UUID `json:"processing_by"`
+}
+
+func (q *Queries) CIJobClaimLease(ctx context.Context, arg CIJobClaimLeaseParams) (CiJob, error) {
+	row := q.db.QueryRow(ctx, cIJobClaimLease, arg.ID, arg.ProcessingBy)
+	var i CiJob
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Status,
+		&i.Source,
+		&i.WorkflowName,
+		&i.WorkflowFile,
+		&i.SelectedJobID,
+		&i.EventName,
+		&i.InputValues,
+		&i.InputArchivePath,
+		&i.WorkspaceDir,
+		&i.ProcessingBy,
+		&i.ExitCode,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CanceledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const cIJobCreate = `-- name: CIJobCreate :one
+
+INSERT INTO ci_jobs (
+  id, project_id, status, source, workflow_name, workflow_file, selected_job_id,
+  event_name, input_values, input_archive_path, workspace_dir, error_message
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+RETURNING id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at
+`
+
+type CIJobCreateParams struct {
+	ID               pgtype.UUID `json:"id"`
+	ProjectID        pgtype.UUID `json:"project_id"`
+	Status           string      `json:"status"`
+	Source           string      `json:"source"`
+	WorkflowName     string      `json:"workflow_name"`
+	WorkflowFile     string      `json:"workflow_file"`
+	SelectedJobID    string      `json:"selected_job_id"`
+	EventName        string      `json:"event_name"`
+	InputValues      []byte      `json:"input_values"`
+	InputArchivePath string      `json:"input_archive_path"`
+	WorkspaceDir     string      `json:"workspace_dir"`
+	ErrorMessage     string      `json:"error_message"`
+}
+
+// CI jobs --
+func (q *Queries) CIJobCreate(ctx context.Context, arg CIJobCreateParams) (CiJob, error) {
+	row := q.db.QueryRow(ctx, cIJobCreate,
+		arg.ID,
+		arg.ProjectID,
+		arg.Status,
+		arg.Source,
+		arg.WorkflowName,
+		arg.WorkflowFile,
+		arg.SelectedJobID,
+		arg.EventName,
+		arg.InputValues,
+		arg.InputArchivePath,
+		arg.WorkspaceDir,
+		arg.ErrorMessage,
+	)
+	var i CiJob
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Status,
+		&i.Source,
+		&i.WorkflowName,
+		&i.WorkflowFile,
+		&i.SelectedJobID,
+		&i.EventName,
+		&i.InputValues,
+		&i.InputArchivePath,
+		&i.WorkspaceDir,
+		&i.ProcessingBy,
+		&i.ExitCode,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CanceledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const cIJobFindByProjectID = `-- name: CIJobFindByProjectID :many
+SELECT id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at FROM ci_jobs WHERE project_id = $1 ORDER BY created_at DESC
+`
+
+func (q *Queries) CIJobFindByProjectID(ctx context.Context, projectID pgtype.UUID) ([]CiJob, error) {
+	rows, err := q.db.Query(ctx, cIJobFindByProjectID, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CiJob{}
+	for rows.Next() {
+		var i CiJob
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Status,
+			&i.Source,
+			&i.WorkflowName,
+			&i.WorkflowFile,
+			&i.SelectedJobID,
+			&i.EventName,
+			&i.InputValues,
+			&i.InputArchivePath,
+			&i.WorkspaceDir,
+			&i.ProcessingBy,
+			&i.ExitCode,
+			&i.ErrorMessage,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CanceledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const cIJobFirstByID = `-- name: CIJobFirstByID :one
+SELECT id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at FROM ci_jobs WHERE id = $1
+`
+
+func (q *Queries) CIJobFirstByID(ctx context.Context, id pgtype.UUID) (CiJob, error) {
+	row := q.db.QueryRow(ctx, cIJobFirstByID, id)
+	var i CiJob
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Status,
+		&i.Source,
+		&i.WorkflowName,
+		&i.WorkflowFile,
+		&i.SelectedJobID,
+		&i.EventName,
+		&i.InputValues,
+		&i.InputArchivePath,
+		&i.WorkspaceDir,
+		&i.ProcessingBy,
+		&i.ExitCode,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CanceledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const cIJobFirstByIDAndOrg = `-- name: CIJobFirstByIDAndOrg :one
+SELECT j.id, j.project_id, j.status, j.source, j.workflow_name, j.workflow_file, j.selected_job_id, j.event_name, j.input_values, j.input_archive_path, j.workspace_dir, j.processing_by, j.exit_code, j.error_message, j.started_at, j.finished_at, j.canceled_at, j.created_at, j.updated_at
+FROM ci_jobs j
+JOIN projects p ON p.id = j.project_id
+WHERE j.id = $1 AND p.org_id = $2
+`
+
+type CIJobFirstByIDAndOrgParams struct {
+	ID    pgtype.UUID `json:"id"`
+	OrgID pgtype.UUID `json:"org_id"`
+}
+
+func (q *Queries) CIJobFirstByIDAndOrg(ctx context.Context, arg CIJobFirstByIDAndOrgParams) (CiJob, error) {
+	row := q.db.QueryRow(ctx, cIJobFirstByIDAndOrg, arg.ID, arg.OrgID)
+	var i CiJob
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Status,
+		&i.Source,
+		&i.WorkflowName,
+		&i.WorkflowFile,
+		&i.SelectedJobID,
+		&i.EventName,
+		&i.InputValues,
+		&i.InputArchivePath,
+		&i.WorkspaceDir,
+		&i.ProcessingBy,
+		&i.ExitCode,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CanceledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const cIJobLogCreate = `-- name: CIJobLogCreate :exec
+INSERT INTO ci_job_logs (id, ci_job_id, message, level)
+VALUES ($1, $2, $3, $4)
+`
+
+type CIJobLogCreateParams struct {
+	ID      pgtype.UUID `json:"id"`
+	CiJobID pgtype.UUID `json:"ci_job_id"`
+	Message string      `json:"message"`
+	Level   string      `json:"level"`
+}
+
+func (q *Queries) CIJobLogCreate(ctx context.Context, arg CIJobLogCreateParams) error {
+	_, err := q.db.Exec(ctx, cIJobLogCreate,
+		arg.ID,
+		arg.CiJobID,
+		arg.Message,
+		arg.Level,
+	)
+	return err
+}
+
+const cIJobLogsByJobID = `-- name: CIJobLogsByJobID :many
+SELECT id, ci_job_id, message, level, created_at FROM ci_job_logs WHERE ci_job_id = $1 ORDER BY created_at
+`
+
+func (q *Queries) CIJobLogsByJobID(ctx context.Context, ciJobID pgtype.UUID) ([]CiJobLog, error) {
+	rows, err := q.db.Query(ctx, cIJobLogsByJobID, ciJobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CiJobLog{}
+	for rows.Next() {
+		var i CiJobLog
+		if err := rows.Scan(
+			&i.ID,
+			&i.CiJobID,
+			&i.Message,
+			&i.Level,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const cIJobMarkCanceled = `-- name: CIJobMarkCanceled :exec
+UPDATE ci_jobs
+SET status = 'canceled',
+    canceled_at = NOW(),
+    finished_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+`
+
+func (q *Queries) CIJobMarkCanceled(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, cIJobMarkCanceled, id)
+	return err
+}
+
+const cIJobMarkFailed = `-- name: CIJobMarkFailed :exec
+UPDATE ci_jobs
+SET status = 'failed',
+    exit_code = $2,
+    error_message = $3,
+    finished_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+`
+
+type CIJobMarkFailedParams struct {
+	ID           pgtype.UUID `json:"id"`
+	ExitCode     pgtype.Int4 `json:"exit_code"`
+	ErrorMessage string      `json:"error_message"`
+}
+
+func (q *Queries) CIJobMarkFailed(ctx context.Context, arg CIJobMarkFailedParams) error {
+	_, err := q.db.Exec(ctx, cIJobMarkFailed, arg.ID, arg.ExitCode, arg.ErrorMessage)
+	return err
+}
+
+const cIJobMarkRunning = `-- name: CIJobMarkRunning :exec
+UPDATE ci_jobs
+SET status = 'running',
+    workspace_dir = $2,
+    started_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+`
+
+type CIJobMarkRunningParams struct {
+	ID           pgtype.UUID `json:"id"`
+	WorkspaceDir string      `json:"workspace_dir"`
+}
+
+func (q *Queries) CIJobMarkRunning(ctx context.Context, arg CIJobMarkRunningParams) error {
+	_, err := q.db.Exec(ctx, cIJobMarkRunning, arg.ID, arg.WorkspaceDir)
+	return err
+}
+
+const cIJobMarkSuccessful = `-- name: CIJobMarkSuccessful :exec
+UPDATE ci_jobs
+SET status = 'successful',
+    exit_code = $2,
+    finished_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+`
+
+type CIJobMarkSuccessfulParams struct {
+	ID       pgtype.UUID `json:"id"`
+	ExitCode pgtype.Int4 `json:"exit_code"`
+}
+
+func (q *Queries) CIJobMarkSuccessful(ctx context.Context, arg CIJobMarkSuccessfulParams) error {
+	_, err := q.db.Exec(ctx, cIJobMarkSuccessful, arg.ID, arg.ExitCode)
+	return err
+}
+
+const cIJobReleaseLease = `-- name: CIJobReleaseLease :exec
+UPDATE ci_jobs SET processing_by = NULL, updated_at = NOW()
+WHERE id = $1 AND processing_by = $2
+`
+
+type CIJobReleaseLeaseParams struct {
+	ID           pgtype.UUID `json:"id"`
+	ProcessingBy pgtype.UUID `json:"processing_by"`
+}
+
+func (q *Queries) CIJobReleaseLease(ctx context.Context, arg CIJobReleaseLeaseParams) error {
+	_, err := q.db.Exec(ctx, cIJobReleaseLease, arg.ID, arg.ProcessingBy)
+	return err
+}
+
+const cIJobUpdateInputArchivePath = `-- name: CIJobUpdateInputArchivePath :exec
+UPDATE ci_jobs SET input_archive_path = $2, updated_at = NOW() WHERE id = $1
+`
+
+type CIJobUpdateInputArchivePathParams struct {
+	ID               pgtype.UUID `json:"id"`
+	InputArchivePath string      `json:"input_archive_path"`
+}
+
+func (q *Queries) CIJobUpdateInputArchivePath(ctx context.Context, arg CIJobUpdateInputArchivePathParams) error {
+	_, err := q.db.Exec(ctx, cIJobUpdateInputArchivePath, arg.ID, arg.InputArchivePath)
+	return err
+}
+
 const certMagicDelete = `-- name: CertMagicDelete :exec
 DELETE FROM certmagic_data WHERE key = $1
 `

@@ -1,12 +1,14 @@
 package rpc
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/kindlingvm/kindling/internal/ci"
 	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/reconciler"
@@ -24,6 +26,11 @@ type API struct {
 	cfg                  *config.Manager
 	dashboardEvents      *DashboardEventBroker
 	deploymentReconciler *reconciler.Scheduler
+	ciJobReconciler      *reconciler.Scheduler
+	ciJobService         interface {
+		Cancel(context.Context, uuid.UUID) error
+		CreateLocalWorkflowJob(context.Context, ci.CreateJobRequest) (queries.CiJob, error)
+	}
 }
 
 // NewAPI creates a new API handler. cfg supplies DB-backed secrets (e.g. GitHub token).
@@ -36,6 +43,15 @@ func NewAPI(q *queries.Queries, cfg *config.Manager, dashboardEvents *DashboardE
 // cleanup actions exposed via the dashboard APIs.
 func (a *API) SetDeploymentReconciler(r *reconciler.Scheduler) {
 	a.deploymentReconciler = r
+}
+
+// SetCIJobRuntime configures the scheduler and canceller used for CI jobs.
+func (a *API) SetCIJobRuntime(r *reconciler.Scheduler, svc interface {
+	Cancel(context.Context, uuid.UUID) error
+	CreateLocalWorkflowJob(context.Context, ci.CreateJobRequest) (queries.CiJob, error)
+}) {
+	a.ciJobReconciler = r
+	a.ciJobService = svc
 }
 
 func (a *API) gitHubToken() string {
@@ -122,6 +138,13 @@ func (a *API) Register(mux *http.ServeMux) {
 		ExternalAuthCallback:  a.externalAuthCallback,
 		StreamDashboardEvents: a.streamDashboardEvents,
 	}).RegisterRoutes(mux)
+
+	mux.HandleFunc("GET /api/projects/{id}/ci/jobs", a.listProjectCIJobs)
+	mux.HandleFunc("POST /api/projects/{id}/ci/jobs", a.createProjectCIJob)
+	mux.HandleFunc("GET /api/ci/jobs/{id}", a.getCIJob)
+	mux.HandleFunc("GET /api/ci/jobs/{id}/logs", a.getCIJobLogs)
+	mux.HandleFunc("GET /api/ci/jobs/{id}/artifacts", a.getCIJobArtifacts)
+	mux.HandleFunc("POST /api/ci/jobs/{id}/cancel", a.cancelCIJob)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {

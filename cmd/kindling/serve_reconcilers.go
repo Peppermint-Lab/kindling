@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/builder"
+	ciworker "github.com/kindlingvm/kindling/internal/ci"
 	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database"
 	"github.com/kindlingvm/kindling/internal/database/queries"
@@ -28,6 +29,7 @@ import (
 type reconcilers struct {
 	deployment *reconciler.Scheduler
 	build      *reconciler.Scheduler
+	ciJob      *reconciler.Scheduler
 	vm         *reconciler.Scheduler
 	domain     *reconciler.Scheduler
 	server     *reconciler.Scheduler
@@ -39,6 +41,7 @@ type reconcilers struct {
 type workerSetupResult struct {
 	rt       crunrt.Runtime
 	deployer *deploy.Deployer
+	ciSvc    *ciworker.JobService
 	recs     reconcilers
 }
 
@@ -113,6 +116,12 @@ func setupWorker(
 		Reconcile: bldr.ReconcileBuild,
 	})
 
+	ciSvc := ciworker.NewJobService(q, serverID)
+	ciJobReconciler := reconciler.New(reconciler.Config{
+		Name:      "ci_job",
+		Reconcile: ciSvc.Reconcile,
+	})
+
 	vmReconciler := reconciler.New(reconciler.Config{
 		Name: "instance",
 		Reconcile: func(ctx context.Context, id uuid.UUID) error {
@@ -151,9 +160,11 @@ func setupWorker(
 	return workerSetupResult{
 		rt:       rt,
 		deployer: deployer,
+		ciSvc:    ciSvc,
 		recs: reconcilers{
 			deployment: deploymentReconciler,
 			build:      buildReconciler,
+			ciJob:      ciJobReconciler,
 			vm:         vmReconciler,
 			domain:     domainReconciler,
 			server:     serverReconciler,
@@ -168,6 +179,7 @@ func setupWorker(
 func startReconcilers(ctx context.Context, q *queries.Queries, serverID uuid.UUID, rt crunrt.Runtime, recs reconcilers, notifyRouteChange func()) {
 	go recs.deployment.Start(ctx)
 	go recs.build.Start(ctx)
+	go recs.ciJob.Start(ctx)
 	go recs.vm.Start(ctx)
 	go recs.domain.Start(ctx)
 	go recs.server.Start(ctx)

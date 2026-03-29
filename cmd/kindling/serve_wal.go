@@ -18,6 +18,7 @@ type walDeps struct {
 	q                    *queries.Queries
 	deploymentReconciler *reconciler.Scheduler
 	buildReconciler      *reconciler.Scheduler
+	ciJobReconciler      *reconciler.Scheduler
 	vmReconciler         *reconciler.Scheduler
 	domainReconciler     *reconciler.Scheduler
 	serverReconciler     *reconciler.Scheduler
@@ -76,6 +77,14 @@ func newWALListener(databaseURL string, deps walDeps) *listener.Listener {
 			}
 			if b, err := deps.q.BuildFirstByID(ctx, pgtype.UUID{Bytes: id, Valid: true}); err == nil {
 				deps.publishDeployScopes(uuid.UUID(b.ProjectID.Bytes))
+			}
+		},
+		OnCIJob: func(ctx context.Context, id uuid.UUID) {
+			if deps.ciJobReconciler != nil {
+				deps.ciJobReconciler.ScheduleNow(id)
+			}
+			if job, err := deps.q.CIJobFirstByID(ctx, pgtype.UUID{Bytes: id, Valid: true}); err == nil {
+				deps.publishDeployScopes(uuid.UUID(job.ProjectID.Bytes))
 			}
 		},
 		OnVM: func(ctx context.Context, id uuid.UUID) {

@@ -46,6 +46,7 @@ type Config struct {
 	OnDeploymentInstance     Handler
 	OnProject                Handler
 	OnBuild                  Handler
+	OnCIJob                  Handler
 	OnVM                     Handler
 	OnDomain                 Handler
 	OnServer                 Handler
@@ -89,6 +90,7 @@ var publicationTables = []string{
 	"deployment_instances",
 	"projects",
 	"builds",
+	"ci_jobs",
 	"vms",
 	"domains",
 	"servers",
@@ -370,6 +372,10 @@ func (l *Listener) dispatch(ctx context.Context, relationID uint32, tuple *pglog
 	case "builds":
 		if l.cfg.OnBuild != nil {
 			l.cfg.OnBuild(ctx, id)
+		}
+	case "ci_jobs":
+		if l.cfg.OnCIJob != nil {
+			l.cfg.OnCIJob(ctx, id)
 		}
 	case "vms":
 		if l.cfg.OnVM != nil {

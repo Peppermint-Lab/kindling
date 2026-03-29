@@ -34,8 +34,9 @@ type RunOptions struct {
 }
 
 type RunResult struct {
-	Jobs      []JobRunResult
-	Artifacts []ArtifactInfo
+	Jobs         []JobRunResult
+	Artifacts    []ArtifactInfo
+	ArtifactRoot string
 }
 
 type JobRunResult struct {
@@ -124,7 +125,6 @@ func (r *LocalWorkflowRunner) Run(ctx context.Context, plan ExecutionPlan, opts 
 	if err != nil {
 		return RunResult{}, err
 	}
-	defer os.RemoveAll(artifacts.root)
 
 	cache, err := newCacheStore()
 	if err != nil {
@@ -185,7 +185,7 @@ func (r *LocalWorkflowRunner) Run(ctx context.Context, plan ExecutionPlan, opts 
 				jobResult = "failure"
 				ctxState.needs[job.ID] = jobState{Result: jobResult, Outputs: map[string]string{}}
 				jobResults = append(jobResults, JobRunResult{ID: job.ID, Name: job.Name, Result: jobResult, Outputs: map[string]string{}})
-				return RunResult{Jobs: jobResults, Artifacts: artifacts.List()}, fmt.Errorf("job %s step %s: %w", job.ID, step.Name, err)
+				return RunResult{Jobs: jobResults, Artifacts: artifacts.List(), ArtifactRoot: artifacts.root}, fmt.Errorf("job %s step %s: %w", job.ID, step.Name, err)
 			}
 			if step.Kind == StepKindSSHAgent {
 				sshEnv = cloneMap(stepEnv)
@@ -208,7 +208,7 @@ func (r *LocalWorkflowRunner) Run(ctx context.Context, plan ExecutionPlan, opts 
 		}
 	}
 
-	return RunResult{Jobs: jobResults, Artifacts: artifacts.List()}, nil
+	return RunResult{Jobs: jobResults, Artifacts: artifacts.List(), ArtifactRoot: artifacts.root}, nil
 }
 
 func (r *LocalWorkflowRunner) runStep(

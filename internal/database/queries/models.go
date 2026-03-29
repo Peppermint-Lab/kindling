@@ -56,6 +56,44 @@ type CertmagicDatum struct {
 	Modified pgtype.Timestamptz `json:"modified"`
 }
 
+type CiJob struct {
+	ID               pgtype.UUID        `json:"id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	Status           string             `json:"status"`
+	Source           string             `json:"source"`
+	WorkflowName     string             `json:"workflow_name"`
+	WorkflowFile     string             `json:"workflow_file"`
+	SelectedJobID    string             `json:"selected_job_id"`
+	EventName        string             `json:"event_name"`
+	InputValues      []byte             `json:"input_values"`
+	InputArchivePath string             `json:"input_archive_path"`
+	WorkspaceDir     string             `json:"workspace_dir"`
+	ProcessingBy     pgtype.UUID        `json:"processing_by"`
+	ExitCode         pgtype.Int4        `json:"exit_code"`
+	ErrorMessage     string             `json:"error_message"`
+	StartedAt        pgtype.Timestamptz `json:"started_at"`
+	FinishedAt       pgtype.Timestamptz `json:"finished_at"`
+	CanceledAt       pgtype.Timestamptz `json:"canceled_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type CiJobArtifact struct {
+	ID        pgtype.UUID        `json:"id"`
+	CiJobID   pgtype.UUID        `json:"ci_job_id"`
+	Name      string             `json:"name"`
+	Path      string             `json:"path"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type CiJobLog struct {
+	ID        pgtype.UUID        `json:"id"`
+	CiJobID   pgtype.UUID        `json:"ci_job_id"`
+	Message   string             `json:"message"`
+	Level     string             `json:"level"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type ClusterSecret struct {
 	Key        string             `json:"key"`
 	Ciphertext []byte             `json:"ciphertext"`

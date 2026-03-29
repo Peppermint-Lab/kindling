@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/kindlingvm/kindling/internal/auth"
+	"github.com/kindlingvm/kindling/internal/ci"
 	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/reconciler"
@@ -142,10 +144,16 @@ func startAPIServer(
 	cfgMgr *config.Manager,
 	dashboardEvents *rpc.DashboardEventBroker,
 	deploymentReconciler *reconciler.Scheduler,
+	ciJobReconciler *reconciler.Scheduler,
+	ciJobCanceller interface {
+		Cancel(context.Context, uuid.UUID) error
+		CreateLocalWorkflowJob(context.Context, ci.CreateJobRequest) (queries.CiJob, error)
+	},
 	listenAddr string,
 ) error {
 	api := rpc.NewAPI(q, cfgMgr, dashboardEvents)
 	api.SetDeploymentReconciler(deploymentReconciler)
+	api.SetCIJobRuntime(ciJobReconciler, ciJobCanceller)
 	webhookHandler := webhook.NewHandler(q)
 	webhookHandler.SetDeploymentReconciler(deploymentReconciler)
 
