@@ -17,17 +17,18 @@ func TestBootstrapRequestAllowedLoopback(t *testing.T) {
 	}
 }
 
-func TestBootstrapRequestAllowedIgnoresXFFForLoopbackPeer(t *testing.T) {
+func TestBootstrapRequestAllowedRejectsProxiedLoopbackWithExternalXFF(t *testing.T) {
 	t.Parallel()
 
 	req := httptest.NewRequest("POST", "/api/auth/bootstrap", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
 	req.Header.Set("X-Forwarded-For", "203.0.113.5")
 
-	// After the security fix: X-Forwarded-For is completely ignored for
-	// loopback peers. The peer IS loopback, so bootstrap is allowed.
-	if !bootstrapRequestAllowed(req) {
-		t.Fatal("expected loopback peer to be allowed (XFF should be ignored)")
+	// After the security fix: when peer is loopback and proxy headers
+	// are present, the forwarded IP (203.0.113.5) is used as effective
+	// client IP. Since it's not loopback, bootstrap is rejected.
+	if bootstrapRequestAllowed(req) {
+		t.Fatal("expected edge-proxied request with non-loopback XFF to be rejected")
 	}
 }
 

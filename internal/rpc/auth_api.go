@@ -300,12 +300,49 @@ func bootstrapClientIP(r *http.Request) (net.IP, bool) {
 	if !ok {
 		return nil, false
 	}
-	// Security: when the peer is loopback, ignore X-Forwarded-For entirely.
-	// The edge proxy runs on the same host, so all proxied requests arrive
-	// from loopback. Trusting XFF would let an external attacker spoof
-	// headers to bypass or inject the bootstrap IP check. The edge proxy's
-	// XFF-stripping middleware ensures only sanitised headers reach here.
+
+	// When the peer is not loopback, use the peer IP directly.
+	if !peer.IsLoopback() {
+		return peer, true
+	}
+
+	// Peer is loopback. Distinguish direct local connections from
+	// edge-proxied traffic by checking for proxy headers.
+	// The edge proxy runs on the same host, forwarding external requests
+	// to the API on 127.0.0.1:8080. Without this check, all proxied
+	// external requests would be treated as local loopback.
+	if hasProxyHeaders(r) {
+		// Request came through a proxy. Use X-Forwarded-For as the
+		// effective client IP so external attackers cannot bootstrap
+		// without a token.
+		xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
+		if xff == "" {
+			// Proxy headers present but no XFF — fail closed.
+			return nil, false
+		}
+		// Take the first (leftmost) IP from X-Forwarded-For.
+		if idx := strings.IndexByte(xff, ','); idx >= 0 {
+			xff = strings.TrimSpace(xff[:idx])
+		}
+		ip := net.ParseIP(xff)
+		if ip == nil {
+			// Malformed XFF — fail closed.
+			return nil, false
+		}
+		return ip, true
+	}
+
+	// Direct loopback connection (no proxy headers) — allow as local.
 	return peer, true
+}
+
+// hasProxyHeaders reports whether the request carries any standard proxy
+// headers, indicating it arrived through a reverse proxy rather than as a
+// direct connection.
+func hasProxyHeaders(r *http.Request) bool {
+	return r.Header.Get("X-Forwarded-For") != "" ||
+		r.Header.Get("X-Forwarded-Proto") != "" ||
+		r.Header.Get("Via") != ""
 }
 
 func parseRequestIP(raw string) (net.IP, bool) {

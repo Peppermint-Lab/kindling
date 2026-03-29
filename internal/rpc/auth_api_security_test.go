@@ -5,11 +5,12 @@ import (
 	"testing"
 )
 
-// TestBootstrapClientIP_LoopbackPeerIgnoresXFF verifies that when the actual
-// peer address is loopback (IPv4 or IPv6), X-Forwarded-For is completely
-// ignored and the returned IP is the loopback peer itself.
+// TestBootstrapClientIP_LoopbackPeerWithXFF_ReturnsForwardedIP verifies that
+// when the actual peer is loopback and proxy headers are present, the
+// X-Forwarded-For IP is returned as the effective client IP (not the loopback peer).
+// This ensures edge-proxied external requests are identified by their real client IP.
 // Fulfills: VAL-BOOTSTRAP-001 (loopback peers cannot proxy remote clients via XFF)
-func TestBootstrapClientIP_LoopbackPeerIgnoresXFF(t *testing.T) {
+func TestBootstrapClientIP_LoopbackPeerWithXFF_ReturnsForwardedIP(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -22,7 +23,7 @@ func TestBootstrapClientIP_LoopbackPeerIgnoresXFF(t *testing.T) {
 			name:       "IPv4 loopback peer with non-loopback XFF",
 			remoteAddr: "127.0.0.1:1234",
 			xff:        "203.0.113.5",
-			wantIP:     "127.0.0.1",
+			wantIP:     "203.0.113.5",
 		},
 		{
 			name:       "IPv4 loopback peer with loopback XFF",
@@ -31,16 +32,16 @@ func TestBootstrapClientIP_LoopbackPeerIgnoresXFF(t *testing.T) {
 			wantIP:     "127.0.0.1",
 		},
 		{
-			name:       "IPv4 loopback peer with multi-hop XFF",
+			name:       "IPv4 loopback peer with multi-hop XFF returns first IP",
 			remoteAddr: "127.0.0.1:1234",
 			xff:        "203.0.113.5, 10.0.0.1, 192.168.1.1",
-			wantIP:     "127.0.0.1",
+			wantIP:     "203.0.113.5",
 		},
 		{
 			name:       "IPv6 loopback peer with non-loopback XFF",
 			remoteAddr: "[::1]:1234",
 			xff:        "203.0.113.5",
-			wantIP:     "::1",
+			wantIP:     "203.0.113.5",
 		},
 		{
 			name:       "IPv6 loopback peer with loopback XFF",
@@ -101,11 +102,11 @@ func TestBootstrapClientIP_DirectLoopbackNoXFF(t *testing.T) {
 	}
 }
 
-// TestBootstrapRequestAllowed_LoopbackPeerWithXFF_StillAllowed verifies that
-// when the peer is loopback and XFF is present (any value), XFF is ignored and
-// the request is allowed (peer is treated as loopback).
-// Fulfills: VAL-BOOTSTRAP-001 (XFF ignored for loopback peers)
-func TestBootstrapRequestAllowed_LoopbackPeerWithXFF_StillAllowed(t *testing.T) {
+// TestBootstrapRequestAllowed_LoopbackPeerWithNonLoopbackXFF_Rejected verifies
+// that when the peer is loopback but XFF contains a non-loopback IP (indicating
+// the request was edge-proxied from an external client), bootstrap is REJECTED.
+// Fulfills: VAL-BOOTSTRAP-001 (loopback peers cannot proxy remote clients via XFF)
+func TestBootstrapRequestAllowed_LoopbackPeerWithNonLoopbackXFF_Rejected(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -114,8 +115,37 @@ func TestBootstrapRequestAllowed_LoopbackPeerWithXFF_StillAllowed(t *testing.T) 
 		xff        string
 	}{
 		{"IPv4 loopback with non-loopback XFF", "127.0.0.1:1234", "203.0.113.5"},
-		{"IPv4 loopback with loopback XFF", "127.0.0.1:1234", "127.0.0.1"},
 		{"IPv6 loopback with non-loopback XFF", "[::1]:1234", "203.0.113.5"},
+		{"IPv4 loopback with multi-hop XFF starting non-loopback", "127.0.0.1:1234", "203.0.113.5, 10.0.0.1"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := httptest.NewRequest("POST", "/api/auth/bootstrap", nil)
+			req.RemoteAddr = tc.remoteAddr
+			req.Header.Set("X-Forwarded-For", tc.xff)
+
+			if bootstrapRequestAllowed(req) {
+				t.Fatal("expected edge-proxied request with non-loopback XFF to be rejected")
+			}
+		})
+	}
+}
+
+// TestBootstrapRequestAllowed_LoopbackPeerWithLoopbackXFF_Allowed verifies
+// that when the peer is loopback and XFF also contains a loopback IP,
+// bootstrap is allowed (the forwarded IP is itself loopback).
+func TestBootstrapRequestAllowed_LoopbackPeerWithLoopbackXFF_Allowed(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		remoteAddr string
+		xff        string
+	}{
+		{"IPv4 loopback with loopback XFF", "127.0.0.1:1234", "127.0.0.1"},
 		{"IPv6 loopback with IPv6 loopback XFF", "[::1]:1234", "::1"},
 	}
 
@@ -128,7 +158,7 @@ func TestBootstrapRequestAllowed_LoopbackPeerWithXFF_StillAllowed(t *testing.T) 
 			req.Header.Set("X-Forwarded-For", tc.xff)
 
 			if !bootstrapRequestAllowed(req) {
-				t.Fatal("expected loopback peer to be allowed even with XFF present")
+				t.Fatal("expected loopback peer with loopback XFF to be allowed")
 			}
 		})
 	}
@@ -219,7 +249,7 @@ func TestBootstrapRequestAllowed_TokenBypass(t *testing.T) {
 func TestBootstrapClientIP_IPv6Loopback(t *testing.T) {
 	t.Parallel()
 
-	// Direct IPv6 loopback
+	// Direct IPv6 loopback (no proxy headers)
 	req := httptest.NewRequest("POST", "/api/auth/bootstrap", nil)
 	req.RemoteAddr = "[::1]:1234"
 
@@ -231,7 +261,8 @@ func TestBootstrapClientIP_IPv6Loopback(t *testing.T) {
 		t.Fatalf("expected [::1] to be detected as loopback, got %s (IsLoopback=%v)", ip.String(), ip.IsLoopback())
 	}
 
-	// IPv6 loopback peer with spoofed XFF should still return loopback
+	// IPv6 loopback peer with XFF: proxy headers present, so the
+	// forwarded IP (non-loopback) should be returned.
 	req2 := httptest.NewRequest("POST", "/api/auth/bootstrap", nil)
 	req2.RemoteAddr = "[::1]:1234"
 	req2.Header.Set("X-Forwarded-For", "203.0.113.5")
@@ -240,8 +271,8 @@ func TestBootstrapClientIP_IPv6Loopback(t *testing.T) {
 	if !ok2 {
 		t.Fatal("bootstrapClientIP returned ok=false for [::1] with XFF")
 	}
-	if !ip2.IsLoopback() {
-		t.Fatalf("expected [::1] peer to be loopback even with XFF, got %s", ip2.String())
+	if ip2.String() != "203.0.113.5" {
+		t.Fatalf("expected forwarded IP 203.0.113.5, got %s", ip2.String())
 	}
 }
 
@@ -267,6 +298,8 @@ func TestBootstrapClientIP_ExternalPeerXFFNeverGrantsLoopback(t *testing.T) {
 
 // TestBootstrapClientIP_MalformedXFF verifies that malformed X-Forwarded-For
 // headers are handled safely (fail closed) when the peer is loopback.
+// When proxy headers are present but XFF is malformed, bootstrapClientIP
+// should fail closed (return ok=false).
 func TestBootstrapClientIP_MalformedXFF(t *testing.T) {
 	t.Parallel()
 
@@ -274,12 +307,21 @@ func TestBootstrapClientIP_MalformedXFF(t *testing.T) {
 		name       string
 		remoteAddr string
 		xff        string
+		wantOK     bool
+		wantLoop   bool // only checked if wantOK == true
 	}{
-		{"empty XFF value", "127.0.0.1:1234", ""},
-		{"whitespace-only XFF", "127.0.0.1:1234", "   "},
-		{"non-IP XFF", "127.0.0.1:1234", "not-an-ip-address"},
-		{"XFF with garbage", "127.0.0.1:1234", "abc, def, ghi"},
-		{"XFF with empty first entry", "127.0.0.1:1234", ", 203.0.113.5"},
+		// Empty XFF with no other proxy headers → treated as direct loopback
+		{"empty XFF no proxy headers", "127.0.0.1:1234", "", true, true},
+		// Whitespace-only XFF: Header.Set with whitespace creates a header
+		// entry but hasProxyHeaders sees a non-empty value, yet after trim
+		// it's empty → fail closed
+		{"whitespace-only XFF", "127.0.0.1:1234", "   ", false, false},
+		// Non-IP XFF: proxy header present, but XFF not parseable → fail closed
+		{"non-IP XFF", "127.0.0.1:1234", "not-an-ip-address", false, false},
+		// Garbage XFF: first entry is not an IP → fail closed
+		{"XFF with garbage", "127.0.0.1:1234", "abc, def, ghi", false, false},
+		// Empty first entry: comma split yields empty string → fail closed
+		{"XFF with empty first entry", "127.0.0.1:1234", ", 203.0.113.5", false, false},
 	}
 
 	for _, tc := range cases {
@@ -292,14 +334,43 @@ func TestBootstrapClientIP_MalformedXFF(t *testing.T) {
 				req.Header.Set("X-Forwarded-For", tc.xff)
 			}
 
-			// With the fix: loopback peer always returns loopback IP,
-			// XFF is ignored entirely. So even malformed XFF should be fine.
 			ip, ok := bootstrapClientIP(req)
-			if !ok {
-				t.Fatal("bootstrapClientIP returned ok=false, want true (loopback peer should always succeed)")
+			if ok != tc.wantOK {
+				t.Fatalf("bootstrapClientIP ok=%v, want %v", ok, tc.wantOK)
 			}
-			if !ip.IsLoopback() {
-				t.Fatalf("expected loopback peer to return loopback IP, got %s", ip.String())
+			if ok && tc.wantLoop && !ip.IsLoopback() {
+				t.Fatalf("expected loopback IP, got %s", ip.String())
+			}
+		})
+	}
+}
+
+// TestBootstrapClientIP_ProxyHeadersWithoutXFF verifies that when the peer is
+// loopback and a proxy header other than XFF is present (e.g. X-Forwarded-Proto
+// or Via) but XFF is absent, bootstrapClientIP fails closed.
+func TestBootstrapClientIP_ProxyHeadersWithoutXFF(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		header string
+		value  string
+	}{
+		{"X-Forwarded-Proto only", "X-Forwarded-Proto", "https"},
+		{"Via only", "Via", "1.1 edge-proxy"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := httptest.NewRequest("POST", "/api/auth/bootstrap", nil)
+			req.RemoteAddr = "127.0.0.1:1234"
+			req.Header.Set(tc.header, tc.value)
+
+			_, ok := bootstrapClientIP(req)
+			if ok {
+				t.Fatal("expected bootstrapClientIP to fail closed when proxy header present without XFF")
 			}
 		})
 	}
