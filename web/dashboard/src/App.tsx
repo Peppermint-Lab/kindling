@@ -37,6 +37,11 @@ const DeploymentsPage = lazy(() =>
     default: module.DeploymentsPage,
   }))
 )
+const PipelinesPage = lazy(() =>
+  import("@/pages/PipelinesPage").then((module) => ({
+    default: module.PipelinesPage,
+  }))
+)
 const DeploymentDetailPage = lazy(() =>
   import("@/pages/DeploymentDetailPage").then((module) => ({
     default: module.DeploymentDetailPage,
@@ -71,6 +76,7 @@ const BootstrapPage = lazy(() =>
 function pageName(pathname: string): string {
   if (pathname.startsWith("/settings/servers/")) return "Server"
   if (pathname.startsWith("/ci/jobs/")) return "CI Job"
+  if (pathname === "/pipelines") return "Pipelines"
   if (pathname.startsWith("/deployments/")) return "Deployment"
   if (pathname === "/deployments") return "Deployments"
   if (pathname.startsWith("/services/")) return "Service"
@@ -167,6 +173,14 @@ function Layout() {
               element={
                 <PrivateRouteContent>
                   <DeploymentsPage />
+                </PrivateRouteContent>
+              }
+            />
+            <Route
+              path="/pipelines"
+              element={
+                <PrivateRouteContent>
+                  <PipelinesPage />
                 </PrivateRouteContent>
               }
             />

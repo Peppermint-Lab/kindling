@@ -1090,6 +1090,14 @@ WHERE j.id = $1 AND p.org_id = $2;
 -- name: CIJobFindByProjectID :many
 SELECT * FROM ci_jobs WHERE project_id = $1 ORDER BY created_at DESC;
 
+-- name: CIJobFindRecentWithProjectForOrg :many
+SELECT j.*, p.name AS project_name
+FROM ci_jobs j
+JOIN projects p ON p.id = j.project_id
+WHERE p.org_id = $1
+ORDER BY j.created_at DESC
+LIMIT $2;
+
 -- name: CIJobClaimLease :one
 UPDATE ci_jobs SET processing_by = $2, updated_at = NOW()
 WHERE id = $1 AND status = 'queued' AND (processing_by IS NULL OR processing_by = $2)

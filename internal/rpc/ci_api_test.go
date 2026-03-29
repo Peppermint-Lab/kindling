@@ -69,3 +69,17 @@ func TestCIJobToOutIncludesExecutionFields(t *testing.T) {
 		t.Fatalf("expected inputs to round-trip, got %#v", out.Inputs)
 	}
 }
+
+func TestCIJobToOutWithProjectName(t *testing.T) {
+	t.Parallel()
+
+	out := ciJobToOutWithProjectName(queries.CiJob{
+		ID:        pguuid.ToPgtype(uuid.New()),
+		ProjectID: pguuid.ToPgtype(uuid.New()),
+		Status:    "queued",
+		Source:    "local_workflow_run",
+	}, "demo-app")
+	if out.ProjectName != "demo-app" {
+		t.Fatalf("expected project name to be included, got %q", out.ProjectName)
+	}
+}

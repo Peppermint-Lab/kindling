@@ -300,6 +300,7 @@ export type BuildLog = {
 export type CIJob = {
   id: string
   project_id: string
+  project_name?: string
   status: "queued" | "running" | "successful" | "failed" | "canceled"
   source: "local_workflow_run" | "github_actions_runner" | string
   workflow_name: string
@@ -855,6 +856,8 @@ export const api = {
 
   listDeployments: (projectId: string) =>
     request<Deployment[]>(`/api/projects/${projectId}/deployments`),
+  listAllCIJobs: (limit = 100) =>
+    request<CIJob[]>(`/api/ci/jobs?limit=${limit}`),
   listProjectCIJobs: (projectId: string) =>
     request<CIJob[]>(`/api/projects/${projectId}/ci/jobs`),
   listCIWorkflows: () =>

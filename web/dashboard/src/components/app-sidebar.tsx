@@ -14,6 +14,7 @@ import {
 import {
   FlameIcon,
   FolderIcon,
+  GitBranchIcon,
   RocketIcon,
   Settings2Icon,
   LifeBuoyIcon,
@@ -37,6 +38,11 @@ const data = {
       title: "Deployments",
       url: "/deployments",
       icon: <RocketIcon />,
+    },
+    {
+      title: "Pipelines",
+      url: "/pipelines",
+      icon: <GitBranchIcon />,
     },
     {
       title: "Settings",

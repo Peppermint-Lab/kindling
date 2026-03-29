@@ -661,6 +661,88 @@ func (q *Queries) CIJobFindByProjectID(ctx context.Context, projectID pgtype.UUI
 	return items, nil
 }
 
+const cIJobFindRecentWithProjectForOrg = `-- name: CIJobFindRecentWithProjectForOrg :many
+SELECT j.id, j.project_id, j.status, j.source, j.workflow_name, j.workflow_file, j.selected_job_id, j.event_name, j.input_values, j.input_archive_path, j.require_microvm, j.execution_backend, j.workspace_dir, j.processing_by, j.exit_code, j.error_message, j.started_at, j.finished_at, j.canceled_at, j.created_at, j.updated_at, p.name AS project_name
+FROM ci_jobs j
+JOIN projects p ON p.id = j.project_id
+WHERE p.org_id = $1
+ORDER BY j.created_at DESC
+LIMIT $2
+`
+
+type CIJobFindRecentWithProjectForOrgParams struct {
+	OrgID pgtype.UUID `json:"org_id"`
+	Limit int32       `json:"limit"`
+}
+
+type CIJobFindRecentWithProjectForOrgRow struct {
+	ID               pgtype.UUID        `json:"id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	Status           string             `json:"status"`
+	Source           string             `json:"source"`
+	WorkflowName     string             `json:"workflow_name"`
+	WorkflowFile     string             `json:"workflow_file"`
+	SelectedJobID    string             `json:"selected_job_id"`
+	EventName        string             `json:"event_name"`
+	InputValues      []byte             `json:"input_values"`
+	InputArchivePath string             `json:"input_archive_path"`
+	RequireMicrovm   bool               `json:"require_microvm"`
+	ExecutionBackend string             `json:"execution_backend"`
+	WorkspaceDir     string             `json:"workspace_dir"`
+	ProcessingBy     pgtype.UUID        `json:"processing_by"`
+	ExitCode         pgtype.Int4        `json:"exit_code"`
+	ErrorMessage     string             `json:"error_message"`
+	StartedAt        pgtype.Timestamptz `json:"started_at"`
+	FinishedAt       pgtype.Timestamptz `json:"finished_at"`
+	CanceledAt       pgtype.Timestamptz `json:"canceled_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	ProjectName      string             `json:"project_name"`
+}
+
+func (q *Queries) CIJobFindRecentWithProjectForOrg(ctx context.Context, arg CIJobFindRecentWithProjectForOrgParams) ([]CIJobFindRecentWithProjectForOrgRow, error) {
+	rows, err := q.db.Query(ctx, cIJobFindRecentWithProjectForOrg, arg.OrgID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CIJobFindRecentWithProjectForOrgRow{}
+	for rows.Next() {
+		var i CIJobFindRecentWithProjectForOrgRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.Status,
+			&i.Source,
+			&i.WorkflowName,
+			&i.WorkflowFile,
+			&i.SelectedJobID,
+			&i.EventName,
+			&i.InputValues,
+			&i.InputArchivePath,
+			&i.RequireMicrovm,
+			&i.ExecutionBackend,
+			&i.WorkspaceDir,
+			&i.ProcessingBy,
+			&i.ExitCode,
+			&i.ErrorMessage,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.CanceledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ProjectName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const cIJobFirstByID = `-- name: CIJobFirstByID :one
 SELECT id, project_id, status, source, workflow_name, workflow_file, selected_job_id, event_name, input_values, input_archive_path, require_microvm, execution_backend, workspace_dir, processing_by, exit_code, error_message, started_at, finished_at, canceled_at, created_at, updated_at FROM ci_jobs WHERE id = $1
 `

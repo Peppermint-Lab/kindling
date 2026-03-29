@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -17,6 +18,7 @@ import (
 type ciJobOut struct {
 	ID               string            `json:"id"`
 	ProjectID        string            `json:"project_id"`
+	ProjectName      string            `json:"project_name,omitempty"`
 	Status           string            `json:"status"`
 	Source           string            `json:"source"`
 	WorkflowName     string            `json:"workflow_name"`
@@ -86,6 +88,38 @@ func ciJobToOut(job queries.CiJob) ciJobOut {
 	}
 }
 
+func ciJobToOutWithProjectName(job queries.CiJob, projectName string) ciJobOut {
+	out := ciJobToOut(job)
+	out.ProjectName = strings.TrimSpace(projectName)
+	return out
+}
+
+func ciJobListRowToOut(row queries.CIJobFindRecentWithProjectForOrgRow) ciJobOut {
+	return ciJobToOutWithProjectName(queries.CiJob{
+		ID:               row.ID,
+		ProjectID:        row.ProjectID,
+		Status:           row.Status,
+		Source:           row.Source,
+		WorkflowName:     row.WorkflowName,
+		WorkflowFile:     row.WorkflowFile,
+		SelectedJobID:    row.SelectedJobID,
+		EventName:        row.EventName,
+		InputValues:      row.InputValues,
+		InputArchivePath: row.InputArchivePath,
+		RequireMicrovm:   row.RequireMicrovm,
+		ExecutionBackend: row.ExecutionBackend,
+		WorkspaceDir:     row.WorkspaceDir,
+		ProcessingBy:     row.ProcessingBy,
+		ExitCode:         row.ExitCode,
+		ErrorMessage:     row.ErrorMessage,
+		StartedAt:        row.StartedAt,
+		FinishedAt:       row.FinishedAt,
+		CanceledAt:       row.CanceledAt,
+		CreatedAt:        row.CreatedAt,
+		UpdatedAt:        row.UpdatedAt,
+	}, row.ProjectName)
+}
+
 func (a *API) listProjectCIJobs(w http.ResponseWriter, r *http.Request) {
 	p, ok := rpcutil.MustPrincipal(w, r)
 	if !ok {
@@ -111,6 +145,32 @@ func (a *API) listProjectCIJobs(w http.ResponseWriter, r *http.Request) {
 	out := make([]ciJobOut, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, ciJobToOut(row))
+	}
+	rpcutil.WriteJSON(w, http.StatusOK, out)
+}
+
+func (a *API) listAllCIJobs(w http.ResponseWriter, r *http.Request) {
+	p, ok := rpcutil.MustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	limit := int32(100)
+	if q := strings.TrimSpace(r.URL.Query().Get("limit")); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n > 0 && n <= 200 {
+			limit = int32(n)
+		}
+	}
+	rows, err := a.q.CIJobFindRecentWithProjectForOrg(r.Context(), queries.CIJobFindRecentWithProjectForOrgParams{
+		OrgID: p.OrganizationID,
+		Limit: limit,
+	})
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "list_ci_jobs", err)
+		return
+	}
+	out := make([]ciJobOut, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, ciJobListRowToOut(row))
 	}
 	rpcutil.WriteJSON(w, http.StatusOK, out)
 }
