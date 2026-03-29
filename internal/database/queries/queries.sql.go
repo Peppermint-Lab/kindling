@@ -9030,19 +9030,37 @@ func (q *Queries) SandboxUpdateSSHHostPublicKey(ctx context.Context, arg Sandbox
 
 const sandboxUpdateSettings = `-- name: SandboxUpdateSettings :one
 UPDATE sandboxes
-SET auto_suspend_seconds = $2,
+SET base_image_ref = $2,
+    vcpu = $3,
+    memory_mb = $4,
+    disk_gb = $5,
+    auto_suspend_seconds = $6,
+    expires_at = $7,
     updated_at = NOW()
 WHERE id = $1
 RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 type SandboxUpdateSettingsParams struct {
-	ID                 pgtype.UUID `json:"id"`
-	AutoSuspendSeconds int64       `json:"auto_suspend_seconds"`
+	ID                 pgtype.UUID        `json:"id"`
+	BaseImageRef       string             `json:"base_image_ref"`
+	Vcpu               int32              `json:"vcpu"`
+	MemoryMb           int32              `json:"memory_mb"`
+	DiskGb             int32              `json:"disk_gb"`
+	AutoSuspendSeconds int64              `json:"auto_suspend_seconds"`
+	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
 }
 
 func (q *Queries) SandboxUpdateSettings(ctx context.Context, arg SandboxUpdateSettingsParams) (Sandbox, error) {
-	row := q.db.QueryRow(ctx, sandboxUpdateSettings, arg.ID, arg.AutoSuspendSeconds)
+	row := q.db.QueryRow(ctx, sandboxUpdateSettings,
+		arg.ID,
+		arg.BaseImageRef,
+		arg.Vcpu,
+		arg.MemoryMb,
+		arg.DiskGb,
+		arg.AutoSuspendSeconds,
+		arg.ExpiresAt,
+	)
 	var i Sandbox
 	err := row.Scan(
 		&i.ID,

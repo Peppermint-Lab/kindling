@@ -1535,7 +1535,12 @@ RETURNING *;
 
 -- name: SandboxUpdateSettings :one
 UPDATE sandboxes
-SET auto_suspend_seconds = $2,
+SET base_image_ref = $2,
+    vcpu = $3,
+    memory_mb = $4,
+    disk_gb = $5,
+    auto_suspend_seconds = $6,
+    expires_at = $7,
     updated_at = NOW()
 WHERE id = $1
 RETURNING *;

@@ -130,6 +130,14 @@ func normalizeSandboxAutoSuspendSeconds(v int64) (int64, error) {
 	return v, nil
 }
 
+func normalizeSandboxBaseImageRef(v string) (string, error) {
+	trimmed := strings.TrimSpace(v)
+	if trimmed == "" {
+		return "", errors.New("base_image_ref is required")
+	}
+	return trimmed, nil
+}
+
 func sandboxTemplateToOut(tpl queries.SandboxTemplate) sandboxTemplateOut {
 	return sandboxTemplateOut{
 		ID:              pguuid.ToString(tpl.ID),
@@ -356,24 +364,84 @@ func (a *API) patchSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		AutoSuspendSeconds *int64 `json:"auto_suspend_seconds"`
+		AutoSuspendSeconds *int64  `json:"auto_suspend_seconds"`
+		BaseImageRef       *string `json:"base_image_ref"`
+		Vcpu               *int32  `json:"vcpu"`
+		MemoryMb           *int32  `json:"memory_mb"`
+		DiskGb             *int32  `json:"disk_gb"`
+		ExpiresAt          *string `json:"expires_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid json body")
 		return
 	}
-	if req.AutoSuspendSeconds == nil {
+	if req.AutoSuspendSeconds == nil && req.BaseImageRef == nil && req.Vcpu == nil && req.MemoryMb == nil && req.DiskGb == nil && req.ExpiresAt == nil {
 		writeJSON(w, http.StatusOK, sandboxToOut(sb, nil))
 		return
 	}
-	autoSuspend, err := normalizeSandboxAutoSuspendSeconds(*req.AutoSuspendSeconds)
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
+
+	baseImageRef := sb.BaseImageRef
+	vcpu := sb.Vcpu
+	memoryMb := sb.MemoryMb
+	diskGb := sb.DiskGb
+	autoSuspend := sb.AutoSuspendSeconds
+	expiresAt := sb.ExpiresAt
+
+	configChangeRequested := req.BaseImageRef != nil || req.Vcpu != nil || req.MemoryMb != nil || req.DiskGb != nil || req.ExpiresAt != nil
+	if configChangeRequested && sb.ObservedState == "running" {
+		writeAPIError(w, http.StatusConflict, "sandbox_running", "stop the sandbox before editing image, resources, or expiry")
 		return
+	}
+	if req.BaseImageRef != nil {
+		baseImageRef, err = normalizeSandboxBaseImageRef(*req.BaseImageRef)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
+			return
+		}
+	}
+	if req.Vcpu != nil {
+		if *req.Vcpu <= 0 {
+			writeAPIError(w, http.StatusBadRequest, "validation_error", "vcpu must be > 0")
+			return
+		}
+		vcpu = *req.Vcpu
+	}
+	if req.MemoryMb != nil {
+		if *req.MemoryMb <= 0 {
+			writeAPIError(w, http.StatusBadRequest, "validation_error", "memory_mb must be > 0")
+			return
+		}
+		memoryMb = *req.MemoryMb
+	}
+	if req.DiskGb != nil {
+		if *req.DiskGb <= 0 {
+			writeAPIError(w, http.StatusBadRequest, "validation_error", "disk_gb must be > 0")
+			return
+		}
+		diskGb = *req.DiskGb
+	}
+	if req.AutoSuspendSeconds != nil {
+		autoSuspend, err = normalizeSandboxAutoSuspendSeconds(*req.AutoSuspendSeconds)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
+			return
+		}
+	}
+	if req.ExpiresAt != nil {
+		expiresAt, err = parseOptionalTime(req.ExpiresAt)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, "validation_error", "expires_at must be RFC3339")
+			return
+		}
 	}
 	sb, err = a.q.SandboxUpdateSettings(r.Context(), queries.SandboxUpdateSettingsParams{
 		ID:                 sb.ID,
+		BaseImageRef:       baseImageRef,
+		Vcpu:               vcpu,
+		MemoryMb:           memoryMb,
+		DiskGb:             diskGb,
 		AutoSuspendSeconds: autoSuspend,
+		ExpiresAt:          expiresAt,
 	})
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_sandbox", err)

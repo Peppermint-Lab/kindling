@@ -176,6 +176,9 @@ func cliSandboxCreateCmd() *cobra.Command {
 func cliSandboxUpdateCmd() *cobra.Command {
 	var sandboxID string
 	var autoSuspend int64
+	var imageRef string
+	var vcpu, memoryMB, diskGB int32
+	var expiresAt string
 	cmd := &cobra.Command{
 		Use:   "update",
 		Short: "Update sandbox settings (org admin)",
@@ -188,23 +191,51 @@ func cliSandboxUpdateCmd() *cobra.Command {
 				return fmt.Errorf("invalid sandbox id: %w", err)
 			}
 			if autoSuspend < 0 {
-				return fmt.Errorf("--auto-suspend-seconds must be >= 0")
+				autoSuspend = -1
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
 				return fmt.Errorf("create client: %w", err)
 			}
+			body := map[string]any{}
+			if cmd.Flags().Changed("auto-suspend-seconds") {
+				if autoSuspend < 0 {
+					return fmt.Errorf("--auto-suspend-seconds must be >= 0")
+				}
+				body["auto_suspend_seconds"] = autoSuspend
+			}
+			if cmd.Flags().Changed("image") {
+				body["base_image_ref"] = strings.TrimSpace(imageRef)
+			}
+			if cmd.Flags().Changed("vcpu") {
+				body["vcpu"] = vcpu
+			}
+			if cmd.Flags().Changed("memory-mb") {
+				body["memory_mb"] = memoryMB
+			}
+			if cmd.Flags().Changed("disk-gb") {
+				body["disk_gb"] = diskGB
+			}
+			if cmd.Flags().Changed("expires-at") {
+				body["expires_at"] = strings.TrimSpace(expiresAt)
+			}
+			if len(body) == 0 {
+				return fmt.Errorf("no settings provided")
+			}
 			var out map[string]any
-			if err := c.DoJSON(cmd.Context(), http.MethodPatch, "/api/sandboxes/"+id, map[string]any{
-				"auto_suspend_seconds": autoSuspend,
-			}, &out); err != nil {
+			if err := c.DoJSON(cmd.Context(), http.MethodPatch, "/api/sandboxes/"+id, body, &out); err != nil {
 				return fmt.Errorf("update sandbox: %w", err)
 			}
 			return printRemote(out)
 		},
 	}
 	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
-	cmd.Flags().Int64Var(&autoSuspend, "auto-suspend-seconds", 0, "Idle auto-suspend timeout in seconds (0 disables auto-suspend)")
+	cmd.Flags().Int64Var(&autoSuspend, "auto-suspend-seconds", -1, "Idle auto-suspend timeout in seconds (0 disables auto-suspend)")
+	cmd.Flags().StringVar(&imageRef, "image", "", "Base OCI image reference")
+	cmd.Flags().Int32Var(&vcpu, "vcpu", 0, "vCPU count")
+	cmd.Flags().Int32Var(&memoryMB, "memory-mb", 0, "Memory in MB")
+	cmd.Flags().Int32Var(&diskGB, "disk-gb", 0, "Disk size in GB")
+	cmd.Flags().StringVar(&expiresAt, "expires-at", "", "Optional RFC3339 expiry time")
 	return cmd
 }
 

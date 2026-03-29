@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
-import { useParams } from "react-router-dom"
-import { CopyIcon, ShieldCheckIcon } from "lucide-react"
+import { useNavigate, useParams } from "react-router-dom"
+import { AlertTriangleIcon, CopyIcon, RotateCcwIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react"
 import { api, type Sandbox, type SandboxAccessEvent } from "@/lib/api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -47,7 +47,31 @@ function compactSSHKey(publicKey: string): string {
   return `${parts[0]} ${body.slice(0, 16)}...${body.slice(-8)}`
 }
 
+function sandboxImageContract(baseImageRef: string) {
+  const ref = baseImageRef.toLowerCase()
+  if (ref.includes("distroless") || ref.includes("scratch") || ref.includes("busybox")) {
+    return {
+      tone: "caution" as const,
+      title: "Minimal image",
+      description: "Shell, SSH, and guest tooling are unlikely to be present by default. Expect to add them yourself or switch to a fuller base image.",
+    }
+  }
+  if (ref.includes("alpine")) {
+    return {
+      tone: "caution" as const,
+      title: "Lightweight image",
+      description: "Alpine works well, but SSH still depends on installing and starting OpenSSH inside the image.",
+    }
+  }
+  return {
+    tone: "ready" as const,
+    title: "General-purpose image",
+    description: "This is a better fit for interactive sandboxing, but Kindling still expects /bin/sh and benefits from sshd + ssh-keygen.",
+  }
+}
+
 export function SandboxDetailPage() {
+  const navigate = useNavigate()
   const { id = "" } = useParams()
   const [sandbox, setSandbox] = useState<Sandbox | null>(null)
   const [logs, setLogs] = useState<string[]>([])
@@ -55,6 +79,10 @@ export function SandboxDetailPage() {
   const [events, setEvents] = useState<SandboxAccessEvent[]>([])
   const [targetPort, setTargetPort] = useState("3000")
   const [hostname, setHostname] = useState("")
+  const [baseImageRef, setBaseImageRef] = useState("")
+  const [vcpu, setVcpu] = useState("2")
+  const [memoryMb, setMemoryMb] = useState("2048")
+  const [diskGb, setDiskGb] = useState("10")
   const [autoSuspendEnabled, setAutoSuspendEnabled] = useState(false)
   const [autoSuspendSeconds, setAutoSuspendSeconds] = useState("900")
   const [sshFingerprint, setSSHFingerprint] = useState<string | null>(null)
@@ -76,6 +104,10 @@ export function SandboxDetailPage() {
       setSSHFingerprint(sandboxValue.ssh_host_public_key ? await sshPublicKeyFingerprint(sandboxValue.ssh_host_public_key) : null)
       setTargetPort(String(sandboxValue.published_http_port ?? sandboxValue.published_ports?.[0]?.target_port ?? 3000))
       setHostname(sandboxValue.published_ports?.[0]?.public_hostname ?? "")
+      setBaseImageRef(sandboxValue.base_image_ref)
+      setVcpu(String(sandboxValue.vcpu))
+      setMemoryMb(String(sandboxValue.memory_mb))
+      setDiskGb(String(sandboxValue.disk_gb))
       setAutoSuspendEnabled(sandboxValue.auto_suspend_seconds > 0)
       setAutoSuspendSeconds(String(sandboxValue.auto_suspend_seconds > 0 ? sandboxValue.auto_suspend_seconds : 900))
     } catch (err) {
@@ -89,6 +121,8 @@ export function SandboxDetailPage() {
 
   const sshCommand = useMemo(() => `kindling sandbox ssh --sandbox ${id}`, [id])
   const sshHostKeySummary = sandbox?.ssh_host_public_key ? compactSSHKey(sandbox.ssh_host_public_key) : null
+  const imageContract = sandbox ? sandboxImageContract(baseImageRef || sandbox.base_image_ref) : null
+  const canEditSandboxConfig = sandbox?.observed_state !== "running"
 
   if (!sandbox) {
     return (
@@ -114,6 +148,20 @@ export function SandboxDetailPage() {
               {action}
             </Button>
           ))}
+          <Button variant="outline" onClick={() => void api.sandboxAction(id, "stop").then(() => api.sandboxAction(id, "start")).then(load)}>
+            <RotateCcwIcon className="mr-2 size-4" />
+            Restart
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => {
+              if (!window.confirm("Delete this sandbox?")) return
+              void api.deleteSandbox(id).then(() => navigate("/sandboxes"))
+            }}
+          >
+            <Trash2Icon className="mr-2 size-4" />
+            Delete
+          </Button>
         </div>
       </div>
 
@@ -230,6 +278,101 @@ export function SandboxDetailPage() {
           >
             Save Lifecycle
           </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Guest Image</CardTitle>
+          <CardDescription>Kindling expects interactive sandbox images to include `/bin/sh`, and SSH access additionally depends on `sshd` and `ssh-keygen`.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className={`rounded-lg border p-3 text-sm ${imageContract?.tone === "caution" ? "border-amber-400/50 bg-amber-500/10" : "bg-muted/20"}`}>
+            <div className="flex items-center gap-2 font-medium">
+              {imageContract?.tone === "caution" ? <AlertTriangleIcon className="size-4 text-amber-700" /> : <ShieldCheckIcon className="size-4 text-muted-foreground" />}
+              {imageContract?.title}
+            </div>
+            <p className="mt-1 text-muted-foreground">{imageContract?.description}</p>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="space-y-2 xl:col-span-2">
+              <Label htmlFor="sandbox-image-ref">Base Image</Label>
+              <Input
+                id="sandbox-image-ref"
+                value={baseImageRef}
+                disabled={!canEditSandboxConfig}
+                onChange={(e) => setBaseImageRef(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="sandbox-vcpu">vCPU</Label>
+              <Input
+                id="sandbox-vcpu"
+                type="number"
+                min="1"
+                step="1"
+                value={vcpu}
+                disabled={!canEditSandboxConfig}
+                onChange={(e) => setVcpu(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="sandbox-memory">Memory (MB)</Label>
+              <Input
+                id="sandbox-memory"
+                type="number"
+                min="128"
+                step="128"
+                value={memoryMb}
+                disabled={!canEditSandboxConfig}
+                onChange={(e) => setMemoryMb(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="sandbox-disk">Disk (GB)</Label>
+              <Input
+                id="sandbox-disk"
+                type="number"
+                min="1"
+                step="1"
+                value={diskGb}
+                disabled={!canEditSandboxConfig}
+                onChange={(e) => setDiskGb(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">
+              {canEditSandboxConfig
+                ? "These changes apply the next time the sandbox starts."
+                : "Stop the sandbox before editing its base image or resources."}
+            </p>
+            <Button
+              variant="outline"
+              disabled={!canEditSandboxConfig}
+              onClick={() => {
+                const nextVcpu = Number(vcpu || "0")
+                const nextMemoryMb = Number(memoryMb || "0")
+                const nextDiskGb = Number(diskGb || "0")
+                if (!baseImageRef.trim()) {
+                  setError("Base image is required")
+                  return
+                }
+                if (!Number.isFinite(nextVcpu) || nextVcpu <= 0 || !Number.isFinite(nextMemoryMb) || nextMemoryMb <= 0 || !Number.isFinite(nextDiskGb) || nextDiskGb <= 0) {
+                  setError("Image and resource values must be valid positive numbers")
+                  return
+                }
+                void api.updateSandbox(id, {
+                  base_image_ref: baseImageRef.trim(),
+                  vcpu: nextVcpu,
+                  memory_mb: nextMemoryMb,
+                  disk_gb: nextDiskGb,
+                }).then(load)
+              }}
+            >
+              Save Guest Config
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
