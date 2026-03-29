@@ -41,7 +41,7 @@ func TestAppleBuilderVM_BuildahVersion(t *testing.T) {
 	}
 
 	ws := t.TempDir()
-	vm, err := newAppleBuilderVM(kernel, initrd, rootfs, ws)
+	vm, err := newAppleBuilderVM(kernel, initrd, rootfs, ws, "builder")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestAppleBuilderVM_BuildahVersion(t *testing.T) {
 	}
 
 	env := []string{"PATH=/usr/local/bin:/usr/bin:/bin:/sbin:/usr/sbin"}
-	code, err := vm.Exec(ctx, []string{"buildah", "version"}, env, func(line string) { t.Log(line) })
+	code, err := vm.Exec(ctx, []string{"buildah", "version"}, "/workspace", env, func(line string) { t.Log(line) })
 	if err != nil {
 		t.Fatalf("exec buildah version: %v", err)
 	}

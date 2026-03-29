@@ -39,7 +39,8 @@ const (
 
 // ConfigResponse is the JSON payload from the host's config endpoint.
 type ConfigResponse struct {
-	// Mode is "" or "app" for normal workloads; "builder" for the macOS OCI build microVM.
+	// Mode is "" or "app" for normal workloads; "builder" for the macOS OCI build microVM;
+	// "ci" for a generic command-exec Linux VM used by workflow jobs.
 	Mode            string   `json:"mode"`
 	Env             []string `json:"env"`
 	IPAddr          string   `json:"ip_addr"`
@@ -69,10 +70,10 @@ func main() {
 	}
 	log.Printf("config received: mode=%s hostname=%s ip=%s env_count=%d", cfg.Mode, cfg.Hostname, cfg.IPAddr, len(cfg.Env))
 
-	if cfg.Mode == "builder" {
-		log.Println("builder mode: starting build executor")
+	if cfg.Mode == "builder" || cfg.Mode == "ci" {
+		log.Printf("%s mode: starting build/exec executor", cfg.Mode)
 		if err := runBuilderMode(cfg); err != nil {
-			log.Fatalf("builder mode: %v", err)
+			log.Fatalf("%s mode: %v", cfg.Mode, err)
 		}
 		return
 	}

@@ -77,7 +77,7 @@ func (r *AppleVZBuildRunner) BuildAndPush(ctx context.Context, run BuildRun) err
 
 	r.mu.Lock()
 	if r.vm == nil {
-		vm, err := newAppleBuilderVM(r.cfg.KernelPath, r.cfg.InitramfsPath, r.cfg.BuilderRootfsDir, ws)
+		vm, err := newAppleBuilderVM(r.cfg.KernelPath, r.cfg.InitramfsPath, r.cfg.BuilderRootfsDir, ws, "builder")
 		if err != nil {
 			r.mu.Unlock()
 			return fmt.Errorf("create builder VM: %w", err)
@@ -99,7 +99,7 @@ func (r *AppleVZBuildRunner) BuildAndPush(ctx context.Context, run BuildRun) err
 	env := []string{"PATH=/usr/local/bin:/usr/bin:/bin:/sbin:/usr/sbin"}
 
 	bud := append([]string{"buildah"}, oci.BuildahBudArgs(run.ImageRef, run.DockerfilePath, true)...)
-	code, err := vm.Exec(ctx, bud, env, run.LogLine)
+	code, err := vm.Exec(ctx, bud, "/workspace", env, run.LogLine)
 	if err != nil {
 		return fmt.Errorf("exec buildah bud: %w", err)
 	}
@@ -112,7 +112,7 @@ func (r *AppleVZBuildRunner) BuildAndPush(ctx context.Context, run BuildRun) err
 	}
 	creds := run.RegistryUsername + ":" + run.RegistryPassword
 	push := append([]string{"buildah"}, oci.BuildahPushArgs(run.ImageRef, creds)...)
-	code, err = vm.Exec(ctx, push, env, run.LogLine)
+	code, err = vm.Exec(ctx, push, "/workspace", env, run.LogLine)
 	if err != nil {
 		return fmt.Errorf("exec buildah push: %w", err)
 	}

@@ -29,9 +29,11 @@ type execRequest struct {
 	Env  []string `json:"env"`
 }
 
-// runBuilderMode runs the Kindling OS builder microVM: mounts workspace + builder rootfs,
-// then serves POST /exec on vsock to run whitelisted buildah commands inside a chroot.
+// runBuilderMode runs the Kindling OS builder/CI microVM: mounts workspace + builder rootfs,
+// then serves POST /exec on vsock to run commands inside a chroot. In builder mode only
+// buildah is allowed; in ci mode arbitrary commands are allowed.
 func runBuilderMode(cfg *ConfigResponse) error {
+	allowAnyExec := strings.TrimSpace(cfg.Mode) == "ci"
 	if err := mountBuilderVolumes(); err != nil {
 		return err
 	}
@@ -61,7 +63,7 @@ func runBuilderMode(cfg *ConfigResponse) error {
 			log.Printf("builder vsock accept: %v", err)
 			continue
 		}
-		go handleBuilderExecConn(c)
+		go handleBuilderExecConn(c, allowAnyExec)
 	}
 }
 
@@ -96,7 +98,7 @@ func mountBuilderVolumes() error {
 	return nil
 }
 
-func handleBuilderExecConn(conn net.Conn) {
+func handleBuilderExecConn(conn net.Conn, allowAnyExec bool) {
 	defer conn.Close()
 
 	reqData, err := readFullHTTPRequest(conn)
@@ -118,7 +120,7 @@ func handleBuilderExecConn(conn net.Conn) {
 		writeHTTPString(conn, 400, "missing argv")
 		return
 	}
-	if filepath.Base(req.Argv[0]) != "buildah" {
+	if !allowAnyExec && filepath.Base(req.Argv[0]) != "buildah" {
 		writeHTTPString(conn, 403, "only buildah is allowed")
 		return
 	}
@@ -219,7 +221,6 @@ func parseContentLength(header []byte) int {
 	}
 	return 0
 }
-
 
 func extractHTTPBodyBytes(req []byte) []byte {
 	idx := bytes.Index(req, []byte("\r\n\r\n"))

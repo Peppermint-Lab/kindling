@@ -104,7 +104,7 @@ func ciRunCmd() *cobra.Command {
 				return err
 			}
 
-			runner := ci.NewLocalWorkflowRunner()
+			runner := ci.NewPreferredWorkflowRunner()
 			result, err := runner.Run(context.Background(), plan, ci.RunOptions{
 				Stdout: os.Stdout,
 				Stderr: os.Stderr,

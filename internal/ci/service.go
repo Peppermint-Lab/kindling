@@ -33,7 +33,7 @@ func NewJobService(q *queries.Queries, serverID uuid.UUID) *JobService {
 		serverID: serverID,
 		resolver: NewFSWorkflowResolver(),
 		compiler: NewStaticWorkflowCompiler(),
-		runner:   NewLocalWorkflowRunner(),
+		runner:   NewPreferredWorkflowRunner(),
 		running:  map[uuid.UUID]context.CancelFunc{},
 	}
 }

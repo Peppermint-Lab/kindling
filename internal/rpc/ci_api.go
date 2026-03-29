@@ -3,6 +3,7 @@ package rpc
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -37,6 +38,20 @@ type ciJobArtifactOut struct {
 	Name      string  `json:"name"`
 	Path      string  `json:"path"`
 	CreatedAt *string `json:"created_at,omitempty"`
+}
+
+type ciWorkflowOut struct {
+	Stem     string             `json:"stem"`
+	Name     string             `json:"name"`
+	File     string             `json:"file"`
+	Triggers map[string]bool    `json:"triggers,omitempty"`
+	Inputs   map[string]string  `json:"inputs,omitempty"`
+	Jobs     []ciWorkflowJobOut `json:"jobs"`
+}
+
+type ciWorkflowJobOut struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 func ciJobToOut(job queries.CiJob) ciJobOut {
@@ -92,6 +107,52 @@ func (a *API) listProjectCIJobs(w http.ResponseWriter, r *http.Request) {
 	out := make([]ciJobOut, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, ciJobToOut(row))
+	}
+	rpcutil.WriteJSON(w, http.StatusOK, out)
+}
+
+func (a *API) listCIWorkflows(w http.ResponseWriter, r *http.Request) {
+	if _, ok := rpcutil.MustPrincipal(w, r); !ok {
+		return
+	}
+	resolver := ci.NewFSWorkflowResolver()
+	repoRoot, err := resolver.FindRepoRoot(".")
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusNotFound, "ci_workflows", err)
+		return
+	}
+	workflows, err := resolver.List(repoRoot)
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "ci_workflows", err)
+		return
+	}
+	out := make([]ciWorkflowOut, 0, len(workflows))
+	for _, wf := range workflows {
+		jobIDs := make([]string, 0, len(wf.Jobs))
+		for jobID := range wf.Jobs {
+			jobIDs = append(jobIDs, jobID)
+		}
+		sort.Strings(jobIDs)
+		jobs := make([]ciWorkflowJobOut, 0, len(jobIDs))
+		for _, jobID := range jobIDs {
+			jobs = append(jobs, ciWorkflowJobOut{ID: jobID, Name: wf.Jobs[jobID].Name})
+		}
+		inputs := map[string]string{}
+		for name, spec := range wf.DispatchInput {
+			inputs[name] = spec.Default
+		}
+		out = append(out, ciWorkflowOut{
+			Stem: wf.Stem,
+			Name: wf.Name,
+			File: wf.Filename,
+			Triggers: map[string]bool{
+				"push":              wf.Triggers.Push,
+				"pull_request":      wf.Triggers.PullRequest,
+				"workflow_dispatch": wf.Triggers.WorkflowDispatch,
+			},
+			Inputs: inputs,
+			Jobs:   jobs,
+		})
 	}
 	rpcutil.WriteJSON(w, http.StatusOK, out)
 }

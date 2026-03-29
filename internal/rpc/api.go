@@ -140,6 +140,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	}).RegisterRoutes(mux)
 
 	mux.HandleFunc("GET /api/projects/{id}/ci/jobs", a.listProjectCIJobs)
+	mux.HandleFunc("GET /api/ci/workflows", a.listCIWorkflows)
 	mux.HandleFunc("POST /api/projects/{id}/ci/jobs", a.createProjectCIJob)
 	mux.HandleFunc("GET /api/ci/jobs/{id}", a.getCIJob)
 	mux.HandleFunc("GET /api/ci/jobs/{id}/logs", a.getCIJobLogs)

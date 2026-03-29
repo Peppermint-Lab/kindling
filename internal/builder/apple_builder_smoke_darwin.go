@@ -38,7 +38,7 @@ func SmokeTestAppleBuilderVM(ctx context.Context) error {
 	}
 	defer os.RemoveAll(ws)
 
-	vm, err := newAppleBuilderVM(kernel, initrd, rootfs, ws)
+	vm, err := newAppleBuilderVM(kernel, initrd, rootfs, ws, "builder")
 	if err != nil {
 		return fmt.Errorf("create builder VM: %w", err)
 	}
@@ -52,7 +52,7 @@ func SmokeTestAppleBuilderVM(ctx context.Context) error {
 	}
 
 	env := []string{"PATH=/usr/local/bin:/usr/bin:/bin:/sbin:/usr/sbin"}
-	code, err := vm.Exec(runCtx, []string{"buildah", "version"}, env, func(line string) { fmt.Println(line) })
+	code, err := vm.Exec(runCtx, []string{"buildah", "version"}, "/workspace", env, func(line string) { fmt.Println(line) })
 	if err != nil {
 		return fmt.Errorf("exec buildah version: %w", err)
 	}

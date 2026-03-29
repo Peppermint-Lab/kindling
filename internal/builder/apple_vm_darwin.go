@@ -36,19 +36,20 @@ type appleBuilderVM struct {
 	initramfsPath string
 	builderRoot   string
 	workspaceDir  string
+	mode          string
 	dummyAppDir   string
 
-	mu     sync.Mutex
+	mu      sync.Mutex
 	started bool
-	cancel context.CancelFunc
-	vm     *vz.VirtualMachine
-	vsock  *vz.VirtioSocketDevice
+	cancel  context.CancelFunc
+	vm      *vz.VirtualMachine
+	vsock   *vz.VirtioSocketDevice
 
 	readyOnce sync.Once
 	readyCh   chan struct{}
 }
 
-func newAppleBuilderVM(kernelPath, initramfsPath, builderRoot, workspaceDir string) (*appleBuilderVM, error) {
+func newAppleBuilderVM(kernelPath, initramfsPath, builderRoot, workspaceDir, mode string) (*appleBuilderVM, error) {
 	dummy, err := os.MkdirTemp("", "kindling-builder-app-")
 	if err != nil {
 		return nil, err
@@ -62,6 +63,7 @@ func newAppleBuilderVM(kernelPath, initramfsPath, builderRoot, workspaceDir stri
 		initramfsPath: initramfsPath,
 		builderRoot:   builderRoot,
 		workspaceDir:  workspaceDir,
+		mode:          mode,
 		dummyAppDir:   dummy,
 		readyCh:       make(chan struct{}),
 	}, nil
@@ -292,7 +294,7 @@ func (v *appleBuilderVM) handleHostVsockConn(conn net.Conn) {
 	req := string(buf[:n])
 	if strings.Contains(req, "GET /config") {
 		cfg := map[string]any{
-			"mode":     "builder",
+			"mode":     firstNonEmpty(v.mode, "builder"),
 			"ip_addr":  builderGuestNATCIDR,
 			"ip_gw":    builderGuestGW,
 			"hostname": builderHostname,
@@ -318,7 +320,16 @@ func (v *appleBuilderVM) handleHostVsockConn(conn net.Conn) {
 	_, _ = conn.Write([]byte("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"))
 }
 
-func (v *appleBuilderVM) Exec(ctx context.Context, argv []string, extraEnv []string, logLine func(string)) (int, error) {
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func (v *appleBuilderVM) Exec(ctx context.Context, argv []string, cwd string, extraEnv []string, logLine func(string)) (int, error) {
 	v.mu.Lock()
 	dev := v.vsock
 	v.mu.Unlock()
@@ -334,7 +345,7 @@ func (v *appleBuilderVM) Exec(ctx context.Context, argv []string, extraEnv []str
 
 	payload, err := json.Marshal(map[string]any{
 		"argv": argv,
-		"cwd":  "/workspace",
+		"cwd":  firstNonEmpty(cwd, "/workspace"),
 		"env":  extraEnv,
 	})
 	if err != nil {
