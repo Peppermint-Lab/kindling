@@ -5,13 +5,17 @@ Run Linux microVMs directly on your Mac using Apple's Virtualization Framework â
 ## Quick Start
 
 ```bash
-# Install kindling-mac
-brew install kindlingvm/tap/kindling-mac
+# Download source from GitHub
+curl -fsSL https://github.com/Peppermint-Lab/kindling/archive/refs/heads/main.tar.gz -o kindling-main.tar.gz
+tar -xzf kindling-main.tar.gz
+cd kindling-main
 
-# Or download binaries from releases
-curl -fsSL https://github.com/kindlingvm/kindling/releases/latest/download/kindling-mac -o /usr/local/bin/kindling-mac
-curl -fsSL https://github.com/kindlingvm/kindling/releases/latest/download/kindling -o /usr/local/bin/kindling
-chmod +x /usr/local/bin/kindling /usr/local/bin/kindling-mac
+# Build the CLI and macOS daemon
+make build kindling-mac
+
+# Install the binaries somewhere on PATH
+sudo install -m 0755 bin/kindling /usr/local/bin/kindling
+sudo install -m 0755 bin/kindling-mac /usr/local/bin/kindling-mac
 
 # Start the daemon
 kindling-mac
@@ -55,18 +59,19 @@ kindling local box shell
 
 ## Setup
 
-### 1. Download the kernel and initramfs
+### 1. Download the kernel, initramfs, and rootfs
 
 ```bash
 mkdir -p ~/.kindling-mac
-curl -fsSL https://github.com/kindlingvm/kindling/releases/download/v0.1.0/vmlinuz-arm64 -o ~/.kindling-mac/vmlinuz
-curl -fsSL https://github.com/kindlingvm/kindling/releases/download/v0.1.0/initramfs-arm64.cpio.gz -o ~/.kindling-mac/initramfs.cpio.gz
+curl -fsSL https://github.com/Peppermint-Lab/kindling/releases/download/kernel-v0.1.0/vmlinuz-arm64 -o ~/.kindling-mac/vmlinuz
+curl -fsSL https://github.com/Peppermint-Lab/kindling/releases/download/kernel-v0.1.0/initramfs-arm64.cpio.gz -o ~/.kindling-mac/initramfs.cpio.gz
+curl -fsSL https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/aarch64/alpine-minirootfs-3.23.3-aarch64.tar.gz -o ~/.kindling-mac/rootfs.tar.gz
 ```
 
 ### 2. Configure
 
 ```bash
-cp /usr/local/etc/kindling-mac.yaml ~/.kindling-mac.yaml
+cp contrib/kindling-mac.yaml ~/.kindling-mac.yaml
 $EDITOR ~/.kindling-mac.yaml
 ```
 
@@ -113,9 +118,8 @@ kindling local list            # List all local VMs
 ## Auto-start on Login
 
 ```bash
-# Install the launchd plist
-cp /usr/local/opt/kindling-mac/homebrew.mxcl.kindling-mac.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/homebrew.mxcl.kindling-mac.plist
+cp contrib/kindling-mac.plist ~/Library/LaunchAgents/com.kindling.kindling-mac.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.kindling.kindling-mac.plist
 ```
 
 ## Shared Folders
