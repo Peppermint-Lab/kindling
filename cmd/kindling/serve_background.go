@@ -13,6 +13,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/preview"
 	"github.com/kindlingvm/kindling/internal/reconciler"
+	"github.com/kindlingvm/kindling/internal/sandbox"
 	"github.com/kindlingvm/kindling/internal/volumeops"
 )
 
@@ -93,6 +94,32 @@ func runPreviewIdleScaleDownLoop(ctx context.Context, databaseURL string, q *que
 				idle = cfgMgr.Snapshot().PreviewIdleSeconds
 			}
 			preview.RunIdleScaleDownOnce(ctx, databaseURL, q, deploymentReconciler, idle)
+		}
+	}
+}
+
+func runSandboxExpiryLoop(ctx context.Context, databaseURL string, q *queries.Queries, sandboxReconciler *reconciler.Scheduler) {
+	ticker := time.NewTicker(periodicReconcileInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sandbox.RunExpiryOnce(ctx, databaseURL, q, sandboxReconciler)
+		}
+	}
+}
+
+func runSandboxIdleLoop(ctx context.Context, databaseURL string, q *queries.Queries, sandboxReconciler *reconciler.Scheduler) {
+	ticker := time.NewTicker(periodicReconcileInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sandbox.RunIdleSuspendOnce(ctx, databaseURL, q, sandboxReconciler)
 		}
 	}
 }

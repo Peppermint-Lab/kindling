@@ -1492,6 +1492,192 @@ WHERE deployment_kind = 'preview'
 ORDER BY deployments.preview_last_request_at ASC
 LIMIT 100;
 
+-- Sandboxes --
+
+-- name: SandboxCreate :one
+INSERT INTO sandboxes (
+  id, org_id, name, host_group, backend, arch, desired_state, observed_state,
+  server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb,
+  env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at,
+  published_http_port, runtime_url, failure_message, created_by_user_id
+)
+VALUES (
+  $1, $2, $3, $4, $5, $6, $7, $8,
+  $9, $10, $11, $12, $13, $14, $15,
+  $16, $17, $18, $19, $20, $21,
+  $22, $23, $24, $25
+)
+RETURNING *;
+
+-- name: SandboxFirstByID :one
+SELECT * FROM sandboxes WHERE id = $1;
+
+-- name: SandboxFirstByIDAndOrg :one
+SELECT * FROM sandboxes
+WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL;
+
+-- name: SandboxListByOrg :many
+SELECT * FROM sandboxes
+WHERE org_id = $1 AND deleted_at IS NULL
+ORDER BY updated_at DESC;
+
+-- name: SandboxUpdateDesiredState :one
+UPDATE sandboxes
+SET desired_state = $2,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: SandboxUpdatePlacement :one
+UPDATE sandboxes
+SET host_group = $2,
+    backend = $3,
+    arch = $4,
+    server_id = $5,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: SandboxAttachVM :one
+UPDATE sandboxes
+SET vm_id = $2,
+    observed_state = $3,
+    runtime_url = $4,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: SandboxUpdateObservedState :one
+UPDATE sandboxes
+SET observed_state = $2,
+    runtime_url = $3,
+    failure_message = $4,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: SandboxUpdateLastUsedAt :exec
+UPDATE sandboxes
+SET last_used_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+  AND deleted_at IS NULL;
+
+-- name: SandboxUpdatePublishPort :one
+UPDATE sandboxes
+SET published_http_port = $2,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: SandboxClearVM :one
+UPDATE sandboxes
+SET vm_id = NULL,
+    runtime_url = '',
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: SandboxMarkDeleted :one
+UPDATE sandboxes
+SET observed_state = 'deleted',
+    deleted_at = NOW(),
+    runtime_url = '',
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: SandboxesDueForExpiry :many
+SELECT * FROM sandboxes
+WHERE deleted_at IS NULL
+  AND expires_at IS NOT NULL
+  AND expires_at <= NOW();
+
+-- name: SandboxesDueForIdleSuspend :many
+SELECT * FROM sandboxes
+WHERE deleted_at IS NULL
+  AND desired_state = 'running'
+  AND observed_state = 'running'
+  AND auto_suspend_seconds > 0
+  AND last_used_at IS NOT NULL
+  AND last_used_at < NOW() - (auto_suspend_seconds * INTERVAL '1 second');
+
+-- name: SandboxFindByServerID :many
+SELECT * FROM sandboxes
+WHERE server_id = $1
+  AND deleted_at IS NULL
+ORDER BY updated_at DESC;
+
+-- name: SandboxTemplateCreate :one
+INSERT INTO sandbox_templates (
+  id, org_id, name, host_group, backend, arch, source_sandbox_id, server_id,
+  base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id
+)
+VALUES (
+  $1, $2, $3, $4, $5, $6, $7, $8,
+  $9, $10, $11, $12, $13, $14, $15, $16
+)
+RETURNING *;
+
+-- name: SandboxTemplateFirstByID :one
+SELECT * FROM sandbox_templates WHERE id = $1;
+
+-- name: SandboxTemplateFirstByIDAndOrg :one
+SELECT * FROM sandbox_templates
+WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL;
+
+-- name: SandboxTemplateListByOrg :many
+SELECT * FROM sandbox_templates
+WHERE org_id = $1 AND deleted_at IS NULL
+ORDER BY updated_at DESC;
+
+-- name: SandboxTemplateMarkReady :one
+UPDATE sandbox_templates
+SET status = 'ready',
+    server_id = $2,
+    snapshot_ref = $3,
+    failure_message = '',
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: SandboxTemplateMarkFailed :one
+UPDATE sandbox_templates
+SET status = 'failed',
+    failure_message = $2,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: SandboxTemplateMarkDeleted :one
+UPDATE sandbox_templates
+SET status = 'deleted',
+    deleted_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: SandboxPublishedPortUpsert :one
+INSERT INTO sandbox_published_ports (
+  id, sandbox_id, target_port, protocol, visibility, public_hostname
+)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (sandbox_id, target_port) DO UPDATE SET
+  protocol = EXCLUDED.protocol,
+  visibility = EXCLUDED.visibility,
+  public_hostname = EXCLUDED.public_hostname,
+  updated_at = NOW()
+RETURNING *;
+
+-- name: SandboxPublishedPortsBySandboxID :many
+SELECT * FROM sandbox_published_ports
+WHERE sandbox_id = $1
+ORDER BY created_at ASC;
+
+-- name: SandboxPublishedPortDeleteBySandboxAndPort :exec
+DELETE FROM sandbox_published_ports
+WHERE sandbox_id = $1 AND target_port = $2;
+
 -- name: BuildLogsAfterCreatedAt :many
 SELECT * FROM build_logs
 WHERE build_id = $1 AND created_at > $2

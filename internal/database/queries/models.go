@@ -362,6 +362,70 @@ type ProjectVolumeOperation struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Sandbox struct {
+	ID                 pgtype.UUID        `json:"id"`
+	OrgID              pgtype.UUID        `json:"org_id"`
+	Name               string             `json:"name"`
+	HostGroup          string             `json:"host_group"`
+	Backend            string             `json:"backend"`
+	Arch               string             `json:"arch"`
+	DesiredState       string             `json:"desired_state"`
+	ObservedState      string             `json:"observed_state"`
+	ServerID           pgtype.UUID        `json:"server_id"`
+	VmID               pgtype.UUID        `json:"vm_id"`
+	TemplateID         pgtype.UUID        `json:"template_id"`
+	BaseImageRef       string             `json:"base_image_ref"`
+	Vcpu               int32              `json:"vcpu"`
+	MemoryMb           int32              `json:"memory_mb"`
+	DiskGb             int32              `json:"disk_gb"`
+	EnvJson            []byte             `json:"env_json"`
+	GitRepo            string             `json:"git_repo"`
+	GitRef             string             `json:"git_ref"`
+	AutoSuspendSeconds int64              `json:"auto_suspend_seconds"`
+	LastUsedAt         pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
+	PublishedHttpPort  pgtype.Int4        `json:"published_http_port"`
+	RuntimeUrl         string             `json:"runtime_url"`
+	FailureMessage     string             `json:"failure_message"`
+	CreatedByUserID    pgtype.UUID        `json:"created_by_user_id"`
+	DeletedAt          pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SandboxPublishedPort struct {
+	ID             pgtype.UUID        `json:"id"`
+	SandboxID      pgtype.UUID        `json:"sandbox_id"`
+	TargetPort     int32              `json:"target_port"`
+	Protocol       string             `json:"protocol"`
+	Visibility     string             `json:"visibility"`
+	PublicHostname string             `json:"public_hostname"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SandboxTemplate struct {
+	ID              pgtype.UUID        `json:"id"`
+	OrgID           pgtype.UUID        `json:"org_id"`
+	Name            string             `json:"name"`
+	HostGroup       string             `json:"host_group"`
+	Backend         string             `json:"backend"`
+	Arch            string             `json:"arch"`
+	SourceSandboxID pgtype.UUID        `json:"source_sandbox_id"`
+	ServerID        pgtype.UUID        `json:"server_id"`
+	BaseImageRef    string             `json:"base_image_ref"`
+	SnapshotRef     string             `json:"snapshot_ref"`
+	Vcpu            int32              `json:"vcpu"`
+	MemoryMb        int32              `json:"memory_mb"`
+	DiskGb          int32              `json:"disk_gb"`
+	Status          string             `json:"status"`
+	FailureMessage  string             `json:"failure_message"`
+	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
+	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Server struct {
 	ID              pgtype.UUID        `json:"id"`
 	Hostname        string             `json:"hostname"`

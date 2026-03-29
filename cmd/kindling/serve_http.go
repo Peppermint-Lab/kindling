@@ -21,6 +21,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/ratelimit"
 	"github.com/kindlingvm/kindling/internal/reconciler"
 	"github.com/kindlingvm/kindling/internal/rpc"
+	"github.com/kindlingvm/kindling/internal/sandbox"
 	"github.com/kindlingvm/kindling/internal/webhook"
 )
 
@@ -148,6 +149,9 @@ func startAPIServer(
 	dashboardEvents *rpc.DashboardEventBroker,
 	deploymentReconciler *reconciler.Scheduler,
 	ciJobReconciler *reconciler.Scheduler,
+	sandboxReconciler *reconciler.Scheduler,
+	sandboxTemplateReconciler *reconciler.Scheduler,
+	sandboxService *sandbox.Service,
 	ciJobCanceller interface {
 		Cancel(context.Context, uuid.UUID) error
 		CreateLocalWorkflowJob(context.Context, ci.CreateJobRequest) (queries.CiJob, error)
@@ -158,6 +162,7 @@ func startAPIServer(
 	api := rpc.NewAPI(q, cfgMgr, dashboardEvents)
 	api.SetDeploymentReconciler(deploymentReconciler)
 	api.SetCIJobRuntime(ciJobReconciler, ciJobCanceller)
+	api.SetSandboxRuntime(sandboxReconciler, sandboxTemplateReconciler, sandboxService)
 	webhookHandler := webhook.NewHandler(q, cfgMgr)
 	webhookHandler.SetDeploymentReconciler(deploymentReconciler)
 	webhookHandler.SetCIJobRuntime(ciJobReconciler, ciJobCanceller)

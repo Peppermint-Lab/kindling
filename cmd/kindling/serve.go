@@ -18,6 +18,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/deploy"
 	"github.com/kindlingvm/kindling/internal/rpc"
 	crunrt "github.com/kindlingvm/kindling/internal/runtime"
+	"github.com/kindlingvm/kindling/internal/sandbox"
 	"github.com/spf13/cobra"
 )
 
@@ -164,6 +165,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	var recs reconcilers
 	var deployer *deploy.Deployer
 	var rt crunrt.Runtime
+	var sandboxSvc *sandbox.Service
 	var ciSvc interface {
 		Cancel(context.Context, uuid.UUID) error
 		CreateLocalWorkflowJob(context.Context, ci.CreateJobRequest) (queries.CiJob, error)
@@ -174,7 +176,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		if werr != nil {
 			return werr
 		}
-		rt, deployer, ciSvc, recs = w.rt, w.deployer, w.ciSvc, w.recs
+		rt, deployer, ciSvc, sandboxSvc, recs = w.rt, w.deployer, w.ciSvc, w.sandboxSvc, w.recs
 		if err := startWorkerInternalDNS(ctx, q, rt); err != nil {
 			return err
 		}
@@ -261,6 +263,8 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		serverReconciler:     recs.server,
 		migrationReconciler:  recs.migration,
 		volumeOpReconciler:   recs.volumeOp,
+		sandboxReconciler:    recs.sandbox,
+		sandboxTplReconciler: recs.sandboxTpl,
 		dashboardEvents:      dashboardEvents,
 		publishDeployScopes:  publishDeploymentScopes,
 		notifyRouteChange:    notifyRouteChange,
@@ -285,11 +289,13 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		go runIdleScaleDownLoop(ctx, databaseURL, q, recs.deployment, cfgMgr)
 		go runPreviewCleanupLoop(ctx, databaseURL, q, recs.deployment)
 		go runPreviewIdleScaleDownLoop(ctx, databaseURL, q, recs.deployment, cfgMgr)
+		go runSandboxExpiryLoop(ctx, databaseURL, q, recs.sandbox)
+		go runSandboxIdleLoop(ctx, databaseURL, q, recs.sandbox)
 	}
 
 	// API server.
 	if components.api {
-		return startAPIServer(ctx, q, cfgMgr, dashboardEvents, recs.deployment, recs.ciJob, ciSvc, listenAddr)
+		return startAPIServer(ctx, q, cfgMgr, dashboardEvents, recs.deployment, recs.ciJob, recs.sandbox, recs.sandboxTpl, sandboxSvc, ciSvc, listenAddr)
 	}
 
 	<-ctx.Done()

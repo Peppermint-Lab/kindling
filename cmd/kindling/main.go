@@ -27,6 +27,7 @@ Break-glass: kindling admin ... for direct PostgreSQL operations.`,
 	root.AddCommand(cliLinkCmd())
 	root.AddCommand(cliStatusCmd())
 	root.AddCommand(cliProjectRemoteCmd())
+	root.AddCommand(cliSandboxRemoteCmd())
 	root.AddCommand(cliDeployRemoteCmd())
 	root.AddCommand(cliLogsRemoteCmd())
 	root.AddCommand(cliDomainRemoteCmd())

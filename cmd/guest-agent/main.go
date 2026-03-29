@@ -96,6 +96,7 @@ func main() {
 
 	appRef := &appRef{}
 	startStatsServer(appRef)
+	startControlServer(appRef)
 
 	// Find and start the user's app.
 	appCmd := startApp(cfg.Env, logWriter)

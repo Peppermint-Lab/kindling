@@ -24,6 +24,8 @@ type walDeps struct {
 	serverReconciler     *reconciler.Scheduler
 	migrationReconciler  *reconciler.Scheduler
 	volumeOpReconciler   *reconciler.Scheduler
+	sandboxReconciler    *reconciler.Scheduler
+	sandboxTplReconciler *reconciler.Scheduler
 	dashboardEvents      *rpc.DashboardEventBroker
 	publishDeployScopes  func(projectID uuid.UUID)
 	notifyRouteChange    func()
@@ -150,6 +152,16 @@ func newWALListener(databaseURL string, deps walDeps) *listener.Listener {
 			deps.publishDeployScopes(uuid.UUID(vol.ProjectID.Bytes))
 			if deps.dashboardEvents != nil {
 				deps.dashboardEvents.Publish(rpc.TopicServers)
+			}
+		},
+		OnSandbox: func(ctx context.Context, id uuid.UUID) {
+			if deps.sandboxReconciler != nil {
+				deps.sandboxReconciler.ScheduleNow(id)
+			}
+		},
+		OnSandboxTemplate: func(ctx context.Context, id uuid.UUID) {
+			if deps.sandboxTplReconciler != nil {
+				deps.sandboxTplReconciler.ScheduleNow(id)
 			}
 		},
 	})

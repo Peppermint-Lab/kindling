@@ -7448,6 +7448,1210 @@ func (q *Queries) RouteFindActive(ctx context.Context) ([]RouteFindActiveRow, er
 	return items, nil
 }
 
+const sandboxAttachVM = `-- name: SandboxAttachVM :one
+UPDATE sandboxes
+SET vm_id = $2,
+    observed_state = $3,
+    runtime_url = $4,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+`
+
+type SandboxAttachVMParams struct {
+	ID            pgtype.UUID `json:"id"`
+	VmID          pgtype.UUID `json:"vm_id"`
+	ObservedState string      `json:"observed_state"`
+	RuntimeUrl    string      `json:"runtime_url"`
+}
+
+func (q *Queries) SandboxAttachVM(ctx context.Context, arg SandboxAttachVMParams) (Sandbox, error) {
+	row := q.db.QueryRow(ctx, sandboxAttachVM,
+		arg.ID,
+		arg.VmID,
+		arg.ObservedState,
+		arg.RuntimeUrl,
+	)
+	var i Sandbox
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.HostGroup,
+		&i.Backend,
+		&i.Arch,
+		&i.DesiredState,
+		&i.ObservedState,
+		&i.ServerID,
+		&i.VmID,
+		&i.TemplateID,
+		&i.BaseImageRef,
+		&i.Vcpu,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.EnvJson,
+		&i.GitRepo,
+		&i.GitRef,
+		&i.AutoSuspendSeconds,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.PublishedHttpPort,
+		&i.RuntimeUrl,
+		&i.FailureMessage,
+		&i.CreatedByUserID,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const sandboxClearVM = `-- name: SandboxClearVM :one
+UPDATE sandboxes
+SET vm_id = NULL,
+    runtime_url = '',
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+`
+
+func (q *Queries) SandboxClearVM(ctx context.Context, id pgtype.UUID) (Sandbox, error) {
+	row := q.db.QueryRow(ctx, sandboxClearVM, id)
+	var i Sandbox
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.HostGroup,
+		&i.Backend,
+		&i.Arch,
+		&i.DesiredState,
+		&i.ObservedState,
+		&i.ServerID,
+		&i.VmID,
+		&i.TemplateID,
+		&i.BaseImageRef,
+		&i.Vcpu,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.EnvJson,
+		&i.GitRepo,
+		&i.GitRef,
+		&i.AutoSuspendSeconds,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.PublishedHttpPort,
+		&i.RuntimeUrl,
+		&i.FailureMessage,
+		&i.CreatedByUserID,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const sandboxCreate = `-- name: SandboxCreate :one
+
+INSERT INTO sandboxes (
+  id, org_id, name, host_group, backend, arch, desired_state, observed_state,
+  server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb,
+  env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at,
+  published_http_port, runtime_url, failure_message, created_by_user_id
+)
+VALUES (
+  $1, $2, $3, $4, $5, $6, $7, $8,
+  $9, $10, $11, $12, $13, $14, $15,
+  $16, $17, $18, $19, $20, $21,
+  $22, $23, $24, $25
+)
+RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+`
+
+type SandboxCreateParams struct {
+	ID                 pgtype.UUID        `json:"id"`
+	OrgID              pgtype.UUID        `json:"org_id"`
+	Name               string             `json:"name"`
+	HostGroup          string             `json:"host_group"`
+	Backend            string             `json:"backend"`
+	Arch               string             `json:"arch"`
+	DesiredState       string             `json:"desired_state"`
+	ObservedState      string             `json:"observed_state"`
+	ServerID           pgtype.UUID        `json:"server_id"`
+	VmID               pgtype.UUID        `json:"vm_id"`
+	TemplateID         pgtype.UUID        `json:"template_id"`
+	BaseImageRef       string             `json:"base_image_ref"`
+	Vcpu               int32              `json:"vcpu"`
+	MemoryMb           int32              `json:"memory_mb"`
+	DiskGb             int32              `json:"disk_gb"`
+	EnvJson            []byte             `json:"env_json"`
+	GitRepo            string             `json:"git_repo"`
+	GitRef             string             `json:"git_ref"`
+	AutoSuspendSeconds int64              `json:"auto_suspend_seconds"`
+	LastUsedAt         pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
+	PublishedHttpPort  pgtype.Int4        `json:"published_http_port"`
+	RuntimeUrl         string             `json:"runtime_url"`
+	FailureMessage     string             `json:"failure_message"`
+	CreatedByUserID    pgtype.UUID        `json:"created_by_user_id"`
+}
+
+// Sandboxes --
+func (q *Queries) SandboxCreate(ctx context.Context, arg SandboxCreateParams) (Sandbox, error) {
+	row := q.db.QueryRow(ctx, sandboxCreate,
+		arg.ID,
+		arg.OrgID,
+		arg.Name,
+		arg.HostGroup,
+		arg.Backend,
+		arg.Arch,
+		arg.DesiredState,
+		arg.ObservedState,
+		arg.ServerID,
+		arg.VmID,
+		arg.TemplateID,
+		arg.BaseImageRef,
+		arg.Vcpu,
+		arg.MemoryMb,
+		arg.DiskGb,
+		arg.EnvJson,
+		arg.GitRepo,
+		arg.GitRef,
+		arg.AutoSuspendSeconds,
+		arg.LastUsedAt,
+		arg.ExpiresAt,
+		arg.PublishedHttpPort,
+		arg.RuntimeUrl,
+		arg.FailureMessage,
+		arg.CreatedByUserID,
+	)
+	var i Sandbox
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.HostGroup,
+		&i.Backend,
+		&i.Arch,
+		&i.DesiredState,
+		&i.ObservedState,
+		&i.ServerID,
+		&i.VmID,
+		&i.TemplateID,
+		&i.BaseImageRef,
+		&i.Vcpu,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.EnvJson,
+		&i.GitRepo,
+		&i.GitRef,
+		&i.AutoSuspendSeconds,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.PublishedHttpPort,
+		&i.RuntimeUrl,
+		&i.FailureMessage,
+		&i.CreatedByUserID,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const sandboxFindByServerID = `-- name: SandboxFindByServerID :many
+SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes
+WHERE server_id = $1
+  AND deleted_at IS NULL
+ORDER BY updated_at DESC
+`
+
+func (q *Queries) SandboxFindByServerID(ctx context.Context, serverID pgtype.UUID) ([]Sandbox, error) {
+	rows, err := q.db.Query(ctx, sandboxFindByServerID, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Sandbox{}
+	for rows.Next() {
+		var i Sandbox
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Name,
+			&i.HostGroup,
+			&i.Backend,
+			&i.Arch,
+			&i.DesiredState,
+			&i.ObservedState,
+			&i.ServerID,
+			&i.VmID,
+			&i.TemplateID,
+			&i.BaseImageRef,
+			&i.Vcpu,
+			&i.MemoryMb,
+			&i.DiskGb,
+			&i.EnvJson,
+			&i.GitRepo,
+			&i.GitRef,
+			&i.AutoSuspendSeconds,
+			&i.LastUsedAt,
+			&i.ExpiresAt,
+			&i.PublishedHttpPort,
+			&i.RuntimeUrl,
+			&i.FailureMessage,
+			&i.CreatedByUserID,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sandboxFirstByID = `-- name: SandboxFirstByID :one
+SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes WHERE id = $1
+`
+
+func (q *Queries) SandboxFirstByID(ctx context.Context, id pgtype.UUID) (Sandbox, error) {
+	row := q.db.QueryRow(ctx, sandboxFirstByID, id)
+	var i Sandbox
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.HostGroup,
+		&i.Backend,
+		&i.Arch,
+		&i.DesiredState,
+		&i.ObservedState,
+		&i.ServerID,
+		&i.VmID,
+		&i.TemplateID,
+		&i.BaseImageRef,
+		&i.Vcpu,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.EnvJson,
+		&i.GitRepo,
+		&i.GitRef,
+		&i.AutoSuspendSeconds,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.PublishedHttpPort,
+		&i.RuntimeUrl,
+		&i.FailureMessage,
+		&i.CreatedByUserID,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const sandboxFirstByIDAndOrg = `-- name: SandboxFirstByIDAndOrg :one
+SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes
+WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL
+`
+
+type SandboxFirstByIDAndOrgParams struct {
+	ID    pgtype.UUID `json:"id"`
+	OrgID pgtype.UUID `json:"org_id"`
+}
+
+func (q *Queries) SandboxFirstByIDAndOrg(ctx context.Context, arg SandboxFirstByIDAndOrgParams) (Sandbox, error) {
+	row := q.db.QueryRow(ctx, sandboxFirstByIDAndOrg, arg.ID, arg.OrgID)
+	var i Sandbox
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.HostGroup,
+		&i.Backend,
+		&i.Arch,
+		&i.DesiredState,
+		&i.ObservedState,
+		&i.ServerID,
+		&i.VmID,
+		&i.TemplateID,
+		&i.BaseImageRef,
+		&i.Vcpu,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.EnvJson,
+		&i.GitRepo,
+		&i.GitRef,
+		&i.AutoSuspendSeconds,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.PublishedHttpPort,
+		&i.RuntimeUrl,
+		&i.FailureMessage,
+		&i.CreatedByUserID,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const sandboxListByOrg = `-- name: SandboxListByOrg :many
+SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes
+WHERE org_id = $1 AND deleted_at IS NULL
+ORDER BY updated_at DESC
+`
+
+func (q *Queries) SandboxListByOrg(ctx context.Context, orgID pgtype.UUID) ([]Sandbox, error) {
+	rows, err := q.db.Query(ctx, sandboxListByOrg, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Sandbox{}
+	for rows.Next() {
+		var i Sandbox
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Name,
+			&i.HostGroup,
+			&i.Backend,
+			&i.Arch,
+			&i.DesiredState,
+			&i.ObservedState,
+			&i.ServerID,
+			&i.VmID,
+			&i.TemplateID,
+			&i.BaseImageRef,
+			&i.Vcpu,
+			&i.MemoryMb,
+			&i.DiskGb,
+			&i.EnvJson,
+			&i.GitRepo,
+			&i.GitRef,
+			&i.AutoSuspendSeconds,
+			&i.LastUsedAt,
+			&i.ExpiresAt,
+			&i.PublishedHttpPort,
+			&i.RuntimeUrl,
+			&i.FailureMessage,
+			&i.CreatedByUserID,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sandboxMarkDeleted = `-- name: SandboxMarkDeleted :one
+UPDATE sandboxes
+SET observed_state = 'deleted',
+    deleted_at = NOW(),
+    runtime_url = '',
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+`
+
+func (q *Queries) SandboxMarkDeleted(ctx context.Context, id pgtype.UUID) (Sandbox, error) {
+	row := q.db.QueryRow(ctx, sandboxMarkDeleted, id)
+	var i Sandbox
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.HostGroup,
+		&i.Backend,
+		&i.Arch,
+		&i.DesiredState,
+		&i.ObservedState,
+		&i.ServerID,
+		&i.VmID,
+		&i.TemplateID,
+		&i.BaseImageRef,
+		&i.Vcpu,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.EnvJson,
+		&i.GitRepo,
+		&i.GitRef,
+		&i.AutoSuspendSeconds,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.PublishedHttpPort,
+		&i.RuntimeUrl,
+		&i.FailureMessage,
+		&i.CreatedByUserID,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const sandboxPublishedPortDeleteBySandboxAndPort = `-- name: SandboxPublishedPortDeleteBySandboxAndPort :exec
+DELETE FROM sandbox_published_ports
+WHERE sandbox_id = $1 AND target_port = $2
+`
+
+type SandboxPublishedPortDeleteBySandboxAndPortParams struct {
+	SandboxID  pgtype.UUID `json:"sandbox_id"`
+	TargetPort int32       `json:"target_port"`
+}
+
+func (q *Queries) SandboxPublishedPortDeleteBySandboxAndPort(ctx context.Context, arg SandboxPublishedPortDeleteBySandboxAndPortParams) error {
+	_, err := q.db.Exec(ctx, sandboxPublishedPortDeleteBySandboxAndPort, arg.SandboxID, arg.TargetPort)
+	return err
+}
+
+const sandboxPublishedPortUpsert = `-- name: SandboxPublishedPortUpsert :one
+INSERT INTO sandbox_published_ports (
+  id, sandbox_id, target_port, protocol, visibility, public_hostname
+)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (sandbox_id, target_port) DO UPDATE SET
+  protocol = EXCLUDED.protocol,
+  visibility = EXCLUDED.visibility,
+  public_hostname = EXCLUDED.public_hostname,
+  updated_at = NOW()
+RETURNING id, sandbox_id, target_port, protocol, visibility, public_hostname, created_at, updated_at
+`
+
+type SandboxPublishedPortUpsertParams struct {
+	ID             pgtype.UUID `json:"id"`
+	SandboxID      pgtype.UUID `json:"sandbox_id"`
+	TargetPort     int32       `json:"target_port"`
+	Protocol       string      `json:"protocol"`
+	Visibility     string      `json:"visibility"`
+	PublicHostname string      `json:"public_hostname"`
+}
+
+func (q *Queries) SandboxPublishedPortUpsert(ctx context.Context, arg SandboxPublishedPortUpsertParams) (SandboxPublishedPort, error) {
+	row := q.db.QueryRow(ctx, sandboxPublishedPortUpsert,
+		arg.ID,
+		arg.SandboxID,
+		arg.TargetPort,
+		arg.Protocol,
+		arg.Visibility,
+		arg.PublicHostname,
+	)
+	var i SandboxPublishedPort
+	err := row.Scan(
+		&i.ID,
+		&i.SandboxID,
+		&i.TargetPort,
+		&i.Protocol,
+		&i.Visibility,
+		&i.PublicHostname,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const sandboxPublishedPortsBySandboxID = `-- name: SandboxPublishedPortsBySandboxID :many
+SELECT id, sandbox_id, target_port, protocol, visibility, public_hostname, created_at, updated_at FROM sandbox_published_ports
+WHERE sandbox_id = $1
+ORDER BY created_at ASC
+`
+
+func (q *Queries) SandboxPublishedPortsBySandboxID(ctx context.Context, sandboxID pgtype.UUID) ([]SandboxPublishedPort, error) {
+	rows, err := q.db.Query(ctx, sandboxPublishedPortsBySandboxID, sandboxID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SandboxPublishedPort{}
+	for rows.Next() {
+		var i SandboxPublishedPort
+		if err := rows.Scan(
+			&i.ID,
+			&i.SandboxID,
+			&i.TargetPort,
+			&i.Protocol,
+			&i.Visibility,
+			&i.PublicHostname,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sandboxTemplateCreate = `-- name: SandboxTemplateCreate :one
+INSERT INTO sandbox_templates (
+  id, org_id, name, host_group, backend, arch, source_sandbox_id, server_id,
+  base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id
+)
+VALUES (
+  $1, $2, $3, $4, $5, $6, $7, $8,
+  $9, $10, $11, $12, $13, $14, $15, $16
+)
+RETURNING id, org_id, name, host_group, backend, arch, source_sandbox_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+`
+
+type SandboxTemplateCreateParams struct {
+	ID              pgtype.UUID `json:"id"`
+	OrgID           pgtype.UUID `json:"org_id"`
+	Name            string      `json:"name"`
+	HostGroup       string      `json:"host_group"`
+	Backend         string      `json:"backend"`
+	Arch            string      `json:"arch"`
+	SourceSandboxID pgtype.UUID `json:"source_sandbox_id"`
+	ServerID        pgtype.UUID `json:"server_id"`
+	BaseImageRef    string      `json:"base_image_ref"`
+	SnapshotRef     string      `json:"snapshot_ref"`
+	Vcpu            int32       `json:"vcpu"`
+	MemoryMb        int32       `json:"memory_mb"`
+	DiskGb          int32       `json:"disk_gb"`
+	Status          string      `json:"status"`
+	FailureMessage  string      `json:"failure_message"`
+	CreatedByUserID pgtype.UUID `json:"created_by_user_id"`
+}
+
+func (q *Queries) SandboxTemplateCreate(ctx context.Context, arg SandboxTemplateCreateParams) (SandboxTemplate, error) {
+	row := q.db.QueryRow(ctx, sandboxTemplateCreate,
+		arg.ID,
+		arg.OrgID,
+		arg.Name,
+		arg.HostGroup,
+		arg.Backend,
+		arg.Arch,
+		arg.SourceSandboxID,
+		arg.ServerID,
+		arg.BaseImageRef,
+		arg.SnapshotRef,
+		arg.Vcpu,
+		arg.MemoryMb,
+		arg.DiskGb,
+		arg.Status,
+		arg.FailureMessage,
+		arg.CreatedByUserID,
+	)
+	var i SandboxTemplate
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.HostGroup,
+		&i.Backend,
+		&i.Arch,
+		&i.SourceSandboxID,
+		&i.ServerID,
+		&i.BaseImageRef,
+		&i.SnapshotRef,
+		&i.Vcpu,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.Status,
+		&i.FailureMessage,
+		&i.CreatedByUserID,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const sandboxTemplateFirstByID = `-- name: SandboxTemplateFirstByID :one
+SELECT id, org_id, name, host_group, backend, arch, source_sandbox_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandbox_templates WHERE id = $1
+`
+
+func (q *Queries) SandboxTemplateFirstByID(ctx context.Context, id pgtype.UUID) (SandboxTemplate, error) {
+	row := q.db.QueryRow(ctx, sandboxTemplateFirstByID, id)
+	var i SandboxTemplate
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.HostGroup,
+		&i.Backend,
+		&i.Arch,
+		&i.SourceSandboxID,
+		&i.ServerID,
+		&i.BaseImageRef,
+		&i.SnapshotRef,
+		&i.Vcpu,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.Status,
+		&i.FailureMessage,
+		&i.CreatedByUserID,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const sandboxTemplateFirstByIDAndOrg = `-- name: SandboxTemplateFirstByIDAndOrg :one
+SELECT id, org_id, name, host_group, backend, arch, source_sandbox_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandbox_templates
+WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL
+`
+
+type SandboxTemplateFirstByIDAndOrgParams struct {
+	ID    pgtype.UUID `json:"id"`
+	OrgID pgtype.UUID `json:"org_id"`
+}
+
+func (q *Queries) SandboxTemplateFirstByIDAndOrg(ctx context.Context, arg SandboxTemplateFirstByIDAndOrgParams) (SandboxTemplate, error) {
+	row := q.db.QueryRow(ctx, sandboxTemplateFirstByIDAndOrg, arg.ID, arg.OrgID)
+	var i SandboxTemplate
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.HostGroup,
+		&i.Backend,
+		&i.Arch,
+		&i.SourceSandboxID,
+		&i.ServerID,
+		&i.BaseImageRef,
+		&i.SnapshotRef,
+		&i.Vcpu,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.Status,
+		&i.FailureMessage,
+		&i.CreatedByUserID,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const sandboxTemplateListByOrg = `-- name: SandboxTemplateListByOrg :many
+SELECT id, org_id, name, host_group, backend, arch, source_sandbox_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandbox_templates
+WHERE org_id = $1 AND deleted_at IS NULL
+ORDER BY updated_at DESC
+`
+
+func (q *Queries) SandboxTemplateListByOrg(ctx context.Context, orgID pgtype.UUID) ([]SandboxTemplate, error) {
+	rows, err := q.db.Query(ctx, sandboxTemplateListByOrg, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SandboxTemplate{}
+	for rows.Next() {
+		var i SandboxTemplate
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Name,
+			&i.HostGroup,
+			&i.Backend,
+			&i.Arch,
+			&i.SourceSandboxID,
+			&i.ServerID,
+			&i.BaseImageRef,
+			&i.SnapshotRef,
+			&i.Vcpu,
+			&i.MemoryMb,
+			&i.DiskGb,
+			&i.Status,
+			&i.FailureMessage,
+			&i.CreatedByUserID,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sandboxTemplateMarkDeleted = `-- name: SandboxTemplateMarkDeleted :one
+UPDATE sandbox_templates
+SET status = 'deleted',
+    deleted_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, org_id, name, host_group, backend, arch, source_sandbox_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+`
+
+func (q *Queries) SandboxTemplateMarkDeleted(ctx context.Context, id pgtype.UUID) (SandboxTemplate, error) {
+	row := q.db.QueryRow(ctx, sandboxTemplateMarkDeleted, id)
+	var i SandboxTemplate
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.HostGroup,
+		&i.Backend,
+		&i.Arch,
+		&i.SourceSandboxID,
+		&i.ServerID,
+		&i.BaseImageRef,
+		&i.SnapshotRef,
+		&i.Vcpu,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.Status,
+		&i.FailureMessage,
+		&i.CreatedByUserID,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const sandboxTemplateMarkFailed = `-- name: SandboxTemplateMarkFailed :one
+UPDATE sandbox_templates
+SET status = 'failed',
+    failure_message = $2,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, org_id, name, host_group, backend, arch, source_sandbox_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+`
+
+type SandboxTemplateMarkFailedParams struct {
+	ID             pgtype.UUID `json:"id"`
+	FailureMessage string      `json:"failure_message"`
+}
+
+func (q *Queries) SandboxTemplateMarkFailed(ctx context.Context, arg SandboxTemplateMarkFailedParams) (SandboxTemplate, error) {
+	row := q.db.QueryRow(ctx, sandboxTemplateMarkFailed, arg.ID, arg.FailureMessage)
+	var i SandboxTemplate
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.HostGroup,
+		&i.Backend,
+		&i.Arch,
+		&i.SourceSandboxID,
+		&i.ServerID,
+		&i.BaseImageRef,
+		&i.SnapshotRef,
+		&i.Vcpu,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.Status,
+		&i.FailureMessage,
+		&i.CreatedByUserID,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const sandboxTemplateMarkReady = `-- name: SandboxTemplateMarkReady :one
+UPDATE sandbox_templates
+SET status = 'ready',
+    server_id = $2,
+    snapshot_ref = $3,
+    failure_message = '',
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, org_id, name, host_group, backend, arch, source_sandbox_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+`
+
+type SandboxTemplateMarkReadyParams struct {
+	ID          pgtype.UUID `json:"id"`
+	ServerID    pgtype.UUID `json:"server_id"`
+	SnapshotRef string      `json:"snapshot_ref"`
+}
+
+func (q *Queries) SandboxTemplateMarkReady(ctx context.Context, arg SandboxTemplateMarkReadyParams) (SandboxTemplate, error) {
+	row := q.db.QueryRow(ctx, sandboxTemplateMarkReady, arg.ID, arg.ServerID, arg.SnapshotRef)
+	var i SandboxTemplate
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.HostGroup,
+		&i.Backend,
+		&i.Arch,
+		&i.SourceSandboxID,
+		&i.ServerID,
+		&i.BaseImageRef,
+		&i.SnapshotRef,
+		&i.Vcpu,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.Status,
+		&i.FailureMessage,
+		&i.CreatedByUserID,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const sandboxUpdateDesiredState = `-- name: SandboxUpdateDesiredState :one
+UPDATE sandboxes
+SET desired_state = $2,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+`
+
+type SandboxUpdateDesiredStateParams struct {
+	ID           pgtype.UUID `json:"id"`
+	DesiredState string      `json:"desired_state"`
+}
+
+func (q *Queries) SandboxUpdateDesiredState(ctx context.Context, arg SandboxUpdateDesiredStateParams) (Sandbox, error) {
+	row := q.db.QueryRow(ctx, sandboxUpdateDesiredState, arg.ID, arg.DesiredState)
+	var i Sandbox
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.HostGroup,
+		&i.Backend,
+		&i.Arch,
+		&i.DesiredState,
+		&i.ObservedState,
+		&i.ServerID,
+		&i.VmID,
+		&i.TemplateID,
+		&i.BaseImageRef,
+		&i.Vcpu,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.EnvJson,
+		&i.GitRepo,
+		&i.GitRef,
+		&i.AutoSuspendSeconds,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.PublishedHttpPort,
+		&i.RuntimeUrl,
+		&i.FailureMessage,
+		&i.CreatedByUserID,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const sandboxUpdateLastUsedAt = `-- name: SandboxUpdateLastUsedAt :exec
+UPDATE sandboxes
+SET last_used_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+  AND deleted_at IS NULL
+`
+
+func (q *Queries) SandboxUpdateLastUsedAt(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, sandboxUpdateLastUsedAt, id)
+	return err
+}
+
+const sandboxUpdateObservedState = `-- name: SandboxUpdateObservedState :one
+UPDATE sandboxes
+SET observed_state = $2,
+    runtime_url = $3,
+    failure_message = $4,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+`
+
+type SandboxUpdateObservedStateParams struct {
+	ID             pgtype.UUID `json:"id"`
+	ObservedState  string      `json:"observed_state"`
+	RuntimeUrl     string      `json:"runtime_url"`
+	FailureMessage string      `json:"failure_message"`
+}
+
+func (q *Queries) SandboxUpdateObservedState(ctx context.Context, arg SandboxUpdateObservedStateParams) (Sandbox, error) {
+	row := q.db.QueryRow(ctx, sandboxUpdateObservedState,
+		arg.ID,
+		arg.ObservedState,
+		arg.RuntimeUrl,
+		arg.FailureMessage,
+	)
+	var i Sandbox
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.HostGroup,
+		&i.Backend,
+		&i.Arch,
+		&i.DesiredState,
+		&i.ObservedState,
+		&i.ServerID,
+		&i.VmID,
+		&i.TemplateID,
+		&i.BaseImageRef,
+		&i.Vcpu,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.EnvJson,
+		&i.GitRepo,
+		&i.GitRef,
+		&i.AutoSuspendSeconds,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.PublishedHttpPort,
+		&i.RuntimeUrl,
+		&i.FailureMessage,
+		&i.CreatedByUserID,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const sandboxUpdatePlacement = `-- name: SandboxUpdatePlacement :one
+UPDATE sandboxes
+SET host_group = $2,
+    backend = $3,
+    arch = $4,
+    server_id = $5,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+`
+
+type SandboxUpdatePlacementParams struct {
+	ID        pgtype.UUID `json:"id"`
+	HostGroup string      `json:"host_group"`
+	Backend   string      `json:"backend"`
+	Arch      string      `json:"arch"`
+	ServerID  pgtype.UUID `json:"server_id"`
+}
+
+func (q *Queries) SandboxUpdatePlacement(ctx context.Context, arg SandboxUpdatePlacementParams) (Sandbox, error) {
+	row := q.db.QueryRow(ctx, sandboxUpdatePlacement,
+		arg.ID,
+		arg.HostGroup,
+		arg.Backend,
+		arg.Arch,
+		arg.ServerID,
+	)
+	var i Sandbox
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.HostGroup,
+		&i.Backend,
+		&i.Arch,
+		&i.DesiredState,
+		&i.ObservedState,
+		&i.ServerID,
+		&i.VmID,
+		&i.TemplateID,
+		&i.BaseImageRef,
+		&i.Vcpu,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.EnvJson,
+		&i.GitRepo,
+		&i.GitRef,
+		&i.AutoSuspendSeconds,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.PublishedHttpPort,
+		&i.RuntimeUrl,
+		&i.FailureMessage,
+		&i.CreatedByUserID,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const sandboxUpdatePublishPort = `-- name: SandboxUpdatePublishPort :one
+UPDATE sandboxes
+SET published_http_port = $2,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+`
+
+type SandboxUpdatePublishPortParams struct {
+	ID                pgtype.UUID `json:"id"`
+	PublishedHttpPort pgtype.Int4 `json:"published_http_port"`
+}
+
+func (q *Queries) SandboxUpdatePublishPort(ctx context.Context, arg SandboxUpdatePublishPortParams) (Sandbox, error) {
+	row := q.db.QueryRow(ctx, sandboxUpdatePublishPort, arg.ID, arg.PublishedHttpPort)
+	var i Sandbox
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.HostGroup,
+		&i.Backend,
+		&i.Arch,
+		&i.DesiredState,
+		&i.ObservedState,
+		&i.ServerID,
+		&i.VmID,
+		&i.TemplateID,
+		&i.BaseImageRef,
+		&i.Vcpu,
+		&i.MemoryMb,
+		&i.DiskGb,
+		&i.EnvJson,
+		&i.GitRepo,
+		&i.GitRef,
+		&i.AutoSuspendSeconds,
+		&i.LastUsedAt,
+		&i.ExpiresAt,
+		&i.PublishedHttpPort,
+		&i.RuntimeUrl,
+		&i.FailureMessage,
+		&i.CreatedByUserID,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const sandboxesDueForExpiry = `-- name: SandboxesDueForExpiry :many
+SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes
+WHERE deleted_at IS NULL
+  AND expires_at IS NOT NULL
+  AND expires_at <= NOW()
+`
+
+func (q *Queries) SandboxesDueForExpiry(ctx context.Context) ([]Sandbox, error) {
+	rows, err := q.db.Query(ctx, sandboxesDueForExpiry)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Sandbox{}
+	for rows.Next() {
+		var i Sandbox
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Name,
+			&i.HostGroup,
+			&i.Backend,
+			&i.Arch,
+			&i.DesiredState,
+			&i.ObservedState,
+			&i.ServerID,
+			&i.VmID,
+			&i.TemplateID,
+			&i.BaseImageRef,
+			&i.Vcpu,
+			&i.MemoryMb,
+			&i.DiskGb,
+			&i.EnvJson,
+			&i.GitRepo,
+			&i.GitRef,
+			&i.AutoSuspendSeconds,
+			&i.LastUsedAt,
+			&i.ExpiresAt,
+			&i.PublishedHttpPort,
+			&i.RuntimeUrl,
+			&i.FailureMessage,
+			&i.CreatedByUserID,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sandboxesDueForIdleSuspend = `-- name: SandboxesDueForIdleSuspend :many
+SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM sandboxes
+WHERE deleted_at IS NULL
+  AND desired_state = 'running'
+  AND observed_state = 'running'
+  AND auto_suspend_seconds > 0
+  AND last_used_at IS NOT NULL
+  AND last_used_at < NOW() - (auto_suspend_seconds * INTERVAL '1 second')
+`
+
+func (q *Queries) SandboxesDueForIdleSuspend(ctx context.Context) ([]Sandbox, error) {
+	rows, err := q.db.Query(ctx, sandboxesDueForIdleSuspend)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Sandbox{}
+	for rows.Next() {
+		var i Sandbox
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Name,
+			&i.HostGroup,
+			&i.Backend,
+			&i.Arch,
+			&i.DesiredState,
+			&i.ObservedState,
+			&i.ServerID,
+			&i.VmID,
+			&i.TemplateID,
+			&i.BaseImageRef,
+			&i.Vcpu,
+			&i.MemoryMb,
+			&i.DiskGb,
+			&i.EnvJson,
+			&i.GitRepo,
+			&i.GitRef,
+			&i.AutoSuspendSeconds,
+			&i.LastUsedAt,
+			&i.ExpiresAt,
+			&i.PublishedHttpPort,
+			&i.RuntimeUrl,
+			&i.FailureMessage,
+			&i.CreatedByUserID,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const serverAllocateIPRange = `-- name: ServerAllocateIPRange :one
 SELECT CASE
     WHEN MAX(ip_range) IS NULL THEN '10.0.0.0/20'::CIDR

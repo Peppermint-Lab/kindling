@@ -536,6 +536,51 @@ func (r *AppleRuntime) ResourceStats(ctx context.Context, id uuid.UUID) (Resourc
 	return resourceStatsFromGuestHTTP(ctx, conn)
 }
 
+func (r *AppleRuntime) ExecGuest(ctx context.Context, id uuid.UUID, argv []string, cwd string, env []string) (GuestExecResult, error) {
+	r.mu.Lock()
+	ai, ok := r.instances[id]
+	r.mu.Unlock()
+	if !ok || ai.vsock == nil {
+		return GuestExecResult{}, ErrInstanceNotRunning
+	}
+	conn, err := ai.vsock.Connect(GuestControlVsockPort)
+	if err != nil {
+		return GuestExecResult{}, err
+	}
+	defer conn.Close()
+	return execGuestHTTP(ctx, conn, argv, cwd, env)
+}
+
+func (r *AppleRuntime) ReadGuestFile(ctx context.Context, id uuid.UUID, filePath string) ([]byte, error) {
+	r.mu.Lock()
+	ai, ok := r.instances[id]
+	r.mu.Unlock()
+	if !ok || ai.vsock == nil {
+		return nil, ErrInstanceNotRunning
+	}
+	conn, err := ai.vsock.Connect(GuestControlVsockPort)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	return readGuestFileHTTP(ctx, conn, filePath)
+}
+
+func (r *AppleRuntime) WriteGuestFile(ctx context.Context, id uuid.UUID, filePath string, data []byte) error {
+	r.mu.Lock()
+	ai, ok := r.instances[id]
+	r.mu.Unlock()
+	if !ok || ai.vsock == nil {
+		return ErrInstanceNotRunning
+	}
+	conn, err := ai.vsock.Connect(GuestControlVsockPort)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return writeGuestFileHTTP(ctx, conn, filePath, data)
+}
+
 // exportImage pulls/unpacks an OCI image to a directory so it can be shared into the VM.
 func (r *AppleRuntime) exportImage(ctx context.Context, imageRef string, id uuid.UUID) (string, error) {
 	home, _ := os.UserHomeDir()

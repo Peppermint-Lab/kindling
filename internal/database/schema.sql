@@ -469,6 +469,97 @@ WHERE pe.service_id IS NULL
   AND s.project_id = pe.project_id
   AND s.is_primary = true;
 
+-- Org-scoped sandbox environments (separate from deployments/previews).
+CREATE TABLE IF NOT EXISTS sandboxes (
+    id                   UUID PRIMARY KEY,
+    org_id               UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name                 TEXT NOT NULL,
+    host_group           TEXT NOT NULL DEFAULT 'linux-sandbox',
+    backend              TEXT NOT NULL DEFAULT ''
+        CHECK (backend IN ('', 'cloud-hypervisor', 'apple-vz')),
+    arch                 TEXT NOT NULL DEFAULT ''
+        CHECK (arch IN ('', 'amd64', 'arm64')),
+    desired_state        TEXT NOT NULL DEFAULT 'running'
+        CHECK (desired_state IN ('running', 'stopped', 'deleted')),
+    observed_state       TEXT NOT NULL DEFAULT 'pending'
+        CHECK (observed_state IN ('pending', 'running', 'stopped', 'deleting', 'deleted', 'failed')),
+    server_id            UUID REFERENCES servers(id) ON DELETE SET NULL,
+    vm_id                UUID,
+    template_id          UUID,
+    base_image_ref       TEXT NOT NULL DEFAULT '',
+    vcpu                 INT NOT NULL DEFAULT 2,
+    memory_mb            INT NOT NULL DEFAULT 2048,
+    disk_gb              INT NOT NULL DEFAULT 10,
+    env_json             JSONB NOT NULL DEFAULT '{}'::jsonb,
+    git_repo             TEXT NOT NULL DEFAULT '',
+    git_ref              TEXT NOT NULL DEFAULT '',
+    auto_suspend_seconds BIGINT NOT NULL DEFAULT 900,
+    last_used_at         TIMESTAMPTZ,
+    expires_at           TIMESTAMPTZ,
+    published_http_port  INT CHECK (published_http_port IS NULL OR (published_http_port > 0 AND published_http_port <= 65535)),
+    runtime_url          TEXT NOT NULL DEFAULT '',
+    failure_message      TEXT NOT NULL DEFAULT '',
+    created_by_user_id   UUID REFERENCES users(id) ON DELETE SET NULL,
+    deleted_at           TIMESTAMPTZ,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sandboxes_org_id ON sandboxes(org_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sandboxes_server_id ON sandboxes(server_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_sandboxes_expires_at ON sandboxes(expires_at) WHERE expires_at IS NOT NULL AND deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS sandbox_templates (
+    id                 UUID PRIMARY KEY,
+    org_id             UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name               TEXT NOT NULL,
+    host_group         TEXT NOT NULL DEFAULT 'linux-sandbox',
+    backend            TEXT NOT NULL DEFAULT ''
+        CHECK (backend IN ('', 'cloud-hypervisor', 'apple-vz')),
+    arch               TEXT NOT NULL DEFAULT ''
+        CHECK (arch IN ('', 'amd64', 'arm64')),
+    source_sandbox_id  UUID REFERENCES sandboxes(id) ON DELETE SET NULL,
+    server_id          UUID REFERENCES servers(id) ON DELETE SET NULL,
+    base_image_ref     TEXT NOT NULL DEFAULT '',
+    snapshot_ref       TEXT NOT NULL DEFAULT '',
+    vcpu               INT NOT NULL DEFAULT 2,
+    memory_mb          INT NOT NULL DEFAULT 2048,
+    disk_gb            INT NOT NULL DEFAULT 10,
+    status             TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'ready', 'failed', 'deleted')),
+    failure_message    TEXT NOT NULL DEFAULT '',
+    created_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    deleted_at         TIMESTAMPTZ,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sandbox_templates_org_id ON sandbox_templates(org_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sandbox_templates_server_id ON sandbox_templates(server_id) WHERE deleted_at IS NULL;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'sandboxes_template_id_fkey'
+    ) THEN
+        ALTER TABLE sandboxes ADD CONSTRAINT sandboxes_template_id_fkey
+            FOREIGN KEY (template_id) REFERENCES sandbox_templates(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS sandbox_published_ports (
+    id              UUID PRIMARY KEY,
+    sandbox_id      UUID NOT NULL REFERENCES sandboxes(id) ON DELETE CASCADE,
+    target_port     INT NOT NULL CHECK (target_port > 0 AND target_port <= 65535),
+    protocol        TEXT NOT NULL DEFAULT 'http' CHECK (protocol IN ('http')),
+    visibility      TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public')),
+    public_hostname TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (sandbox_id, target_port)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sandbox_published_ports_sandbox_id ON sandbox_published_ports(sandbox_id, created_at ASC);
+
 -- Environment variables per project (values stored as encrypted envelopes)
 CREATE TABLE IF NOT EXISTS environment_variables (
     id          UUID PRIMARY KEY,
@@ -568,6 +659,15 @@ CREATE TABLE IF NOT EXISTS vms (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'sandboxes_vm_id_fkey'
+    ) THEN
+        ALTER TABLE sandboxes ADD CONSTRAINT sandboxes_vm_id_fkey
+            FOREIGN KEY (vm_id) REFERENCES vms(id) ON DELETE SET NULL;
+    END IF;
+END $$;
 
 -- Forward reference from builds to vms
 DO $$ BEGIN

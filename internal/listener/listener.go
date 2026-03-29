@@ -52,6 +52,8 @@ type Config struct {
 	OnServer                 Handler
 	OnInstanceMigration      Handler
 	OnProjectVolumeOperation Handler
+	OnSandbox                Handler
+	OnSandboxTemplate        Handler
 }
 
 const walStandbyTimeout = 10 * time.Second // WAL standby status update interval
@@ -97,6 +99,8 @@ var publicationTables = []string{
 	"preview_environments",
 	"instance_migrations",
 	"project_volume_operations",
+	"sandboxes",
+	"sandbox_templates",
 }
 
 func defaultSlotName() string {
@@ -396,6 +400,14 @@ func (l *Listener) dispatch(ctx context.Context, relationID uint32, tuple *pglog
 	case "project_volume_operations":
 		if l.cfg.OnProjectVolumeOperation != nil {
 			l.cfg.OnProjectVolumeOperation(ctx, id)
+		}
+	case "sandboxes":
+		if l.cfg.OnSandbox != nil {
+			l.cfg.OnSandbox(ctx, id)
+		}
+	case "sandbox_templates":
+		if l.cfg.OnSandboxTemplate != nil {
+			l.cfg.OnSandboxTemplate(ctx, id)
 		}
 	}
 

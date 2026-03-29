@@ -67,6 +67,11 @@ type ResourceStats struct {
 	CollectedAt        time.Time
 }
 
+type GuestExecResult struct {
+	ExitCode int
+	Output   string
+}
+
 type Capability string
 
 const (
@@ -162,6 +167,14 @@ type Runtime interface {
 
 	// ResourceStats samples CPU/memory/disk for a running instance (deployment_instance id).
 	ResourceStats(ctx context.Context, id uuid.UUID) (ResourceStats, error)
+}
+
+// GuestAccess is implemented by runtimes that can execute commands and transfer files
+// into a currently running guest from the local worker that owns it.
+type GuestAccess interface {
+	ExecGuest(ctx context.Context, id uuid.UUID, argv []string, cwd string, env []string) (GuestExecResult, error)
+	ReadGuestFile(ctx context.Context, id uuid.UUID, path string) ([]byte, error)
+	WriteGuestFile(ctx context.Context, id uuid.UUID, path string, data []byte) error
 }
 
 // Detect returns the best available runtime for this host.

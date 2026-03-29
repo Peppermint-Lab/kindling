@@ -185,6 +185,51 @@ func (r *CloudHypervisorRuntime) ResourceStats(ctx context.Context, id uuid.UUID
 	return resourceStatsFromGuestHTTP(ctx, conn)
 }
 
+func (r *CloudHypervisorRuntime) ExecGuest(ctx context.Context, id uuid.UUID, argv []string, cwd string, env []string) (GuestExecResult, error) {
+	r.mu.Lock()
+	ai, ok := r.instances[id]
+	r.mu.Unlock()
+	if !ok || ai.socketBase == "" {
+		return GuestExecResult{}, ErrInstanceNotRunning
+	}
+	conn, err := dialCloudHypervisorGuestOverUDS(ai.socketBase, GuestControlVsockPort)
+	if err != nil {
+		return GuestExecResult{}, err
+	}
+	defer conn.Close()
+	return execGuestHTTP(ctx, conn, argv, cwd, env)
+}
+
+func (r *CloudHypervisorRuntime) ReadGuestFile(ctx context.Context, id uuid.UUID, filePath string) ([]byte, error) {
+	r.mu.Lock()
+	ai, ok := r.instances[id]
+	r.mu.Unlock()
+	if !ok || ai.socketBase == "" {
+		return nil, ErrInstanceNotRunning
+	}
+	conn, err := dialCloudHypervisorGuestOverUDS(ai.socketBase, GuestControlVsockPort)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	return readGuestFileHTTP(ctx, conn, filePath)
+}
+
+func (r *CloudHypervisorRuntime) WriteGuestFile(ctx context.Context, id uuid.UUID, filePath string, data []byte) error {
+	r.mu.Lock()
+	ai, ok := r.instances[id]
+	r.mu.Unlock()
+	if !ok || ai.socketBase == "" {
+		return ErrInstanceNotRunning
+	}
+	conn, err := dialCloudHypervisorGuestOverUDS(ai.socketBase, GuestControlVsockPort)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return writeGuestFileHTTP(ctx, conn, filePath, data)
+}
+
 func (r *CloudHypervisorRuntime) StopAll() {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -18,6 +18,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/rpc/projects"
 	"github.com/kindlingvm/kindling/internal/rpc/servers"
 	"github.com/kindlingvm/kindling/internal/rpc/volumes"
+	"github.com/kindlingvm/kindling/internal/sandbox"
 )
 
 // API provides REST endpoints for the dashboard.
@@ -27,6 +28,9 @@ type API struct {
 	dashboardEvents      *DashboardEventBroker
 	deploymentReconciler *reconciler.Scheduler
 	ciJobReconciler      *reconciler.Scheduler
+	sandboxReconciler    *reconciler.Scheduler
+	sandboxTplReconciler *reconciler.Scheduler
+	sandboxSvc           *sandbox.Service
 	ciJobService         interface {
 		Cancel(context.Context, uuid.UUID) error
 		CreateLocalWorkflowJob(context.Context, ci.CreateJobRequest) (queries.CiJob, error)
@@ -52,6 +56,12 @@ func (a *API) SetCIJobRuntime(r *reconciler.Scheduler, svc interface {
 }) {
 	a.ciJobReconciler = r
 	a.ciJobService = svc
+}
+
+func (a *API) SetSandboxRuntime(sandboxReconciler, sandboxTemplateReconciler *reconciler.Scheduler, svc *sandbox.Service) {
+	a.sandboxReconciler = sandboxReconciler
+	a.sandboxTplReconciler = sandboxTemplateReconciler
+	a.sandboxSvc = svc
 }
 
 func (a *API) gitHubToken() string {
@@ -148,6 +158,26 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/ci/jobs/{id}/logs", a.getCIJobLogs)
 	mux.HandleFunc("GET /api/ci/jobs/{id}/artifacts", a.getCIJobArtifacts)
 	mux.HandleFunc("POST /api/ci/jobs/{id}/cancel", a.cancelCIJob)
+	mux.HandleFunc("GET /api/sandboxes", a.listSandboxes)
+	mux.HandleFunc("POST /api/sandboxes", a.createSandbox)
+	mux.HandleFunc("GET /api/sandboxes/{id}", a.getSandbox)
+	mux.HandleFunc("DELETE /api/sandboxes/{id}", a.deleteSandbox)
+	mux.HandleFunc("POST /api/sandboxes/{id}/start", a.startSandbox)
+	mux.HandleFunc("POST /api/sandboxes/{id}/stop", a.stopSandbox)
+	mux.HandleFunc("POST /api/sandboxes/{id}/suspend", a.stopSandbox)
+	mux.HandleFunc("POST /api/sandboxes/{id}/resume", a.startSandbox)
+	mux.HandleFunc("POST /api/sandboxes/{id}/template", a.createSandboxTemplate)
+	mux.HandleFunc("POST /api/sandboxes/{id}/publish-http", a.publishSandboxHTTP)
+	mux.HandleFunc("POST /api/sandboxes/{id}/unpublish-http", a.unpublishSandboxHTTP)
+	mux.HandleFunc("POST /api/sandboxes/{id}/exec", a.execSandbox)
+	mux.HandleFunc("POST /api/sandboxes/{id}/copy-in", a.copyIntoSandbox)
+	mux.HandleFunc("GET /api/sandboxes/{id}/copy-out", a.copyOutOfSandbox)
+	mux.HandleFunc("GET /api/sandboxes/{id}/logs", a.sandboxLogs)
+	mux.HandleFunc("GET /api/sandboxes/{id}/stats", a.sandboxStats)
+	mux.HandleFunc("GET /api/sandbox-templates", a.listSandboxTemplates)
+	mux.HandleFunc("GET /api/sandbox-templates/{id}", a.getSandboxTemplate)
+	mux.HandleFunc("DELETE /api/sandbox-templates/{id}", a.deleteSandboxTemplate)
+	mux.HandleFunc("POST /api/sandbox-templates/{id}/clone", a.cloneSandboxTemplate)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {
