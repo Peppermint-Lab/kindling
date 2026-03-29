@@ -1,7 +1,7 @@
 {
   "milestone": "security-hardening",
-  "round": 1,
-  "status": "fail",
+  "round": 3,
+  "status": "pass",
   "validatorsRun": {
     "test": {
       "passed": true,
@@ -20,86 +20,14 @@
     }
   },
   "reviewsSummary": {
-    "total": 6,
-    "passed": 2,
-    "failed": 4,
-    "failedFeatures": [
-      "request-body-limits",
-      "session-invalidation-password-change",
-      "security-response-headers",
-      "oauth-auto-creation-controls"
-    ]
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "failedFeatures": []
   },
-  "blockingIssues": [
-    {
-      "featureId": "request-body-limits",
-      "severity": "blocking",
-      "description": "Oversized request handling can emit concatenated JSON bodies because body-limit response interception writes an API error and the handler path can still write another error payload (internal/shared/httputil/bodylimit.go)."
-    },
-    {
-      "featureId": "session-invalidation-password-change",
-      "severity": "blocking",
-      "description": "Password change handler logs session-revocation failure but still returns 200, so revocation is not guaranteed immediate; required revocation behavior tests were also not implemented."
-    },
-    {
-      "featureId": "security-response-headers",
-      "severity": "blocking",
-      "description": "Default runtime HTTPS write timeout remains ColdStartTimeout+15s (2m15s under default config), not the required fixed 30s (VAL-HEADERS-004)."
-    },
-    {
-      "featureId": "oauth-auto-creation-controls",
-      "severity": "blocking",
-      "description": "Pending-member approve/reject endpoints update membership status by org+user without constraining current status to pending, allowing active memberships to be altered unexpectedly."
-    }
-  ],
-  "appliedUpdates": [
-    {
-      "target": "library",
-      "description": "Updated .factory/library/architecture.md to reflect current edge proxy behavior: inbound forwarding headers are stripped and replaced in Rewrite handlers.",
-      "sourceFeature": "xff-sanitization"
-    }
-  ],
-  "suggestedGuidanceUpdates": [
-    {
-      "target": "skills",
-      "suggestion": "Update security-backend-worker guidance to explicitly cover ReverseProxy Director vs Rewrite forwarding-header behavior so workers avoid duplicated/unsanitized XFF propagation.",
-      "evidence": "xff-sanitization review observed this behavior as central to correctness and currently under-documented in skill guidance.",
-      "isSystemic": true
-    },
-    {
-      "target": "skills",
-      "suggestion": "Require validation of config-driven defaults via real startup/default wiring (not only unit assertions with hand-picked config values) when contracts specify runtime defaults.",
-      "evidence": "security-response-headers review passed tests while default runtime timeout remained non-compliant with VAL-HEADERS-004.",
-      "isSystemic": true
-    },
-    {
-      "target": "skills",
-      "suggestion": "Clarify enforcement around RED-first workflow and truthful skillFeedback reporting; add escalation guidance when required DB-backed assertions cannot be executed.",
-      "evidence": "Multiple reviews reported workers marking procedure followed despite implementation-first flow or reduced coverage due to missing DB test strategy.",
-      "isSystemic": true
-    },
-    {
-      "target": "AGENTS.md",
-      "suggestion": "Resolve contradictory schema-change guidance for security-hardening missions by making OAuth-related schema allowances explicit and unambiguous.",
-      "evidence": "oauth-auto-creation-controls review found mission AGENTS says schema is off-limits while a later section explicitly allows schema changes for OAuth domain matching.",
-      "isSystemic": true
-    },
-    {
-      "target": "skills",
-      "suggestion": "Align security-backend-worker schema-change policy with mission-specific exceptions so workers do not receive conflicting instructions.",
-      "evidence": "oauth-auto-creation-controls review found SKILL.md directs returning to orchestrator for schema work, conflicting with mission requirements that required schema additions.",
-      "isSystemic": true
-    }
-  ],
-  "rejectedObservations": [
-    {
-      "observation": "Create a new shared DB-backed handler test harness note immediately for internal/rpc.",
-      "reason": "ambiguous"
-    },
-    {
-      "observation": "Add a generic library entry for WriteAPIError/body-limit double-write now.",
-      "reason": "duplicate"
-    }
-  ],
-  "previousRound": null
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [],
+  "rejectedObservations": [],
+  "previousRound": ".factory/validation/security-hardening/scrutiny/synthesis.round2.json"
 }
