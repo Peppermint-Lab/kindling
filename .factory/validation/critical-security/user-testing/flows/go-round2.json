@@ -1,0 +1,59 @@
+{
+  "groupId": "go-round2",
+  "testedAt": "2026-03-29T15:33:50Z",
+  "isolation": {
+    "milestone": "critical-security",
+    "surface": "go-test",
+    "repoRoot": "/Users/jack/code/kindling",
+    "missionDir": "/Users/jack/.factory/missions/a7eb7b9d-11ac-4e2d-8510-714cd66e3a58",
+    "evidenceDir": "/Users/jack/.factory/missions/a7eb7b9d-11ac-4e2d-8510-714cd66e3a58/evidence/critical-security/go-round2",
+    "notes": "Validation-only run; no production code edits."
+  },
+  "toolsUsed": [
+    "go-test"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-CREDEXPOSE-003",
+      "title": "Credentials absent from live process list",
+      "status": "pass",
+      "rationale": "All targeted live-process argv tests passed, including ps/cmdline checks that credential substrings are absent while helper processes are running.",
+      "commandsRun": [
+        "cd \"/Users/jack/code/kindling\" && go test ./internal/oci -count=1 -v -run '^(TestProcessArgv_NoCredentials_BuildahPush|TestProcessArgv_NoCredentials_SkopeoCopy|TestProcessArgv_NoCredentials_RealBinarySimulation)$' 2>&1 | tee \"/Users/jack/.factory/missions/a7eb7b9d-11ac-4e2d-8510-714cd66e3a58/evidence/critical-security/go-round2/VAL-CREDEXPOSE-003-go-test.log\""
+      ],
+      "evidencePaths": [
+        "critical-security/go-round2/VAL-CREDEXPOSE-003-go-test.log"
+      ],
+      "issues": null
+    },
+    {
+      "id": "VAL-CREDEXPOSE-004",
+      "title": "Off-argv authentication still allows successful image transfer",
+      "status": "pass",
+      "rationale": "Targeted off-argv authfile mechanism tests passed for valid config generation and end-to-end authfile-referenced push/copy command flows without credential argv leakage.",
+      "commandsRun": [
+        "cd \"/Users/jack/code/kindling\" && go test ./internal/oci -count=1 -v -run '^(TestWriteAuthFile_ProducesValidConfig|TestPushImageArgs_UsesAuthFileNotCreds|TestAuthfileMechanism_EndToEnd_BuildahPush|TestAuthfileMechanism_EndToEnd_SkopeoCopy|TestAuthfileMechanism_PushImageFlow)$' 2>&1 | tee \"/Users/jack/.factory/missions/a7eb7b9d-11ac-4e2d-8510-714cd66e3a58/evidence/critical-security/go-round2/VAL-CREDEXPOSE-004-go-test.log\""
+      ],
+      "evidencePaths": [
+        "critical-security/go-round2/VAL-CREDEXPOSE-004-go-test.log"
+      ],
+      "issues": null
+    },
+    {
+      "id": "VAL-WEBHOOK-004",
+      "title": "Valid HMAC-SHA256 signatures are accepted",
+      "status": "pass",
+      "rationale": "Per orchestrator fallback, go-test validation passed for valid signature acceptance across direct signature enforcement and handler-level accepted valid-signature paths.",
+      "commandsRun": [
+        "cd \"/Users/jack/code/kindling\" && go test ./internal/webhook -count=1 -v -run '^(TestEnforceSignature_ValidHMACAccepted|TestEnforceSignature_ValidHMACWithVariousPayloads|TestServeHTTP_UnknownEvent_ValidSignatureReturns200|TestServeHTTP_Push_NonMainBranch_ValidSigReturns200)$' 2>&1 | tee \"/Users/jack/.factory/missions/a7eb7b9d-11ac-4e2d-8510-714cd66e3a58/evidence/critical-security/go-round2/VAL-WEBHOOK-004-go-test.log\""
+      ],
+      "evidencePaths": [
+        "critical-security/go-round2/VAL-WEBHOOK-004-go-test.log"
+      ],
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 3 assigned assertions via targeted go test commands with -count=1; all 3 passed (VAL-CREDEXPOSE-003, VAL-CREDEXPOSE-004, VAL-WEBHOOK-004)."
+}

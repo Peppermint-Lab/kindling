@@ -1,0 +1,72 @@
+{
+  "milestone": "critical-security",
+  "round": 1,
+  "status": "fail",
+  "assertionsSummary": {
+    "total": 24,
+    "passed": 18,
+    "failed": 5,
+    "blocked": 1
+  },
+  "passedAssertions": [
+    "VAL-BOOTSTRAP-001",
+    "VAL-BOOTSTRAP-002",
+    "VAL-BOOTSTRAP-003",
+    "VAL-BOOTSTRAP-004",
+    "VAL-BOOTSTRAP-005",
+    "VAL-CIENV-001",
+    "VAL-CIENV-002",
+    "VAL-CIENV-003",
+    "VAL-CIENV-004",
+    "VAL-CREDEXPOSE-001",
+    "VAL-CREDEXPOSE-002",
+    "VAL-CREDEXPOSE-005",
+    "VAL-RATELIMIT-003",
+    "VAL-RATELIMIT-004",
+    "VAL-RATELIMIT-005",
+    "VAL-WEBHOOK-001",
+    "VAL-WEBHOOK-002",
+    "VAL-WEBHOOK-005"
+  ],
+  "failedAssertions": [
+    {
+      "id": "VAL-RATELIMIT-001",
+      "reason": "Live /api/auth/login attempts 1-10 did not include required X-RateLimit-* headers."
+    },
+    {
+      "id": "VAL-RATELIMIT-002",
+      "reason": "Live /api/auth/login attempt 11 returned 401 without Retry-After instead of 429."
+    },
+    {
+      "id": "VAL-WEBHOOK-003",
+      "reason": "Live tampered HMAC returned 401 rather than required 403."
+    },
+    {
+      "id": "VAL-CREDEXPOSE-003",
+      "reason": "Current test coverage does not verify credentials are absent from live process list (ps/cmdline)."
+    },
+    {
+      "id": "VAL-CREDEXPOSE-004",
+      "reason": "No authenticated image transfer success test found for off-argv authentication path."
+    }
+  ],
+  "blockedAssertions": [
+    {
+      "id": "VAL-WEBHOOK-004",
+      "blockedBy": "No accessible live project webhook secret in this validation isolation context to generate a guaranteed-valid HMAC."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added Validation Concurrency limits and Flow Validator Guidance sections for curl and go-test surfaces.",
+      "source": "setup"
+    },
+    {
+      "target": "user-testing.md",
+      "description": "Documented critical-security round-1 live validation frictions/blockers (rate-limit headers, webhook secret prerequisite, webhook mismatch status expectation).",
+      "source": "flow-report"
+    }
+  ],
+  "previousRound": null
+}
