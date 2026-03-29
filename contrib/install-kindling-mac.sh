@@ -4,12 +4,37 @@ set -euo pipefail
 REPO="${KINDLING_REPO:-Peppermint-Lab/kindling}"
 REF="${KINDLING_REF:-main}"
 KERNEL_RELEASE="${KINDLING_KERNEL_RELEASE:-kernel-v0.1.0}"
-INSTALL_DIR="${KINDLING_INSTALL_DIR:-/usr/local/bin}"
+INSTALL_DIR="${KINDLING_INSTALL_DIR:-$HOME/.local/bin}"
 ASSET_DIR="${KINDLING_ASSET_DIR:-$HOME/.kindling-mac}"
 CONFIG_PATH="${KINDLING_CONFIG_PATH:-$HOME/.kindling-mac.yaml}"
 ROOTFS_URL="${KINDLING_ROOTFS_URL:-https://dl-cdn.alpinelinux.org/alpine/v3.23/releases/aarch64/alpine-minirootfs-3.23.3-aarch64.tar.gz}"
 SOURCE_URL="${KINDLING_SOURCE_URL:-https://codeload.github.com/${REPO}/tar.gz/${REF}}"
+NO_MODIFY_PATH="${KINDLING_NO_MODIFY_PATH:-0}"
 TMP_DIR=""
+
+usage() {
+  cat <<'EOF'
+Usage: install-kindling-mac.sh [options]
+
+Options:
+  --install-dir PATH      Install binaries into PATH
+  --asset-dir PATH        Download guest assets into PATH
+  --config-path PATH      Install the sample config at PATH
+  --no-modify-path        Do not update shell config even if PATH is missing the install dir
+  -h, --help              Show this help text
+
+Environment overrides:
+  KINDLING_INSTALL_DIR
+  KINDLING_ASSET_DIR
+  KINDLING_CONFIG_PATH
+  KINDLING_NO_MODIFY_PATH=1
+  KINDLING_REPO
+  KINDLING_REF
+  KINDLING_KERNEL_RELEASE
+  KINDLING_ROOTFS_URL
+  KINDLING_SOURCE_URL
+EOF
+}
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -61,8 +86,103 @@ cleanup() {
   fi
 }
 
+path_contains() {
+  local dir="$1"
+  [[ ":$PATH:" == *":$dir:"* ]]
+}
+
+shell_rc_file() {
+  local shell_name
+
+  shell_name="$(basename "${SHELL:-}")"
+  case "$shell_name" in
+    zsh) printf '%s\n' "$HOME/.zshrc" ;;
+    bash) printf '%s\n' "$HOME/.bashrc" ;;
+    fish) printf '%s\n' "$HOME/.config/fish/config.fish" ;;
+    *) printf '%s\n' "$HOME/.profile" ;;
+  esac
+}
+
+path_plan() {
+  local rc_file="$1"
+
+  if path_contains "$INSTALL_DIR"; then
+    printf '%s\n' "already on PATH"
+    return
+  fi
+
+  if [[ "$NO_MODIFY_PATH" = "1" ]]; then
+    printf '%s\n' "will not modify PATH (per --no-modify-path)"
+    return
+  fi
+
+  printf '%s\n' "will add to PATH via ${rc_file}"
+}
+
+ensure_path() {
+  local rc_file="$1"
+  local export_line
+
+  if path_contains "$INSTALL_DIR"; then
+    return
+  fi
+
+  if [[ "$NO_MODIFY_PATH" = "1" ]]; then
+    return
+  fi
+
+  mkdir -p "$(dirname "$rc_file")"
+
+  if [[ "$rc_file" == *.fish ]]; then
+    export_line="fish_add_path \"$INSTALL_DIR\""
+  else
+    export_line="export PATH=\"$INSTALL_DIR:\$PATH\""
+  fi
+
+  if [[ -f "$rc_file" ]] && grep -Fqx "$export_line" "$rc_file"; then
+    return
+  fi
+
+  {
+    printf '\n'
+    printf '%s\n' "$export_line"
+  } >>"$rc_file"
+
+  echo "Added ${INSTALL_DIR} to PATH in ${rc_file}."
+}
+
 main() {
-  local os arch source_tar src_dir kernel_url initramfs_url
+  local os arch source_tar src_dir kernel_url initramfs_url rc_file shell_name
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --install-dir)
+        INSTALL_DIR="$2"
+        shift 2
+        ;;
+      --asset-dir)
+        ASSET_DIR="$2"
+        shift 2
+        ;;
+      --config-path)
+        CONFIG_PATH="$2"
+        shift 2
+        ;;
+      --no-modify-path)
+        NO_MODIFY_PATH=1
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "unknown option: $1" >&2
+        usage >&2
+        exit 1
+        ;;
+    esac
+  done
 
   os="$(uname -s)"
   arch="$(uname -m)"
@@ -81,6 +201,20 @@ main() {
   require_cmd go
   require_cmd install
   require_cmd codesign
+
+  shell_name="$(basename "${SHELL:-unknown}")"
+  rc_file="$(shell_rc_file)"
+
+  cat <<EOF
+kindling-mac installer
+  shell: ${shell_name}
+  shell rc: ${rc_file}
+  install dir: ${INSTALL_DIR}
+  asset dir: ${ASSET_DIR}
+  config path: ${CONFIG_PATH}
+  PATH handling: $(path_plan "$rc_file")
+
+EOF
 
   TMP_DIR="$(mktemp -d)"
   trap cleanup EXIT
@@ -107,6 +241,7 @@ main() {
   echo "Installing binaries to ${INSTALL_DIR}..."
   install_file "$src_dir/bin/kindling" "${INSTALL_DIR}/kindling"
   install_file "$src_dir/bin/kindling-mac" "${INSTALL_DIR}/kindling-mac"
+  ensure_path "$rc_file"
 
   echo "Downloading guest assets into ${ASSET_DIR}..."
   mkdir -p "$ASSET_DIR"
@@ -137,6 +272,22 @@ Next steps:
   3. In another terminal:
        ${INSTALL_DIR}/kindling local box start
 EOF
+
+  if ! path_contains "$INSTALL_DIR"; then
+    if [[ "$NO_MODIFY_PATH" = "1" ]]; then
+      cat <<EOF
+
+Your current PATH does not include ${INSTALL_DIR}.
+Add it manually before using 'kindling' and 'kindling-mac'.
+EOF
+    else
+      cat <<EOF
+
+Open a new shell, or run:
+  source ${rc_file}
+EOF
+    fi
+  fi
 }
 
 main "$@"

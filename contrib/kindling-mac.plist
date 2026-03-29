@@ -6,7 +6,9 @@
 	<string>com.kindling.kindling-mac</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/usr/local/bin/kindling-mac</string>
+		<string>/bin/zsh</string>
+		<string>-lc</string>
+		<string>kindling-mac</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>

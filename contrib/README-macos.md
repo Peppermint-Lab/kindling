@@ -17,6 +17,12 @@ kindling local box start
 kindling local box shell
 ```
 
+The installer follows the usual user-local CLI pattern:
+- installs `kindling` and `kindling-mac` into `~/.local/bin`
+- downloads VM assets into `~/.kindling-mac`
+- writes `~/.kindling-mac.yaml` if you do not already have one
+- adds `~/.local/bin` to your shell config if needed
+
 ## Requirements
 
 - macOS 13+ (Ventura or later)
@@ -49,7 +55,7 @@ kindling local box shell
 
 ## Setup
 
-The installer above handles the default build/install path. If you want to do it manually or customize the paths, use the steps below.
+The installer above handles the default user-local path. If you want to do it manually or customize the paths, use the steps below.
 
 ### 1. Download the kernel, initramfs, and rootfs
 
