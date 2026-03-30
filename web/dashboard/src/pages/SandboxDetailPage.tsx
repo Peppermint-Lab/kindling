@@ -1,14 +1,21 @@
 import { useEffect, useMemo, useState } from "react"
-import { useNavigate, useParams } from "react-router-dom"
-import { AlertTriangleIcon, CopyIcon, RotateCcwIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react"
+import { Link, useNavigate, useParams } from "react-router-dom"
+import { AlertTriangleIcon, CopyIcon, ExternalLinkIcon, Plug2Icon, RotateCcwIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react"
 import { api, type Sandbox, type SandboxAccessEvent } from "@/lib/api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { SandboxTerminal } from "@/components/sandbox-terminal"
 import { sandboxImageContract } from "@/lib/sandbox-catalog"
+import { cn } from "@/lib/utils"
+import {
+  browserAppAccessStatus,
+  publicBrowserAppUrl,
+  remoteVmSshCliCommand,
+  sshAccessStatus,
+} from "@/lib/remote-vm-access"
 
 const REMOTE_VM_CAP_ORDER = [
   "browser_app",
@@ -132,10 +139,25 @@ export function SandboxDetailPage() {
     void load()
   }, [id])
 
-  const sshCommand = useMemo(() => `kindling vm ssh --vm ${id}`, [id])
+  const sshCommand = useMemo(() => remoteVmSshCliCommand(id), [id])
+  const appUrl = sandbox ? publicBrowserAppUrl(sandbox) : null
+  const browserAccess = sandbox ? browserAppAccessStatus(sandbox) : null
+  const sshAccess = sandbox ? sshAccessStatus(sandbox) : null
   const sshHostKeySummary = sandbox?.ssh_host_public_key ? compactSSHKey(sandbox.ssh_host_public_key) : null
   const imageContract = sandbox ? sandboxImageContract(baseImageRef || sandbox.base_image_ref) : null
   const canEditSandboxConfig = sandbox?.observed_state !== "running"
+
+  function accessBadgeVariant(status: "ready" | "blocked" | "unsupported"): "default" | "secondary" | "outline" {
+    if (status === "ready") return "default"
+    if (status === "blocked") return "secondary"
+    return "outline"
+  }
+
+  function accessBadgeLabel(status: "ready" | "blocked" | "unsupported"): string {
+    if (status === "unsupported") return "Not available"
+    if (status === "blocked") return "Not ready"
+    return "Ready"
+  }
 
   if (!sandbox) {
     return (
@@ -192,36 +214,84 @@ export function SandboxDetailPage() {
         </Card>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Runtime</CardTitle>
-            <CardDescription>Current placement, resources, and runtime address.</CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-2 text-sm">
-            <p><span className="font-medium">Runtime URL:</span> {sandbox.runtime_url || "—"}</p>
-            <p><span className="font-medium">Isolation policy:</span> {sandbox.isolation_policy ?? "best_available"}</p>
-            <p><span className="font-medium">Resources:</span> {sandbox.vcpu} vCPU / {sandbox.memory_mb} MB / {sandbox.disk_gb} GB</p>
-            <p><span className="font-medium">Git:</span> {sandbox.git_repo || "—"} {sandbox.git_ref ? `(${sandbox.git_ref})` : ""}</p>
-            <p><span className="font-medium">Last used:</span> {sandbox.last_used_at ? new Date(sandbox.last_used_at).toLocaleString() : "—"}</p>
-            <p><span className="font-medium">Auto-suspend:</span> {sandbox.auto_suspend_seconds > 0 ? `${sandbox.auto_suspend_seconds}s` : "Always on"}</p>
-            <RemoteVMCapabilityBadges caps={sandbox.capabilities} />
-          </CardContent>
-        </Card>
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Plug2Icon className="size-5 text-muted-foreground" />
+                Connect
+              </CardTitle>
+              <CardDescription>
+                Browser app and CLI SSH are peer entry points to the same remote VM. Shell in the dashboard is below.
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="grid gap-8 lg:grid-cols-2">
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-medium">Browser app</p>
+              {browserAccess ? (
+                <Badge variant={accessBadgeVariant(browserAccess.status)}>
+                  {accessBadgeLabel(browserAccess.status)}
+                </Badge>
+              ) : null}
+            </div>
+            {browserAccess ? <p className="text-xs text-muted-foreground">{browserAccess.hint}</p> : null}
+            {appUrl ? (
+              <code className="block max-w-full overflow-x-auto rounded-md border bg-muted/30 px-3 py-2 font-mono text-xs break-all">
+                {appUrl}
+              </code>
+            ) : (
+              <p className="text-xs text-muted-foreground">No public URL yet. Publish HTTP below or start the VM.</p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                disabled={!appUrl || browserAccess?.status !== "ready"}
+                onClick={() => appUrl && window.open(appUrl, "_blank", "noopener,noreferrer")}
+              >
+                <ExternalLinkIcon className="mr-2 size-4" />
+                Open app
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!appUrl}
+                onClick={() => appUrl && void copyText("vm-app-url", appUrl)}
+              >
+                <CopyIcon className="mr-2 size-3" />
+                Copy URL
+              </Button>
+            </div>
+          </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>SSH</CardTitle>
-            <CardDescription>Real SSH client access rides through the control plane proxy with a managed host key.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
+          <div className="space-y-3 border-t border-border pt-6 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-medium">SSH (CLI)</p>
+              {sshAccess ? (
+                <Badge variant={accessBadgeVariant(sshAccess.status)}>{accessBadgeLabel(sshAccess.status)}</Badge>
+              ) : null}
+            </div>
+            {sshAccess ? <p className="text-xs text-muted-foreground">{sshAccess.hint}</p> : null}
             <pre className="overflow-x-auto rounded-md bg-muted/50 p-3 font-mono text-xs">{sshCommand}</pre>
-            <p className="text-xs text-muted-foreground">Add keys under Settings → SSH Keys, then use the CLI command above.</p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" variant="outline" onClick={() => void copyText("vm-ssh-cmd", sshCommand)}>
+                <CopyIcon className="mr-2 size-3" />
+                Copy command
+              </Button>
+              <Link to="/settings/ssh-keys" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+                SSH keys
+              </Link>
+            </div>
             {sandbox.ssh_host_public_key ? (
               <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
                 <div className="flex items-center gap-2 text-sm font-medium">
                   <ShieldCheckIcon className="size-4 text-muted-foreground" />
-                  Managed Host Trust
+                  Managed host trust
                 </div>
                 <div className="space-y-1">
                   <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Fingerprint</p>
@@ -236,7 +306,7 @@ export function SandboxDetailPage() {
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Host Key</p>
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Host key</p>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                     <code className="flex-1 rounded-md border bg-background px-3 py-2 font-mono text-xs break-all">
                       {sshHostKeySummary}
@@ -247,16 +317,36 @@ export function SandboxDetailPage() {
                     </Button>
                   </div>
                 </div>
-                <p className="text-xs text-muted-foreground">Kindling records this remote VM's host key and the CLI verifies it before connecting.</p>
+                <p className="text-xs text-muted-foreground">The CLI verifies this key before connecting (TOFU-style known_hosts file).</p>
               </div>
-            ) : (
+            ) : sshAccess?.status !== "unsupported" ? (
               <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
-                Host key not ready yet. Start the remote VM and ensure the guest image includes `sshd` and `ssh-keygen`.
+                <p className="font-medium text-foreground">Host key not ready</p>
+                <p className="mt-1">
+                  Start the VM and ensure the guest image includes <code className="rounded bg-muted px-1">sshd</code> and{" "}
+                  <code className="rounded bg-muted px-1">ssh-keygen</code>. Kindling syncs the public host key for you.
+                </p>
               </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+            ) : null}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Runtime</CardTitle>
+          <CardDescription>Current placement, resources, and runtime address.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-2 text-sm">
+          <p><span className="font-medium">Runtime URL:</span> {sandbox.runtime_url || "—"}</p>
+          <p><span className="font-medium">Isolation policy:</span> {sandbox.isolation_policy ?? "best_available"}</p>
+          <p><span className="font-medium">Resources:</span> {sandbox.vcpu} vCPU / {sandbox.memory_mb} MB / {sandbox.disk_gb} GB</p>
+          <p><span className="font-medium">Git:</span> {sandbox.git_repo || "—"} {sandbox.git_ref ? `(${sandbox.git_ref})` : ""}</p>
+          <p><span className="font-medium">Last used:</span> {sandbox.last_used_at ? new Date(sandbox.last_used_at).toLocaleString() : "—"}</p>
+          <p><span className="font-medium">Auto-suspend:</span> {sandbox.auto_suspend_seconds > 0 ? `${sandbox.auto_suspend_seconds}s` : "Always on"}</p>
+          <RemoteVMCapabilityBadges caps={sandbox.capabilities} />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -440,7 +530,9 @@ export function SandboxDetailPage() {
       <Card>
         <CardHeader>
           <CardTitle>HTTP Publish</CardTitle>
-          <CardDescription>Expose a stable managed hostname for an HTTP port inside this remote VM.</CardDescription>
+          <CardDescription>
+            Expose a stable managed hostname for an HTTP port inside this remote VM. After publishing, use <span className="font-medium text-foreground">Connect → Browser app</span> above to open or copy the URL.
+          </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-[160px_1fr_auto_auto]">
           <div className="space-y-2">

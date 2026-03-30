@@ -30,7 +30,6 @@ import (
 	"golang.org/x/term"
 )
 
-// remoteVMCapabilitiesAbbrev returns a compact list of supported capability short codes for CLI tables.
 func remoteVMCapabilitiesAbbrev(row map[string]any) string {
 	caps, _ := row["capabilities"].(map[string]any)
 	if len(caps) == 0 {
@@ -573,7 +572,11 @@ func cliSandboxSSHCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ssh --vm <uuid> [-- <ssh args...>]",
 		Short: "Open an SSH session to a running remote VM using the local ssh client with managed host-key verification",
-		Args:  cobra.ArbitraryArgs,
+		Long: "Opens SSH using your system ssh(1) client. Kindling writes a temporary known_hosts file with the VM's " +
+			"recorded host public key and uses ProxyCommand to tunnel through the control plane (/api/vms/{id}/ssh/ws). " +
+			"Add your user public keys under the dashboard Settings → SSH Keys (or the equivalent API) before connecting. " +
+			"The guest image must run sshd and expose ssh-keygen so the host key can be synced.",
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(sandboxID)
 			if id == "" {

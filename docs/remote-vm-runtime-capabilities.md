@@ -1,8 +1,8 @@
-# Remote VM runtime detection and capabilities (through Milestone 4)
+# Remote VM runtime detection and capabilities (through Milestone 5)
 
-This document describes the **in-repo** contract for Kindling **remote VMs** after Milestone 4 of the “Remote VM Experience” track (M1–M3 renames, detection, and Linux `crun` placement, plus **`crun` access parity**: isolated network per container, app port forwarding, exec/copy, shell, and SSH over the same RPC contracts as Cloud Hypervisor).
+This document describes the **in-repo** contract for Kindling **remote VMs** after Milestone 4 of the “Remote VM Experience” track (M1–M3 renames, detection, and Linux `crun` placement, plus **`crun` access parity**: isolated network per container, app port forwarding, exec/copy, shell, and SSH over the same RPC contracts as Cloud Hypervisor). **Milestone 5** adds dashboard and CLI UX for those access surfaces.
 
-Canonical product notes may still live in the Obsidian vault; this file is the engineer-oriented summary tied to the code.
+Canonical product notes may live in the Obsidian vault; this file is the engineer-oriented summary tied to the code.
 
 ## Authoritative runtime selection
 
@@ -54,3 +54,21 @@ Placement selection in `internal/sandbox.Service.pickServer` uses explicit eligi
 
 - VM and template JSON include optional `capabilities` objects built server-side.
 - Dashboard and `kindling vm list` surface backend and capability summaries without inferring from ad hoc strings.
+
+## Milestone 5: browser, terminal, and SSH UX (product surfaces)
+
+Milestone 5 does **not** change the access contracts above; it makes them **discoverable and resilient** in the UI and CLI help text.
+
+- **Dashboard — Connect:** Remote VM detail shows **Browser app** and **SSH (CLI)** as peer entry surfaces (`Open app`, `Copy URL`, `Copy command`, host-key fingerprint, link to SSH keys). Helpers live in `web/dashboard/src/lib/remote-vm-access.ts`.
+- **Dashboard — list:** Remote VMs list includes **Open app**, **Copy URL**, **Copy SSH**, and **Details** so users need not open the detail page first.
+- **Dashboard — Shell card:** In-browser shell uses `/api/vms/{id}/shell/ws` with capability-aware disabled states, clearer errors, disconnect/reconnect, and stdin disabled when disconnected (`web/dashboard/src/components/sandbox-terminal.tsx`).
+- **CLI:** `kindling vm ssh` remains the supported path for real SSH (local `ssh` + `ProxyCommand` + pinned known_hosts line). Prefer the dashboard **Connect** card or `kindling vm ssh --vm <uuid>` for copy-paste workflows.
+
+### Explicitly out of scope: browser-native SSH
+
+**In-browser SSH** (running OpenSSH or a full terminal SSH client inside the web app) is **not** part of Milestone 5. The product uses:
+
+1. **Browser:** published HTTP app URL and in-dashboard **Shell** (WebSocket shellwire), not SSH-over-WebSockets in the browser UI.
+2. **SSH:** the user’s **local** `ssh` binary via `kindling vm ssh`, which tunnels through `GET /api/vms/{id}/ssh/ws` under the hood.
+
+If browser-native SSH becomes a requirement later, expect new UI (e.g. xterm.js + SSH protocol client or wasm), security review, and possibly different auth/session boundaries than the current cookie-authenticated dashboard shell.

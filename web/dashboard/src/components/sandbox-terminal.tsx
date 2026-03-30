@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react"
+import { Link } from "react-router-dom"
+import { RotateCcwIcon } from "lucide-react"
 import { Terminal } from "@xterm/xterm"
 import { FitAddon } from "@xterm/addon-fit"
 import "@xterm/xterm/css/xterm.css"
@@ -6,6 +8,24 @@ import "@xterm/xterm/css/xterm.css"
 import { API_BASE, type Sandbox } from "@/lib/api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import {
+  humanizeShellConnectionError,
+  terminalShellAccessStatus,
+  type AccessSurfaceStatus,
+} from "@/lib/remote-vm-access"
+
+function shellBadgeVariant(status: AccessSurfaceStatus): "default" | "secondary" | "outline" {
+  if (status === "ready") return "default"
+  if (status === "blocked") return "secondary"
+  return "outline"
+}
+
+function shellBadgeLabel(status: AccessSurfaceStatus): string {
+  if (status === "ready") return "Available"
+  if (status === "blocked") return "Unavailable"
+  return "Not supported"
+}
 
 function sandboxShellWebSocketURL(id: string) {
   const base = new URL(API_BASE)
@@ -15,14 +35,36 @@ function sandboxShellWebSocketURL(id: string) {
   return base.toString()
 }
 
+type SessionPhase = "idle" | "connecting" | "connected"
+
 export function SandboxTerminal({ sandbox }: { sandbox: Sandbox }) {
-  const [connected, setConnected] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const shellAccess = terminalShellAccessStatus(sandbox)
+  const canConnect = shellAccess.status === "ready"
+
+  const [phase, setPhase] = useState<SessionPhase>("idle")
+  const [bannerError, setBannerError] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const socketRef = useRef<WebSocket | null>(null)
   const resizeObserverRef = useRef<ResizeObserver | null>(null)
+  const connectionTokenRef = useRef(0)
+
+  const resetTerminalView = () => {
+    const terminal = terminalRef.current
+    if (!terminal) return
+    terminal.clear()
+    terminal.writeln("Kindling remote VM shell")
+    terminal.writeln("Connect when the VM is running to attach to the guest PTY.")
+  }
+
+  const closeActiveSocket = () => {
+    connectionTokenRef.current += 1
+    const activeSocket = socketRef.current
+    socketRef.current = null
+    if (terminalRef.current) terminalRef.current.options.disableStdin = true
+    activeSocket?.close()
+  }
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -33,6 +75,7 @@ export function SandboxTerminal({ sandbox }: { sandbox: Sandbox }) {
       fontSize: 13,
       lineHeight: 1.25,
       scrollback: 5000,
+      disableStdin: true,
       theme: {
         background: "#050816",
         foreground: "#d9f99d",
@@ -60,11 +103,9 @@ export function SandboxTerminal({ sandbox }: { sandbox: Sandbox }) {
     terminal.loadAddon(fitAddon)
     terminal.open(containerRef.current)
     fitAddon.fit()
-    terminal.writeln("Kindling remote VM terminal ready.")
-    terminal.writeln("Click Connect to attach to the guest shell.")
-
     terminalRef.current = terminal
     fitRef.current = fitAddon
+    resetTerminalView()
 
     const resizeTerminal = () => {
       fitAddon.fit()
@@ -90,34 +131,68 @@ export function SandboxTerminal({ sandbox }: { sandbox: Sandbox }) {
       observer.disconnect()
       resizeObserverRef.current = null
       window.removeEventListener("resize", resizeTerminal)
-      socketRef.current?.close()
-      socketRef.current = null
+      closeActiveSocket()
       terminal.dispose()
       terminalRef.current = null
       fitRef.current = null
     }
   }, [])
 
+  useEffect(() => {
+    if (sandbox.observed_state !== "running") {
+      const hadLiveSession =
+        socketRef.current?.readyState === WebSocket.OPEN || socketRef.current?.readyState === WebSocket.CONNECTING
+      closeActiveSocket()
+      setPhase("idle")
+      if (hadLiveSession) {
+        const t = terminalRef.current
+        if (t) {
+          t.writeln("\r\n\x1b[33m[VM is not running — shell session closed]\x1b[0m")
+        }
+      }
+    }
+  }, [sandbox.observed_state, sandbox.id])
+
+  useEffect(() => {
+    closeActiveSocket()
+    setPhase("idle")
+    setBannerError(null)
+    resetTerminalView()
+  }, [sandbox.id])
+
+  const disconnect = () => {
+    closeActiveSocket()
+    setPhase("idle")
+  }
+
   const connect = () => {
     const terminal = terminalRef.current
     const fitAddon = fitRef.current
-    if (!terminal || !fitAddon) return
+    if (!terminal || !fitAddon || !canConnect) return
 
-    socketRef.current?.close()
-    setError(null)
+    closeActiveSocket()
+    setBannerError(null)
+    setPhase("connecting")
     terminal.clear()
-    terminal.writeln("Connecting to remote VM shell...")
+    terminal.writeln("\x1b[36mConnecting…\x1b[0m")
 
+    connectionTokenRef.current += 1
+    const token = connectionTokenRef.current
     const socket = new WebSocket(sandboxShellWebSocketURL(sandbox.id))
+    let didOpen = false
     socketRef.current = socket
 
     socket.onopen = () => {
-      setConnected(true)
+      if (connectionTokenRef.current !== token || socketRef.current !== socket) return
+      didOpen = true
+      setPhase("connected")
+      terminal.options.disableStdin = false
       fitAddon.fit()
       socket.send(JSON.stringify({ type: "resize", width: terminal.cols, height: terminal.rows }))
     }
 
     socket.onmessage = (event) => {
+      if (connectionTokenRef.current !== token || socketRef.current !== socket) return
       try {
         const frame = JSON.parse(String(event.data)) as {
           type: string
@@ -132,13 +207,18 @@ export function SandboxTerminal({ sandbox }: { sandbox: Sandbox }) {
             return
           case "error":
             if (frame.error) {
-              setError(frame.error)
-              terminal.writeln(`\r\n[error] ${frame.error}`)
+              const msg = humanizeShellConnectionError(frame.error)
+              setBannerError(msg)
+              terminal.writeln(`\r\n\x1b[31m${msg}\x1b[0m`)
             }
             return
           case "exit":
-            setConnected(false)
-            terminal.writeln(`\r\n[session ended${typeof frame.exit_code === "number" ? `, exit ${frame.exit_code}` : ""}]`)
+            terminal.options.disableStdin = true
+            terminal.writeln(
+              `\r\n\x1b[33m[Session ended${typeof frame.exit_code === "number" ? `, exit ${frame.exit_code}` : ""}]\x1b[0m`,
+            )
+            closeActiveSocket()
+            setPhase("idle")
             return
           default:
             return
@@ -149,43 +229,85 @@ export function SandboxTerminal({ sandbox }: { sandbox: Sandbox }) {
     }
 
     socket.onerror = () => {
-      setError("Shell connection failed")
-      terminal.writeln("\r\n[connection failed]")
+      if (connectionTokenRef.current !== token || socketRef.current !== socket) return
+      const msg = "Could not open the shell WebSocket. Check network, auth, and that the API allows WebSockets."
+      setBannerError(humanizeShellConnectionError(msg))
+      terminal.writeln(`\r\n\x1b[31m${msg}\x1b[0m`)
     }
 
-    socket.onclose = () => {
-      setConnected(false)
+    socket.onclose = (ev) => {
+      if (connectionTokenRef.current !== token || socketRef.current !== socket) return
+      socketRef.current = null
+      terminal.options.disableStdin = true
+      if (!didOpen) {
+        const reason =
+          ev.reason?.trim() ||
+          (ev.code !== 1000 ? `Connection closed (${ev.code}).` : "Connection closed before the shell started.")
+        const msg = humanizeShellConnectionError(reason)
+        setBannerError(msg)
+        terminal.writeln(`\r\n\x1b[31m${msg}\x1b[0m`)
+      } else if (ev.code !== 1000) {
+        const msg = humanizeShellConnectionError(ev.reason || `Connection lost (code ${ev.code}).`)
+        setBannerError(msg)
+        terminal.writeln(`\r\n\x1b[31m${msg}\x1b[0m`)
+      }
+
+      setPhase("idle")
     }
   }
 
-  const disconnect = () => {
-    socketRef.current?.close()
-    socketRef.current = null
-    setConnected(false)
-  }
+  const connected = phase === "connected"
+  const busy = phase === "connecting"
 
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <CardTitle>Shell</CardTitle>
-            <CardDescription>Real terminal emulation over the WebSocket shell transport.</CardDescription>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <CardTitle>Shell</CardTitle>
+              <Badge variant={shellBadgeVariant(shellAccess.status)}>
+                {shellBadgeLabel(shellAccess.status)}
+              </Badge>
+            </div>
+            <CardDescription>{shellAccess.hint}</CardDescription>
           </div>
-          {connected ? (
-            <Button variant="outline" onClick={disconnect}>
-              Disconnect
-            </Button>
-          ) : (
-            <Button onClick={connect}>Connect</Button>
-          )}
+          <div className="flex flex-wrap gap-2">
+            {connected ? (
+              <Button variant="outline" onClick={disconnect}>
+                Disconnect
+              </Button>
+            ) : (
+              <>
+                <Button onClick={connect} disabled={!canConnect || busy}>
+                  {busy ? "Connecting…" : "Connect"}
+                </Button>
+                {bannerError && canConnect ? (
+                  <Button variant="outline" onClick={connect} disabled={busy}>
+                    <RotateCcwIcon className="mr-2 size-4" />
+                    Reconnect
+                  </Button>
+                ) : null}
+              </>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
+        {!canConnect ? (
+          <p className="text-sm text-muted-foreground">
+            {shellAccess.status === "unsupported" ? (
+              <>Use <Link to="/settings/ssh-keys" className="underline underline-offset-4">SSH</Link> or the CLI if your backend does not expose dashboard shell.</>
+            ) : (
+              <>Start the VM to enable shell. For SSH from your machine, see <strong>Connect</strong> above or{" "}
+                <Link to="/settings/ssh-keys" className="underline underline-offset-4">SSH keys</Link>.</>
+            )}
+          </p>
+        ) : null}
+        {bannerError ? <p className="text-sm text-destructive">{bannerError}</p> : null}
         <div className="rounded-xl border bg-[#050816] p-2">
           <div ref={containerRef} className="h-[28rem] w-full overflow-hidden rounded-lg" />
         </div>
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
       </CardContent>
     </Card>
   )

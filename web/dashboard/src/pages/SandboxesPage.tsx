@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
-import { CopyPlusIcon, Layers3Icon, SparklesIcon } from "lucide-react"
+import { CopyIcon, CopyPlusIcon, ExternalLinkIcon, Layers3Icon, SparklesIcon } from "lucide-react"
 import { api, type RemoteVMCapabilityEntry, type Sandbox, type SandboxTemplate } from "@/lib/api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -17,6 +17,16 @@ import {
   sandboxPresetByID,
   suggestedSandboxName,
 } from "@/lib/sandbox-catalog"
+import { publicBrowserAppUrl, remoteVmSshCliCommand } from "@/lib/remote-vm-access"
+import { cn } from "@/lib/utils"
+
+async function copyToClipboard(label: string, text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    console.warn("clipboard failed", label)
+  }
+}
 
 type CreateMode = "preset" | "custom" | "template"
 
@@ -297,13 +307,19 @@ export function SandboxesPage() {
       </Card>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {sandboxes.map((sandbox) => (
-          <Link key={sandbox.id} to={`/vms/${sandbox.id}`} className="block">
-            <Card className="h-full transition-colors hover:border-foreground/30">
+        {sandboxes.map((sandbox) => {
+          const appUrl = publicBrowserAppUrl(sandbox)
+          const sshCmd = remoteVmSshCliCommand(sandbox.id)
+          const capSummary = remoteVmCapabilitiesSummary(sandbox.capabilities)
+          const canOpenApp = Boolean(appUrl) && sandbox.observed_state === "running"
+          return (
+            <Card key={sandbox.id} className="flex h-full flex-col transition-colors hover:border-foreground/30">
               <CardHeader>
                 <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <CardTitle>{sandbox.name}</CardTitle>
+                  <div className="min-w-0">
+                    <Link to={`/vms/${sandbox.id}`} className="block hover:underline">
+                      <CardTitle className="truncate">{sandbox.name}</CardTitle>
+                    </Link>
                     <CardDescription>{sandbox.host_group}</CardDescription>
                   </div>
                   <Badge variant={sandbox.observed_state === "running" ? "default" : "secondary"}>
@@ -311,19 +327,48 @@ export function SandboxesPage() {
                   </Badge>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-2 text-sm text-muted-foreground">
+              <CardContent className="flex flex-1 flex-col space-y-2 text-sm text-muted-foreground">
                 <p>{sandbox.isolation_policy ?? "best_available"} · {sandbox.backend || "pending backend"} / {sandbox.arch || "pending arch"}</p>
-                {(() => {
-                  const capSummary = remoteVmCapabilitiesSummary(sandbox.capabilities)
-                  return capSummary ? <p className="text-xs text-muted-foreground">{capSummary}</p> : null
-                })()}
+                {capSummary ? <p className="text-xs text-muted-foreground">{capSummary}</p> : null}
                 <p>{sandbox.vcpu} vCPU, {sandbox.memory_mb} MB RAM, {sandbox.disk_gb} GB disk</p>
                 <p>{formatAutoSuspend(sandbox.auto_suspend_seconds)}</p>
-                <p className="truncate">{sandbox.runtime_url || "No runtime URL yet"}</p>
+                <p className="truncate" title={sandbox.runtime_url ?? undefined}>
+                  {sandbox.runtime_url || "No runtime URL yet"}
+                </p>
+                <div className="mt-auto flex flex-wrap gap-2 border-t border-border pt-3">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={!canOpenApp}
+                    title={!appUrl ? "Publish HTTP or wait for a runtime URL" : sandbox.observed_state !== "running" ? "Start the VM to open the app" : undefined}
+                    onClick={() => appUrl && window.open(appUrl, "_blank", "noopener,noreferrer")}
+                  >
+                    <ExternalLinkIcon className="mr-1 size-3.5" />
+                    Open app
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={!appUrl}
+                    onClick={() => appUrl && void copyToClipboard("vm-list-app-url", appUrl)}
+                  >
+                    <CopyIcon className="mr-1 size-3.5" />
+                    Copy URL
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={() => void copyToClipboard("vm-list-ssh", sshCmd)}>
+                    <CopyIcon className="mr-1 size-3.5" />
+                    Copy SSH
+                  </Button>
+                  <Link to={`/vms/${sandbox.id}`} className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+                    Details
+                  </Link>
+                </div>
               </CardContent>
             </Card>
-          </Link>
-        ))}
+          )
+        })}
       </div>
 
       {!loading && sandboxes.length === 0 ? (
