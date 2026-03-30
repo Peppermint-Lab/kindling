@@ -193,6 +193,61 @@ type remoteVmPickCandidate struct {
 	arch     string
 }
 
+func resolvePinnedTemplateCandidate(
+	servers []queries.Server,
+	metaByServer map[[16]byte]workerMetadata,
+	hostGroup, backendFilter, arch string,
+	tpl *queries.RemoteVmTemplate,
+) (remoteVmPickCandidate, bool, error) {
+	if tpl == nil || !tpl.ServerID.Valid {
+		return remoteVmPickCandidate{}, false, nil
+	}
+
+	var srv *queries.Server
+	for i := range servers {
+		if servers[i].ID.Valid && servers[i].ID.Bytes == tpl.ServerID.Bytes {
+			srv = &servers[i]
+			break
+		}
+	}
+	if srv == nil || srv.Status != "active" {
+		return remoteVmPickCandidate{}, true, fmt.Errorf("pinned template server is not active")
+	}
+
+	meta := metaByServer[tpl.ServerID.Bytes]
+	if !meta.RemoteVmEnabled {
+		return remoteVmPickCandidate{}, true, fmt.Errorf("pinned template server is not remote-vm enabled")
+	}
+	if hostGroup == HostGroupMac && !meta.effectiveMacRemoteVmPlacement() {
+		return remoteVmPickCandidate{}, true, fmt.Errorf("pinned template server is not eligible for mac remote VMs")
+	}
+	if hostGroup == HostGroupLinux && !meta.effectiveLinuxRemoteVmPlacement() {
+		return remoteVmPickCandidate{}, true, fmt.Errorf("pinned template server is not eligible for linux remote VMs")
+	}
+
+	wBackend := strings.TrimSpace(meta.RemoteVmBackend)
+	tplBackend := strings.TrimSpace(tpl.Backend)
+	wArch := strings.TrimSpace(meta.RemoteVmArch)
+	tplArch := strings.TrimSpace(tpl.Arch)
+	resolvedBackend := firstNonEmpty(wBackend, tplBackend, backendFilter)
+	if resolvedBackend == "" {
+		return remoteVmPickCandidate{}, true, fmt.Errorf("pinned template server backend is unknown")
+	}
+	if backendFilter != "" && resolvedBackend != backendFilter {
+		return remoteVmPickCandidate{}, true, fmt.Errorf("pinned template server backend %q does not satisfy required backend %q", resolvedBackend, backendFilter)
+	}
+	resolvedArch := firstNonEmpty(wArch, tplArch, arch, runtime.GOARCH)
+	if arch != "" && resolvedArch != arch {
+		return remoteVmPickCandidate{}, true, fmt.Errorf("pinned template server arch %q does not satisfy required arch %q", resolvedArch, arch)
+	}
+
+	return remoteVmPickCandidate{
+		serverID: uuid.UUID(tpl.ServerID.Bytes),
+		backend:  resolvedBackend,
+		arch:     resolvedArch,
+	}, true, nil
+}
+
 // linuxRemoteVmBackendRank lower is preferred when isolation_policy is best_available.
 func linuxRemoteVmBackendRank(backend string) int {
 	switch strings.TrimSpace(backend) {
@@ -203,38 +258,6 @@ func linuxRemoteVmBackendRank(backend string) int {
 	default:
 		return 2
 	}
-}
-
-func resolvePinnedTemplateCandidate(hostGroup, backendFilter, arch string, tpl queries.RemoteVmTemplate, meta workerMetadata) (remoteVmPickCandidate, error) {
-	resolvedBackend := strings.TrimSpace(firstNonEmpty(meta.RemoteVmBackend, tpl.Backend))
-	if resolvedBackend == "" {
-		return remoteVmPickCandidate{}, fmt.Errorf("template worker backend is unknown")
-	}
-	if backendFilter != "" && resolvedBackend != backendFilter {
-		return remoteVmPickCandidate{}, fmt.Errorf("template worker backend %q does not satisfy requested backend %q", resolvedBackend, backendFilter)
-	}
-
-	switch hostGroup {
-	case HostGroupMac:
-		if !meta.effectiveMacRemoteVmPlacement() {
-			return remoteVmPickCandidate{}, fmt.Errorf("template worker is not eligible for host group %q", hostGroup)
-		}
-	case HostGroupLinux:
-		if !meta.effectiveLinuxRemoteVmPlacement() {
-			return remoteVmPickCandidate{}, fmt.Errorf("template worker is not eligible for host group %q", hostGroup)
-		}
-	}
-
-	resolvedArch := strings.TrimSpace(firstNonEmpty(meta.RemoteVmArch, tpl.Arch, arch, runtime.GOARCH))
-	if arch != "" && resolvedArch != arch {
-		return remoteVmPickCandidate{}, fmt.Errorf("template worker arch %q does not satisfy requested arch %q", resolvedArch, arch)
-	}
-
-	return remoteVmPickCandidate{
-		serverID: uuid.UUID(tpl.ServerID.Bytes),
-		backend:  resolvedBackend,
-		arch:     resolvedArch,
-	}, nil
 }
 
 func (s *Service) pickServer(ctx context.Context, hostGroup, isolationPolicy, backendFilter, arch string, tpl *queries.RemoteVmTemplate) (uuid.UUID, string, string, error) {
@@ -253,26 +276,14 @@ func (s *Service) pickServer(ctx context.Context, hostGroup, isolationPolicy, ba
 		}
 		metaByServer[st.ServerID.Bytes] = decodeWorkerMetadata(st.Metadata)
 	}
-	activeServers := make(map[[16]byte]struct{}, len(servers))
-	for _, srv := range servers {
-		if srv.ID.Valid && srv.Status == "active" {
-			activeServers[srv.ID.Bytes] = struct{}{}
-		}
-	}
-	if tpl != nil && tpl.ServerID.Valid {
-		if _, active := activeServers[tpl.ServerID.Bytes]; !active {
-			return uuid.Nil, "", "", fmt.Errorf("template worker is not active")
-		}
-		meta, ok := metaByServer[tpl.ServerID.Bytes]
-		if !ok {
-			return uuid.Nil, "", "", fmt.Errorf("template worker metadata is unavailable")
-		}
-		candidate, err := resolvePinnedTemplateCandidate(hostGroup, backendFilter, arch, *tpl, meta)
+	candidate, ok, err := resolvePinnedTemplateCandidate(servers, metaByServer, hostGroup, backendFilter, arch, tpl)
+	if ok {
 		if err != nil {
 			return uuid.Nil, "", "", err
 		}
 		return candidate.serverID, candidate.backend, candidate.arch, nil
 	}
+
 	var candidates []remoteVmPickCandidate
 	for _, srv := range servers {
 		if !srv.ID.Valid || srv.Status != "active" {
@@ -779,11 +790,14 @@ if [ -n "$sshd_bin" ] && [ -n "$ssh_keygen_bin" ]; then
     restart_sshd=1
   fi
   if [ "$restart_sshd" -eq 1 ]; then
-    if command -v pkill >/dev/null 2>&1; then
-      pkill -x sshd >/dev/null 2>&1 || true
+    if [ -f "$managed_pidfile" ]; then
+      oldpid="$(cat "$managed_pidfile" 2>/dev/null || true)"
+      if [ -n "$oldpid" ] && kill -0 "$oldpid" 2>/dev/null; then
+        kill "$oldpid" 2>/dev/null || true
+      fi
     fi
     mkdir -p /run/sshd
-    "$sshd_bin" -o HostKey="$host_key_path" -o PidFile="$managed_pidfile" >/dev/null 2>&1 || true
+    "$sshd_bin" -o HostKey="$host_key_path" -o PidFile="$managed_pidfile" -o ListenAddress=127.0.0.1 >/dev/null 2>&1 || true
   fi
   if [ -f "$host_key_path.pub" ]; then
     host_pub="$(tr -d '\r' < "$host_key_path.pub")"

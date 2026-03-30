@@ -8,12 +8,34 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/kindlingvm/kindling/internal/oci"
 )
+
+// crunInitPIDWaitTimeout bounds how long we wait for crun to publish container PID.
+const crunInitPIDWaitTimeout = 30 * time.Second
+
+func crunInstContainerID(id uuid.UUID) string {
+	return "kindling-" + id.String()
+}
+
+func guestAppPortFromInstanceEnv(env []string) int {
+	const defaultAppPort = 8080
+	for _, e := range env {
+		if strings.HasPrefix(e, "PORT=") {
+			p, err := strconv.Atoi(strings.TrimPrefix(e, "PORT="))
+			if err == nil && p > 0 && p < 65536 {
+				return p
+			}
+		}
+	}
+	return defaultAppPort
+}
 
 // CrunRuntime runs OCI containers via crun (no Docker daemon).
 type CrunRuntime struct {
@@ -26,30 +48,47 @@ type CrunRuntime struct {
 }
 
 type crunInstance struct {
-	id        uuid.UUID
-	inst      Instance
-	cmd       *exec.Cmd
-	ip        string
-	hostPort  int
-	bundleDir string
-	ociDir    string
-	logs      []string
-	logMu     sync.Mutex
-	cancel    context.CancelFunc
-	retain    bool
-	stopped   chan struct{}
+	id           uuid.UUID
+	inst         Instance
+	cmd          *exec.Cmd
+	ip           string
+	hostPort     int
+	guestAppPort int
+	mainPID      int
+	networkStop  func()
+	forwardStop  func()
+	bundleDir    string
+	ociDir       string
+	logs         []string
+	logMu        sync.Mutex
+	cancel       context.CancelFunc
+	retain       bool
+	stopped      chan struct{}
+	teardownOnce sync.Once
 }
 
 type crunSuspended struct {
-	inst      Instance
-	bundleDir string
-	ociDir    string
-	hostPort  int
-	ip        string
+	inst         Instance
+	bundleDir    string
+	ociDir       string
+	hostPort     int
+	guestAppPort int
+	ip           string
 }
 
 type crunTemplate struct {
 	path string
+}
+
+func (ci *crunInstance) stopAccessHelpers() {
+	ci.teardownOnce.Do(func() {
+		if ci.forwardStop != nil {
+			ci.forwardStop()
+		}
+		if ci.networkStop != nil {
+			ci.networkStop()
+		}
+	})
 }
 
 // NewCrunRuntime creates a new crun-based runtime. crun must be installed.
@@ -101,16 +140,18 @@ func (r *CrunRuntime) startCrun(ctx context.Context, inst Instance) (string, err
 		return "", err
 	}
 
-	if err := patchBundleHostNetwork(bundleDir); err != nil {
-		return "", fmt.Errorf("host-network oci patch: %w", err)
+	if err := ensureBundleCrunIsolation(bundleDir); err != nil {
+		return "", fmt.Errorf("crun oci isolation: %w", err)
 	}
-	return r.startPreparedCrun(ctx, inst, bundleDir, ociDir, 0)
+	return r.startPreparedCrun(ctx, inst, bundleDir, ociDir, 0, 0)
 }
 
-func (r *CrunRuntime) startPreparedCrun(ctx context.Context, inst Instance, bundleDir, ociDir string, hostPort int) (string, error) {
+func (r *CrunRuntime) startPreparedCrun(ctx context.Context, inst Instance, bundleDir, ociDir string, hostPort int, guestAppPort int) (string, error) {
 	var err error
-	// One free port on the host loopback; with host networking the app must bind
-	// this PORT (same idea as publishing a random host port to the container).
+	if guestAppPort <= 0 {
+		guestAppPort = guestAppPortFromInstanceEnv(inst.Env)
+	}
+	// Host listens on loopback and forwards into the container netns to guestAppPort.
 	if hostPort == 0 {
 		hostPort, err = pickFreeTCPPort()
 		if err != nil {
@@ -122,7 +163,7 @@ func (r *CrunRuntime) startPreparedCrun(ctx context.Context, inst Instance, bund
 	if err != nil {
 		return "", err
 	}
-	containerID := fmt.Sprintf("kindling-%s", inst.ID)
+	containerID := crunInstContainerID(inst.ID)
 	runCtx, cancel := context.WithCancel(ctx)
 
 	args := []string{"run", "--bundle", bundleDir, containerID}
@@ -134,19 +175,20 @@ func (r *CrunRuntime) startPreparedCrun(ctx context.Context, inst Instance, bund
 		}
 		env = append(env, e)
 	}
-	env = append(env, fmt.Sprintf("PORT=%d", hostPort))
+	env = append(env, fmt.Sprintf("PORT=%d", guestAppPort))
 	cmd.Env = env
 
 	ci := &crunInstance{
-		id:        inst.ID,
-		inst:      inst,
-		cmd:       cmd,
-		ip:        listenAddr,
-		hostPort:  hostPort,
-		bundleDir: bundleDir,
-		ociDir:    ociDir,
-		cancel:    cancel,
-		stopped:   make(chan struct{}),
+		id:           inst.ID,
+		inst:         inst,
+		cmd:          cmd,
+		ip:           listenAddr,
+		hostPort:     hostPort,
+		guestAppPort: guestAppPort,
+		bundleDir:    bundleDir,
+		ociDir:       ociDir,
+		cancel:       cancel,
+		stopped:      make(chan struct{}),
 	}
 
 	stdout, _ := cmd.StdoutPipe()
@@ -162,12 +204,9 @@ func (r *CrunRuntime) startPreparedCrun(ctx context.Context, inst Instance, bund
 	go r.captureOutput(ci, stdout)
 	go r.captureOutput(ci, stderr)
 
-	r.mu.Lock()
-	r.instances[inst.ID] = ci
-	r.mu.Unlock()
-
 	go func() {
-		cmd.Wait()
+		_ = cmd.Wait()
+		ci.stopAccessHelpers()
 		r.mu.Lock()
 		delete(r.instances, inst.ID)
 		retain := ci.retain
@@ -183,6 +222,63 @@ func (r *CrunRuntime) startPreparedCrun(ctx context.Context, inst Instance, bund
 		slog.Info("container exited", "id", inst.ID, "runtime", "crun")
 		close(ci.stopped)
 	}()
+
+	waitCtx, waitCancel := context.WithTimeout(ctx, crunInitPIDWaitTimeout)
+	pid, err := waitCrunInitPID(waitCtx, containerID)
+	waitCancel()
+	if err != nil {
+		cancel()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		<-ci.stopped
+		if bundleDir != "" {
+			_ = os.RemoveAll(bundleDir)
+		}
+		if ociDir != "" {
+			_ = os.RemoveAll(ociDir)
+		}
+		return "", fmt.Errorf("crun init pid: %w", err)
+	}
+	ci.mainPID = pid
+	networkStop, err := setupCrunContainerNetworking(inst.ID, pid)
+	if err != nil {
+		cancel()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		<-ci.stopped
+		if bundleDir != "" {
+			_ = os.RemoveAll(bundleDir)
+		}
+		if ociDir != "" {
+			_ = os.RemoveAll(ociDir)
+		}
+		return "", fmt.Errorf("crun container networking: %w", err)
+	}
+	ci.networkStop = networkStop
+	fwdListen := fmt.Sprintf("127.0.0.1:%d", hostPort)
+	guestAddr := fmt.Sprintf("127.0.0.1:%d", guestAppPort)
+	stopFwd, err := startCrunHostTCPForward(ctx, fwdListen, guestAddr, pid)
+	if err != nil {
+		cancel()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		<-ci.stopped
+		if bundleDir != "" {
+			_ = os.RemoveAll(bundleDir)
+		}
+		if ociDir != "" {
+			_ = os.RemoveAll(ociDir)
+		}
+		return "", fmt.Errorf("crun app port forward: %w", err)
+	}
+	ci.forwardStop = stopFwd
+
+	r.mu.Lock()
+	r.instances[inst.ID] = ci
+	r.mu.Unlock()
 
 	slog.Info("container started",
 		"id", inst.ID,
@@ -203,11 +299,12 @@ func (r *CrunRuntime) Suspend(ctx context.Context, id uuid.UUID) error {
 	}
 	ci.retain = true
 	r.suspended[id] = &crunSuspended{
-		inst:      ci.inst,
-		bundleDir: ci.bundleDir,
-		ociDir:    ci.ociDir,
-		hostPort:  ci.hostPort,
-		ip:        ci.ip,
+		inst:         ci.inst,
+		bundleDir:    ci.bundleDir,
+		ociDir:       ci.ociDir,
+		hostPort:     ci.hostPort,
+		guestAppPort: ci.guestAppPort,
+		ip:           ci.ip,
 	}
 	r.mu.Unlock()
 	if err := r.Stop(ctx, id); err != nil {
@@ -242,7 +339,7 @@ func (r *CrunRuntime) Resume(ctx context.Context, id uuid.UUID) (string, error) 
 	if !ok {
 		return "", ErrInstanceNotRunning
 	}
-	return r.startPreparedCrun(ctx, s.inst, s.bundleDir, s.ociDir, s.hostPort)
+	return r.startPreparedCrun(ctx, s.inst, s.bundleDir, s.ociDir, s.hostPort, s.guestAppPort)
 }
 
 func (r *CrunRuntime) CreateTemplate(ctx context.Context, id uuid.UUID) (string, error) {
@@ -284,7 +381,10 @@ func (r *CrunRuntime) StartClone(ctx context.Context, inst Instance, snapshotRef
 	if err := copyDir(template.path, bundleDir); err != nil {
 		return "", StartMetadata{}, err
 	}
-	ip, err := r.startPreparedCrun(ctx, inst, bundleDir, "", 0)
+	if err := ensureBundleCrunIsolation(bundleDir); err != nil {
+		return "", StartMetadata{}, err
+	}
+	ip, err := r.startPreparedCrun(ctx, inst, bundleDir, "", 0, 0)
 	if err != nil {
 		return "", StartMetadata{}, err
 	}
@@ -339,7 +439,7 @@ func (r *CrunRuntime) Stop(ctx context.Context, id uuid.UUID) error {
 	r.mu.Unlock()
 
 	if !ok {
-		containerID := fmt.Sprintf("kindling-%s", id)
+		containerID := crunInstContainerID(id)
 		cmd := exec.CommandContext(ctx, "crun", "delete", "-f", containerID)
 		_ = cmd.Run()
 		_ = os.RemoveAll(fmt.Sprintf("/tmp/kindling-bundle-%s", id))
@@ -347,6 +447,7 @@ func (r *CrunRuntime) Stop(ctx context.Context, id uuid.UUID) error {
 		return nil
 	}
 
+	ci.stopAccessHelpers()
 	ci.cancel()
 	return nil
 }

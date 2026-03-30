@@ -1,6 +1,6 @@
-# Remote VM runtime detection and capabilities (through Milestone 3)
+# Remote VM runtime detection and capabilities (through Milestone 4)
 
-This document describes the **in-repo** contract for Kindling **remote VMs** after Milestone 3 of the “Remote VM Experience” track (runtime detection and capabilities from M2, plus Linux `crun` placement fallback).
+This document describes the **in-repo** contract for Kindling **remote VMs** after Milestone 4 of the “Remote VM Experience” track (M1–M3 renames, detection, and Linux `crun` placement, plus **`crun` access parity**: isolated network per container, app port forwarding, exec/copy, shell, and SSH over the same RPC contracts as Cloud Hypervisor).
 
 Canonical product notes may still live in the Obsidian vault; this file is the engineer-oriented summary tied to the code.
 
@@ -33,7 +33,7 @@ Each entry is `{ "supported": bool, "available": bool }`:
 - **supported**: backend can provide this in principle.
 - **available**: usable **now** given `observed_state` (typically requires `running`).
 
-`crun` honestly reports **no** guest shell/SSH/exec support until Milestone 4 parity work lands; it still reports **browser_app**, **suspend_resume**, and **template_clone** where the runtime supports those lifecycles.
+On **Linux `crun`**, workloads run in **isolated network + PID namespaces** rather than host networking. The worker creates a per-instance veth, reuses Kindling's existing host forwarding/NAT setup for remote VM egress, and publishes the app on a loopback port via a host-to-guest forward. Shell, SSH, exec, and copy use the same `GuestAccess` / `GuestStreamAccess` / `GuestTCPAccess` interfaces as Cloud Hypervisor, backed by `crun exec`, PTY + shellwire bridging for the browser terminal, and TCP dials into the container netns. **Live migration** remains unsupported on `crun`.
 
 ## Worker heartbeat metadata
 

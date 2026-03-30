@@ -50,60 +50,138 @@ func TestDecodeWorkerMetadataFallsBackToRuntime(t *testing.T) {
 	}
 }
 
-func TestResolvePinnedTemplateCandidateRejectsRequireMicrovmOnCrun(t *testing.T) {
+func TestResolvePinnedTemplateCandidateValidatesPinnedWorker(t *testing.T) {
 	t.Parallel()
 
 	tr := true
-	tpl := queries.RemoteVmTemplate{
-		ServerID: pgtype.UUID{Bytes: uuid.New(), Valid: true},
-		Backend:  kruntime.BackendCrun,
-	}
-	_, err := resolvePinnedTemplateCandidate(
-		HostGroupLinux,
-		kruntime.BackendCloudHypervisor,
-		"",
-		tpl,
-		workerMetadata{
-			RemoteVmBackend:        kruntime.BackendCrun,
-			LinuxPlacementEligible: &tr,
-		},
-	)
-	if err == nil {
-		t.Fatal("expected require_microvm template pin on crun to fail")
-	}
-}
-
-func TestResolvePinnedTemplateCandidateUsesWorkerMetadata(t *testing.T) {
-	t.Parallel()
-
-	tr := true
-	serverID := uuid.New()
-	got, err := resolvePinnedTemplateCandidate(
-		HostGroupLinux,
-		"",
-		"arm64",
-		queries.RemoteVmTemplate{
-			ServerID: pgtype.UUID{Bytes: serverID, Valid: true},
-			Backend:  "",
-			Arch:     "",
-		},
-		workerMetadata{
+	serverID := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
+	servers := []queries.Server{{ID: serverID, Status: "active"}}
+	metaByServer := map[[16]byte]workerMetadata{
+		serverID.Bytes: {
+			RemoteVmEnabled:        true,
 			RemoteVmBackend:        kruntime.BackendCloudHypervisor,
-			RemoteVmArch:           "arm64",
+			RemoteVmArch:           "amd64",
 			LinuxPlacementEligible: &tr,
 		},
-	)
+	}
+	tpl := &queries.RemoteVmTemplate{
+		ServerID: serverID,
+		Backend:  kruntime.BackendCloudHypervisor,
+		Arch:     "amd64",
+	}
+
+	got, ok, err := resolvePinnedTemplateCandidate(servers, metaByServer, HostGroupLinux, kruntime.BackendCloudHypervisor, "amd64", tpl)
 	if err != nil {
 		t.Fatalf("resolvePinnedTemplateCandidate: %v", err)
 	}
-	if got.serverID != serverID {
-		t.Fatalf("serverID = %s, want %s", got.serverID, serverID)
+	if !ok {
+		t.Fatal("expected pinned template candidate to resolve")
+	}
+	if got.serverID != uuid.UUID(serverID.Bytes) {
+		t.Fatalf("serverID = %v want %v", got.serverID, uuid.UUID(serverID.Bytes))
 	}
 	if got.backend != kruntime.BackendCloudHypervisor {
-		t.Fatalf("backend = %q, want %q", got.backend, kruntime.BackendCloudHypervisor)
+		t.Fatalf("backend = %q", got.backend)
+	}
+}
+
+func TestResolvePinnedTemplateCandidateRejectsBackendMismatch(t *testing.T) {
+	t.Parallel()
+
+	tr := true
+	serverID := pgtype.UUID{Bytes: [16]byte{2}, Valid: true}
+	servers := []queries.Server{{ID: serverID, Status: "active"}}
+	metaByServer := map[[16]byte]workerMetadata{
+		serverID.Bytes: {
+			RemoteVmEnabled:        true,
+			RemoteVmBackend:        kruntime.BackendCrun,
+			RemoteVmArch:           "amd64",
+			LinuxPlacementEligible: &tr,
+		},
+	}
+	tpl := &queries.RemoteVmTemplate{ServerID: serverID}
+
+	_, ok, err := resolvePinnedTemplateCandidate(servers, metaByServer, HostGroupLinux, kruntime.BackendCloudHypervisor, "amd64", tpl)
+	if !ok {
+		t.Fatal("expected pinned template path")
+	}
+	if err == nil {
+		t.Fatal("expected backend mismatch to fail")
+	}
+}
+
+func TestResolvePinnedTemplateCandidatePrefersWorkerMetadata(t *testing.T) {
+	t.Parallel()
+
+	tr := true
+	serverID := pgtype.UUID{Bytes: [16]byte{4}, Valid: true}
+	servers := []queries.Server{{ID: serverID, Status: "active"}}
+	metaByServer := map[[16]byte]workerMetadata{
+		serverID.Bytes: {
+			RemoteVmEnabled:        true,
+			RemoteVmBackend:        kruntime.BackendCrun,
+			RemoteVmArch:           "arm64",
+			LinuxPlacementEligible: &tr,
+		},
+	}
+	tpl := &queries.RemoteVmTemplate{
+		ServerID: serverID,
+		Backend:  kruntime.BackendCloudHypervisor,
+		Arch:     "amd64",
+	}
+
+	got, ok, err := resolvePinnedTemplateCandidate(servers, metaByServer, HostGroupLinux, "", "", tpl)
+	if err != nil {
+		t.Fatalf("resolvePinnedTemplateCandidate: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected pinned template path")
+	}
+	if got.backend != kruntime.BackendCrun {
+		t.Fatalf("backend = %q want %q", got.backend, kruntime.BackendCrun)
 	}
 	if got.arch != "arm64" {
-		t.Fatalf("arch = %q, want arm64", got.arch)
+		t.Fatalf("arch = %q want arm64", got.arch)
+	}
+}
+
+func TestResolvePinnedTemplateCandidateRejectsUnknownBackend(t *testing.T) {
+	t.Parallel()
+
+	tr := true
+	serverID := pgtype.UUID{Bytes: [16]byte{5}, Valid: true}
+	servers := []queries.Server{{ID: serverID, Status: "active"}}
+	metaByServer := map[[16]byte]workerMetadata{
+		serverID.Bytes: {
+			RemoteVmEnabled:        true,
+			RemoteVmArch:           "amd64",
+			LinuxPlacementEligible: &tr,
+		},
+	}
+	tpl := &queries.RemoteVmTemplate{ServerID: serverID}
+
+	_, ok, err := resolvePinnedTemplateCandidate(servers, metaByServer, HostGroupLinux, "", "amd64", tpl)
+	if !ok {
+		t.Fatal("expected pinned template path")
+	}
+	if err == nil {
+		t.Fatal("expected unknown backend to fail")
+	}
+}
+
+func TestResolvePinnedTemplateCandidateRejectsInactiveWorker(t *testing.T) {
+	t.Parallel()
+
+	serverID := pgtype.UUID{Bytes: [16]byte{3}, Valid: true}
+	servers := []queries.Server{{ID: serverID, Status: "inactive"}}
+	tpl := &queries.RemoteVmTemplate{ServerID: serverID}
+
+	_, ok, err := resolvePinnedTemplateCandidate(servers, map[[16]byte]workerMetadata{}, HostGroupLinux, "", "", tpl)
+	if !ok {
+		t.Fatal("expected pinned template path")
+	}
+	if err == nil {
+		t.Fatal("expected inactive pinned server to fail")
 	}
 }
 

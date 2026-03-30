@@ -9,10 +9,8 @@ import (
 	"path/filepath"
 )
 
-// patchBundleHostNetwork removes the network namespace from the OCI config so crun
-// joins the host network. Otherwise 127.0.0.1:<port> on the host would not reach
-// the container's loopback (see Apple VZ host port forward parity for raw runtime URL).
-func patchBundleHostNetwork(bundleDir string) error {
+// ensureBundleCrunIsolation ensures the OCI bundle has network and pid namespaces.
+func ensureBundleCrunIsolation(bundleDir string) error {
 	p := filepath.Join(bundleDir, "config.json")
 	raw, err := os.ReadFile(p)
 	if err != nil {
@@ -26,27 +24,35 @@ func patchBundleHostNetwork(bundleDir string) error {
 
 	linux, ok := spec["linux"].(map[string]any)
 	if !ok {
-		return nil
+		linux = map[string]any{}
+		spec["linux"] = linux
 	}
 	nsRaw, ok := linux["namespaces"].([]any)
 	if !ok {
-		return nil
+		nsRaw = []any{}
 	}
 
-	var out []any
+	hasNet, hasPID := false, false
 	for _, e := range nsRaw {
 		m, ok := e.(map[string]any)
 		if !ok {
-			out = append(out, e)
 			continue
 		}
 		t, _ := m["type"].(string)
-		if t == "network" {
-			continue
+		switch t {
+		case "network":
+			hasNet = true
+		case "pid":
+			hasPID = true
 		}
-		out = append(out, e)
 	}
-	linux["namespaces"] = out
+	if !hasNet {
+		nsRaw = append(nsRaw, map[string]any{"type": "network"})
+	}
+	if !hasPID {
+		nsRaw = append(nsRaw, map[string]any{"type": "pid"})
+	}
+	linux["namespaces"] = nsRaw
 
 	newRaw, err := json.MarshalIndent(spec, "", "  ")
 	if err != nil {

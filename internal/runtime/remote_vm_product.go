@@ -47,9 +47,9 @@ func supportedMaskForBackend(backend string) map[RemoteVMProductCapability]bool 
 		out[RemoteVMCapLiveMigration] = b == BackendCloudHypervisor
 	case BackendCrun:
 		out[RemoteVMCapBrowserApp] = true
-		out[RemoteVMCapTerminalShell] = false
-		out[RemoteVMCapSSHTCP] = false
-		out[RemoteVMCapExecCopy] = false
+		out[RemoteVMCapTerminalShell] = true
+		out[RemoteVMCapSSHTCP] = true
+		out[RemoteVMCapExecCopy] = true
 		out[RemoteVMCapSuspendResume] = true
 		out[RemoteVMCapTemplateClone] = true
 		out[RemoteVMCapLiveMigration] = false

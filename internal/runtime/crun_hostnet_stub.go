@@ -2,6 +2,7 @@
 
 package runtime
 
-func patchBundleHostNetwork(bundleDir string) error {
+func ensureBundleCrunIsolation(bundleDir string) error {
+	_ = bundleDir
 	return nil
 }

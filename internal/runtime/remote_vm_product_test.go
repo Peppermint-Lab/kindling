@@ -32,13 +32,27 @@ func TestRemoteVMCapabilitiesForVMAppleVZNoLiveMigration(t *testing.T) {
 	}
 }
 
-func TestRemoteVMCapabilitiesForVMCrunGuestAccessUnsupported(t *testing.T) {
+func TestRemoteVMCapabilitiesForVMCrunAccessParity(t *testing.T) {
 	t.Parallel()
 	m := RemoteVMCapabilitiesForVM(BackendCrun, "running")
-	if m["ssh_tcp"].Supported || m["terminal_shell"].Supported {
-		t.Fatalf("crun should not advertise guest ssh/shell yet: %#v", m["ssh_tcp"])
+	if !m["ssh_tcp"].Supported || !m["ssh_tcp"].Available {
+		t.Fatalf("crun should advertise ssh_tcp when running: %#v", m["ssh_tcp"])
+	}
+	if !m["terminal_shell"].Supported || !m["terminal_shell"].Available {
+		t.Fatalf("crun should advertise terminal_shell when running: %#v", m["terminal_shell"])
+	}
+	if !m["exec_copy"].Supported || !m["exec_copy"].Available {
+		t.Fatalf("crun should advertise exec_copy when running: %#v", m["exec_copy"])
 	}
 	if !m["browser_app"].Supported || !m["browser_app"].Available {
 		t.Fatalf("browser_app = %#v", m["browser_app"])
+	}
+}
+
+func TestRemoteVMCapabilitiesForVMCrunStoppedNoLiveAccess(t *testing.T) {
+	t.Parallel()
+	m := RemoteVMCapabilitiesForVM(BackendCrun, "stopped")
+	if !m["ssh_tcp"].Supported || m["ssh_tcp"].Available {
+		t.Fatalf("ssh_tcp = %#v", m["ssh_tcp"])
 	}
 }
