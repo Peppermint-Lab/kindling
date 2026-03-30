@@ -26,15 +26,12 @@ const (
 	sandboxProxyClockSkew       = 2 * time.Minute
 )
 
-// sandboxWebsocketUpgrader returns a websocket.Upgrader configured to validate
-// the Origin header against the API's trusted origin list.
+// sandboxWebsocketUpgrader validates Origin against trusted dashboard origins.
 func (a *API) sandboxWebsocketUpgrader() *websocket.Upgrader {
 	return &websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
 			if origin == "" {
-				// No Origin header (not a browser client) — allow.
-				// Proxy auth is still required below.
 				return true
 			}
 			return auth.OriginMatchesAny(origin, auth.TrustedOrigins(r.Context(), a.q))
@@ -103,19 +100,19 @@ func (a *API) sandboxIsLocalOwner(sb queries.RemoteVm) bool {
 
 func (a *API) sandboxOwnerOrigin(ctx context.Context, sb queries.RemoteVm) (*url.URL, error) {
 	if !sb.ServerID.Valid {
-		return nil, fmt.Errorf("sandbox has no assigned worker")
+		return nil, fmt.Errorf("remote VM has no assigned worker")
 	}
 	server, err := a.q.ServerFindByID(ctx, sb.ServerID)
 	if err != nil {
-		return nil, fmt.Errorf("find sandbox server: %w", err)
+		return nil, fmt.Errorf("find worker for remote VM: %w", err)
 	}
 	settings, err := a.q.ServerSettingGet(ctx, sb.ServerID)
 	if err != nil {
-		return nil, fmt.Errorf("find sandbox server settings: %w", err)
+		return nil, fmt.Errorf("find worker settings for remote VM: %w", err)
 	}
 	host := strings.TrimSpace(server.InternalIp)
 	if host == "" {
-		return nil, fmt.Errorf("sandbox server internal ip is not configured")
+		return nil, fmt.Errorf("worker internal IP is not configured for this remote VM")
 	}
 	port := settings.InternalApiPort
 	if port <= 0 {
@@ -223,10 +220,8 @@ func (a *API) proxySandboxWebsocket(w http.ResponseWriter, r *http.Request, sb q
 		Path:     r.URL.Path,
 		RawQuery: r.URL.RawQuery,
 	}
-	headers := make(http.Header)
-	copySandboxProxyableHeaders(headers, r.Header)
 	proxyReq, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, wsURL.String(), nil)
-	copySandboxProxyableHeaders(proxyReq.Header, headers)
+	copySandboxProxyableHeaders(proxyReq.Header, r.Header)
 	a.addSandboxProxyHeaders(proxyReq)
 	dialHeaders := proxyReq.Header.Clone()
 	remoteConn, resp, err := websocket.DefaultDialer.DialContext(r.Context(), wsURL.String(), dialHeaders)

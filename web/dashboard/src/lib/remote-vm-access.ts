@@ -22,7 +22,7 @@ export function browserAppAccessStatus(sandbox: Sandbox): {
 } {
   const cap = sandbox.capabilities?.browser_app
   if (cap && !cap.supported) {
-    return { status: "unsupported", hint: "This backend does not expose a published browser app for remote VMs." }
+    return { status: "unsupported", hint: "This backend does not publish a browser app URL for remote VMs." }
   }
   if (sandbox.observed_state !== "running") {
     return { status: "blocked", hint: "Start the remote VM to open or copy the app URL." }
@@ -80,13 +80,18 @@ export function terminalShellAccessStatus(sandbox: Sandbox): {
   if (cap && !cap.available) {
     return { status: "blocked", hint: "Shell access becomes available once the VM is fully running." }
   }
-  return { status: "ready", hint: "Streams a real PTY over Kindling’s shell WebSocket (same transport as the API shell)." }
+  return { status: "ready", hint: "Guest PTY over the shell WebSocket." }
 }
 
 export function humanizeShellConnectionError(raw: string): string {
   const m = raw.trim().toLowerCase()
   if (!m) return "Could not connect to the shell. Check that the VM is running and try again."
-  if (m.includes("not running") || m.includes("stopped") || m.includes("sandbox not running")) {
+  if (
+    m.includes("not running") ||
+    m.includes("stopped") ||
+    m.includes("sandbox not running") ||
+    m.includes("remote vm must be running")
+  ) {
     return "The remote VM is not running. Start it from the toolbar above, then connect again."
   }
   if (m.includes("sandbox_shell") || m.includes("conflict")) {

@@ -626,6 +626,19 @@ function parseUsageHistory(raw: unknown): UsageHistory {
   }
 }
 
+function parseListResponse<T>(raw: unknown, label: string): T[] {
+  if (Array.isArray(raw)) {
+    return raw as T[]
+  }
+  if (raw && typeof raw === "object") {
+    const items = (raw as { items?: unknown }).items
+    if (Array.isArray(items)) {
+      return items as T[]
+    }
+  }
+  throw new Error(`Invalid ${label} response`)
+}
+
 export type APIMeta = {
   public_base_url: string
   public_base_url_configured: boolean
@@ -709,7 +722,7 @@ export type ProjectDomain = {
 }
 
 export const api = {
-  listSandboxes: () => request<Sandbox[]>("/api/vms"),
+  listSandboxes: () => request<unknown>("/api/vms").then((raw) => parseListResponse<Sandbox>(raw, "remote VM list")),
   createSandbox: (data: {
     name: string
     host_group?: string

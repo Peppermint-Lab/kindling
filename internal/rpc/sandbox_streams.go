@@ -207,7 +207,7 @@ func (a *API) sandboxTCPAccess(w http.ResponseWriter, sb queries.RemoteVm) (krun
 	}
 	access, ok := rt.(kruntime.GuestTCPAccess)
 	if !ok {
-		writeAPIError(w, http.StatusNotImplemented, "sandbox_runtime", "guest tcp access is not implemented for this runtime")
+		writeAPIError(w, http.StatusNotImplemented, "sandbox_runtime", "guest TCP access is not implemented for this remote VM runtime")
 		return nil, false
 	}
 	return access, true

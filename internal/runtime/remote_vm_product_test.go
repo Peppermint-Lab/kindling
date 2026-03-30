@@ -2,6 +2,44 @@ package runtime
 
 import "testing"
 
+// TestRemoteVMSupportedCapabilityMatrix must match supportedMaskForBackend in remote_vm_product.go.
+func TestRemoteVMSupportedCapabilityMatrix(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		backend                  string
+		wantLiveMigrationSupport bool
+		wantAllOtherSupported    bool
+	}{
+		{BackendCloudHypervisor, true, true},
+		{BackendAppleVZ, false, true},
+		{BackendCrun, false, true},
+		{"unknown-backend", false, false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.backend, func(t *testing.T) {
+			t.Parallel()
+			m := RemoteVMCapabilitiesForVM(tc.backend, "running")
+			if got := m[string(RemoteVMCapLiveMigration)].Supported; got != tc.wantLiveMigrationSupport {
+				t.Fatalf("live_migration supported=%v want %v", got, tc.wantLiveMigrationSupport)
+			}
+			keys := []RemoteVMProductCapability{
+				RemoteVMCapBrowserApp,
+				RemoteVMCapTerminalShell,
+				RemoteVMCapSSHTCP,
+				RemoteVMCapExecCopy,
+				RemoteVMCapSuspendResume,
+				RemoteVMCapTemplateClone,
+			}
+			for _, k := range keys {
+				if got := m[string(k)].Supported; got != tc.wantAllOtherSupported {
+					t.Fatalf("%s supported=%v want %v", k, got, tc.wantAllOtherSupported)
+				}
+			}
+		})
+	}
+}
+
 func TestRemoteVMCapabilitiesForVMCloudHypervisorRunning(t *testing.T) {
 	t.Parallel()
 	m := RemoteVMCapabilitiesForVM(BackendCloudHypervisor, "running")

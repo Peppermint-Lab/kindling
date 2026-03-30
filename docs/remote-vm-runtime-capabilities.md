@@ -72,3 +72,9 @@ Milestone 5 does **not** change the access contracts above; it makes them **disc
 2. **SSH:** the user’s **local** `ssh` binary via `kindling vm ssh`, which tunnels through `GET /api/vms/{id}/ssh/ws` under the hood.
 
 If browser-native SSH becomes a requirement later, expect new UI (e.g. xterm.js + SSH protocol client or wasm), security review, and possibly different auth/session boundaries than the current cookie-authenticated dashboard shell.
+
+## Milestone 6: hardening, docs, rename boundary
+
+Capability JSON is unchanged from Milestone 2. Milestone 6 adds: capability-matrix tests; operator docs for logs/stats and access events; [remote-vm-operations.md](remote-vm-operations.md); user-facing **VM** wording while internals may still say `sandbox` (see “Internal naming” there).
+
+**Still out of scope:** crun live migration parity; new Prometheus/OpenTelemetry export unless scoped separately.

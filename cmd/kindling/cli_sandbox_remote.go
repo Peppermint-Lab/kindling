@@ -163,7 +163,7 @@ func cliSandboxGetCmd() *cobra.Command {
 func cliSandboxCreateCmd() *cobra.Command {
 	var (
 		name, hostGroup, imageRef, templateID, gitRepo, gitRef, expiresAt string
-		isolationPolicy                                                    string
+		isolationPolicy                                                   string
 		vcpu, memoryMB, diskGB                                            int32
 		autoSuspend                                                       int64
 		port                                                              int32
@@ -211,11 +211,11 @@ func cliSandboxCreateCmd() *cobra.Command {
 			return printRemote(out)
 		},
 	}
-	cmd.Flags().StringVar(&name, "name", "", "Sandbox name")
+	cmd.Flags().StringVar(&name, "name", "", "Remote VM name")
 	cmd.Flags().StringVar(&hostGroup, "host-group", "", "Host group (linux-remote-vm or mac-remote-vm)")
 	cmd.Flags().StringVar(&isolationPolicy, "isolation-policy", "", "Isolation policy: best_available (default) or require_microvm")
 	cmd.Flags().StringVar(&imageRef, "image", "", "Base OCI image reference")
-	cmd.Flags().StringVar(&templateID, "template", "", "Sandbox template UUID")
+	cmd.Flags().StringVar(&templateID, "template", "", "Remote VM template UUID")
 	cmd.Flags().StringVar(&gitRepo, "git-repo", "", "Optional repo URL")
 	cmd.Flags().StringVar(&gitRef, "git-ref", "", "Optional repo ref/branch")
 	cmd.Flags().Int32Var(&vcpu, "vcpu", 2, "vCPU count")
@@ -244,9 +244,6 @@ func cliSandboxUpdateCmd() *cobra.Command {
 			}
 			if _, err := uuid.Parse(id); err != nil {
 				return fmt.Errorf("invalid remote VM id: %w", err)
-			}
-			if autoSuspend < 0 {
-				autoSuspend = -1
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
@@ -430,7 +427,7 @@ func cliSandboxCloneCmd() *cobra.Command {
 			return printRemote(out)
 		},
 	}
-	cmd.Flags().StringVar(&templateID, "template", "", "Sandbox template UUID")
+	cmd.Flags().StringVar(&templateID, "template", "", "Remote VM template UUID")
 	cmd.Flags().StringVar(&name, "name", "", "New remote VM name")
 	return cmd
 }

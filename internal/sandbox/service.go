@@ -94,7 +94,7 @@ func (s *Service) ReconcileTemplate(ctx context.Context, templateID uuid.UUID) e
 	if !tpl.SourceRemoteVmID.Valid {
 		_, _ = s.Q.RemoteVMTemplateMarkFailed(ctx, queries.RemoteVMTemplateMarkFailedParams{
 			ID:             tpl.ID,
-			FailureMessage: "template is missing source sandbox",
+			FailureMessage: "template is missing source remote VM",
 		})
 		return nil
 	}
@@ -314,7 +314,7 @@ func (s *Service) pickServer(ctx context.Context, hostGroup, isolationPolicy, ba
 		})
 	}
 	if len(candidates) == 0 {
-		return uuid.Nil, "", "", fmt.Errorf("no active sandbox worker is available for host group %q", hostGroup)
+		return uuid.Nil, "", "", fmt.Errorf("no active remote VM worker is available for host group %q", hostGroup)
 	}
 	if hostGroup == HostGroupLinux && isolationPolicy == kruntime.RemoteVMIsolationBestAvailable && backendFilter == "" {
 		sort.SliceStable(candidates, func(i, j int) bool {
@@ -590,7 +590,7 @@ type workerMetadata struct {
 	RemoteVmArch     string `json:"remote_vm_arch"`
 	RemoteVmRosetta  bool   `json:"remote_vm_rosetta"`
 	RemoteVmCapacity int    `json:"remote_vm_capacity"`
-	// LinuxPlacementEligible is nil for heartbeats predating Milestone 2; see effectiveLinuxRemoteVmPlacement.
+	// nil means legacy workers; see effectiveLinuxRemoteVmPlacement.
 	LinuxPlacementEligible *bool `json:"remote_vm_linux_placement_eligible,omitempty"`
 	MacPlacementEligible   *bool `json:"remote_vm_mac_placement_eligible,omitempty"`
 }

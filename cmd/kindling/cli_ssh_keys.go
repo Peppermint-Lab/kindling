@@ -12,7 +12,7 @@ import (
 func cliSSHKeyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ssh-key",
-		Short: "Manage SSH keys for sandbox access",
+		Short: "Manage SSH keys for remote VM access",
 	}
 	cmd.AddCommand(cliSSHKeyListCmd())
 	cmd.AddCommand(cliSSHKeyAddCmd())

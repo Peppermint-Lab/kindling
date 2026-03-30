@@ -302,7 +302,7 @@ func (a *API) createSandbox(w http.ResponseWriter, r *http.Request) {
 			OrgID: p.OrganizationID,
 		})
 		if err != nil {
-			writeAPIError(w, http.StatusNotFound, "not_found", "sandbox template not found")
+			writeAPIError(w, http.StatusNotFound, "not_found", "remote VM template not found")
 			return
 		}
 		templateID = id
@@ -396,7 +396,7 @@ func (a *API) getSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox id")
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid remote VM id")
 		return
 	}
 	row, err := a.q.RemoteVMFirstByIDAndOrg(r.Context(), queries.RemoteVMFirstByIDAndOrgParams{
@@ -404,7 +404,7 @@ func (a *API) getSandbox(w http.ResponseWriter, r *http.Request) {
 		OrgID: p.OrganizationID,
 	})
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "not_found", "sandbox not found")
+		writeAPIError(w, http.StatusNotFound, "not_found", "remote VM not found")
 		return
 	}
 	ports, _ := a.q.RemoteVMPublishedPortsByRemoteVMID(r.Context(), row.ID)
@@ -421,7 +421,7 @@ func (a *API) patchSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox id")
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid remote VM id")
 		return
 	}
 	sb, err := a.q.RemoteVMFirstByIDAndOrg(r.Context(), queries.RemoteVMFirstByIDAndOrgParams{
@@ -429,7 +429,7 @@ func (a *API) patchSandbox(w http.ResponseWriter, r *http.Request) {
 		OrgID: p.OrganizationID,
 	})
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "not_found", "sandbox not found")
+		writeAPIError(w, http.StatusNotFound, "not_found", "remote VM not found")
 		return
 	}
 	var req struct {
@@ -458,7 +458,7 @@ func (a *API) patchSandbox(w http.ResponseWriter, r *http.Request) {
 
 	configChangeRequested := req.BaseImageRef != nil || req.Vcpu != nil || req.MemoryMb != nil || req.DiskGb != nil || req.ExpiresAt != nil
 	if configChangeRequested && sb.ObservedState == "running" {
-		writeAPIError(w, http.StatusConflict, "sandbox_running", "stop the sandbox before editing image, resources, or expiry")
+		writeAPIError(w, http.StatusConflict, "sandbox_running", "stop the remote VM before editing image, resources, or expiry")
 		return
 	}
 	if req.BaseImageRef != nil {
@@ -541,7 +541,7 @@ func (a *API) setSandboxDesiredState(w http.ResponseWriter, r *http.Request, sta
 	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox id")
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid remote VM id")
 		return
 	}
 	row, err := a.q.RemoteVMFirstByIDAndOrg(r.Context(), queries.RemoteVMFirstByIDAndOrgParams{
@@ -549,7 +549,7 @@ func (a *API) setSandboxDesiredState(w http.ResponseWriter, r *http.Request, sta
 		OrgID: p.OrganizationID,
 	})
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "not_found", "sandbox not found")
+		writeAPIError(w, http.StatusNotFound, "not_found", "remote VM not found")
 		return
 	}
 	row, err = a.q.RemoteVMUpdateDesiredState(r.Context(), queries.RemoteVMUpdateDesiredStateParams{
@@ -585,7 +585,7 @@ func (a *API) createSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox id")
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid remote VM id")
 		return
 	}
 	sb, err := a.q.RemoteVMFirstByIDAndOrg(r.Context(), queries.RemoteVMFirstByIDAndOrgParams{
@@ -593,7 +593,7 @@ func (a *API) createSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 		OrgID: p.OrganizationID,
 	})
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "not_found", "sandbox not found")
+		writeAPIError(w, http.StatusNotFound, "not_found", "remote VM not found")
 		return
 	}
 	var req struct {
@@ -660,7 +660,7 @@ func (a *API) getSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox template id")
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid remote VM template id")
 		return
 	}
 	row, err := a.q.RemoteVMTemplateFirstByIDAndOrg(r.Context(), queries.RemoteVMTemplateFirstByIDAndOrgParams{
@@ -668,7 +668,7 @@ func (a *API) getSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 		OrgID: p.OrganizationID,
 	})
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "not_found", "sandbox template not found")
+		writeAPIError(w, http.StatusNotFound, "not_found", "remote VM template not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, sandboxTemplateToOut(row))
@@ -684,7 +684,7 @@ func (a *API) deleteSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox template id")
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid remote VM template id")
 		return
 	}
 	row, err := a.q.RemoteVMTemplateFirstByIDAndOrg(r.Context(), queries.RemoteVMTemplateFirstByIDAndOrgParams{
@@ -692,7 +692,7 @@ func (a *API) deleteSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 		OrgID: p.OrganizationID,
 	})
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "not_found", "sandbox template not found")
+		writeAPIError(w, http.StatusNotFound, "not_found", "remote VM template not found")
 		return
 	}
 	row, err = a.q.RemoteVMTemplateMarkDeleted(r.Context(), row.ID)
@@ -713,7 +713,7 @@ func (a *API) cloneSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox template id")
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid remote VM template id")
 		return
 	}
 	tpl, err := a.q.RemoteVMTemplateFirstByIDAndOrg(r.Context(), queries.RemoteVMTemplateFirstByIDAndOrgParams{
@@ -721,7 +721,7 @@ func (a *API) cloneSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 		OrgID: p.OrganizationID,
 	})
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "not_found", "sandbox template not found")
+		writeAPIError(w, http.StatusNotFound, "not_found", "remote VM template not found")
 		return
 	}
 	var req struct {
@@ -780,7 +780,7 @@ func (a *API) publishSandboxHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox id")
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid remote VM id")
 		return
 	}
 	sb, err := a.q.RemoteVMFirstByIDAndOrg(r.Context(), queries.RemoteVMFirstByIDAndOrgParams{
@@ -788,7 +788,7 @@ func (a *API) publishSandboxHTTP(w http.ResponseWriter, r *http.Request) {
 		OrgID: p.OrganizationID,
 	})
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "not_found", "sandbox not found")
+		writeAPIError(w, http.StatusNotFound, "not_found", "remote VM not found")
 		return
 	}
 	var req struct {
@@ -1038,7 +1038,7 @@ func (a *API) unpublishSandboxHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox id")
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid remote VM id")
 		return
 	}
 	sb, err := a.q.RemoteVMFirstByIDAndOrg(r.Context(), queries.RemoteVMFirstByIDAndOrgParams{
@@ -1046,7 +1046,7 @@ func (a *API) unpublishSandboxHTTP(w http.ResponseWriter, r *http.Request) {
 		OrgID: p.OrganizationID,
 	})
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "not_found", "sandbox not found")
+		writeAPIError(w, http.StatusNotFound, "not_found", "remote VM not found")
 		return
 	}
 	if sb.PublishedHttpPort.Valid {
@@ -1087,7 +1087,7 @@ func optionalInt4(v *int32) pgtype.Int4 {
 func (a *API) requireSandboxAccess(w http.ResponseWriter, r *http.Request, p auth.Principal) (queries.RemoteVm, bool) {
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox id")
+		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid remote VM id")
 		return queries.RemoteVm{}, false
 	}
 	sb, err := a.q.RemoteVMFirstByIDAndOrg(r.Context(), queries.RemoteVMFirstByIDAndOrgParams{
@@ -1095,11 +1095,11 @@ func (a *API) requireSandboxAccess(w http.ResponseWriter, r *http.Request, p aut
 		OrgID: p.OrganizationID,
 	})
 	if err != nil {
-		writeAPIError(w, http.StatusNotFound, "not_found", "sandbox not found")
+		writeAPIError(w, http.StatusNotFound, "not_found", "remote VM not found")
 		return queries.RemoteVm{}, false
 	}
 	if sb.ObservedState != "running" {
-		writeAPIError(w, http.StatusConflict, "sandbox_not_running", "sandbox must be running")
+		writeAPIError(w, http.StatusConflict, "sandbox_not_running", "remote VM must be running")
 		return queries.RemoteVm{}, false
 	}
 	return sb, true
@@ -1107,11 +1107,11 @@ func (a *API) requireSandboxAccess(w http.ResponseWriter, r *http.Request, p aut
 
 func (a *API) sandboxLocalRuntime(w http.ResponseWriter, sb queries.RemoteVm) (kruntime.Runtime, bool) {
 	if a.sandboxSvc == nil || a.sandboxSvc.Runtime == nil {
-		writeAPIError(w, http.StatusServiceUnavailable, "sandbox_runtime", "sandbox runtime is unavailable on this server")
+		writeAPIError(w, http.StatusServiceUnavailable, "sandbox_runtime", "remote VM runtime is unavailable on this server")
 		return nil, false
 	}
 	if sb.ServerID.Valid && a.sandboxSvc.ServerID != uuid.Nil && uuid.UUID(sb.ServerID.Bytes) != a.sandboxSvc.ServerID {
-		writeAPIError(w, http.StatusConflict, "sandbox_runtime", "sandbox is assigned to a different worker")
+		writeAPIError(w, http.StatusConflict, "sandbox_runtime", "remote VM is assigned to a different worker")
 		return nil, false
 	}
 	return a.sandboxSvc.Runtime, true
