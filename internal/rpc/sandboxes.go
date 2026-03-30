@@ -984,7 +984,14 @@ func (a *API) sandboxLogs(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorFromErr(w, http.StatusConflict, "sandbox_logs", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, logs)
+	writeJSON(w, http.StatusOK, normalizeSandboxLogLines(logs))
+}
+
+func normalizeSandboxLogLines(logs []string) []string {
+	if logs == nil {
+		return []string{}
+	}
+	return logs
 }
 
 func (a *API) sandboxStats(w http.ResponseWriter, r *http.Request) {

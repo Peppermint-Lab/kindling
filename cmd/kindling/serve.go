@@ -214,13 +214,7 @@ func runServe(ctx context.Context, databaseURL, replicationDSN string, opts serv
 		ciSvc = ci.NewJobService(q, cfgMgr, serverID)
 	}
 	if components.api && sandboxSvc == nil {
-		accessRT, _ := detectHostRuntime(snap)
-		slog.Info("api sandbox access runtime detected", "runtime", accessRT.Name())
-		sandboxSvc = &sandbox.Service{
-			Q:        q,
-			Runtime:  accessRT,
-			ServerID: serverID,
-		}
+		slog.Info("api sandbox access uses worker proxy in split mode")
 	}
 
 	// Component heartbeats for tracked servers.
@@ -321,11 +315,20 @@ func runServe(ctx context.Context, databaseURL, replicationDSN string, opts serv
 		go runWebhookPollingLoop(ctx, databaseURL, q, recs.deployment, cfgMgr)
 	}
 
+	internalAPIAddr, err := internalAPIListenAddr(listenAddr, components)
+	if err != nil {
+		return err
+	}
+
 	// API server.
-	// In split-mode deployments the dedicated worker process should not also
-	// compete for the API listen socket; only the API component serves HTTP.
+	// In split-mode deployments the worker serves the same authenticated HTTP
+	// handlers on an adjacent internal port so the public API can proxy guest
+	// traffic without sharing in-memory runtime state.
 	if shouldServeHTTP(components) {
 		return startAPIServer(ctx, q, cfgMgr, dashboardEvents, recs.deployment, recs.ciJob, recs.sandbox, recs.sandboxTpl, sandboxSvc, ciSvc, listenAddr)
+	}
+	if components.worker {
+		return startAPIServer(ctx, q, cfgMgr, dashboardEvents, recs.deployment, recs.ciJob, recs.sandbox, recs.sandboxTpl, sandboxSvc, ciSvc, internalAPIAddr)
 	}
 
 	<-ctx.Done()

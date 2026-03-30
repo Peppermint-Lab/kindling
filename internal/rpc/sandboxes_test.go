@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/google/uuid"
@@ -132,6 +133,24 @@ func TestValidateSandboxProxyHost(t *testing.T) {
 				t.Fatalf("validateSandboxProxyHost(%q) = %q, want %q", tt.host, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestNormalizeSandboxLogLines(t *testing.T) {
+	t.Parallel()
+
+	got := normalizeSandboxLogLines(nil)
+	if got == nil {
+		t.Fatal("expected empty slice, got nil")
+	}
+	if len(got) != 0 {
+		t.Fatalf("len(normalizeSandboxLogLines(nil)) = %d, want 0", len(got))
+	}
+
+	want := []string{"line one", "line two"}
+	got = normalizeSandboxLogLines(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalizeSandboxLogLines(non-nil) = %#v, want %#v", got, want)
 	}
 }
 

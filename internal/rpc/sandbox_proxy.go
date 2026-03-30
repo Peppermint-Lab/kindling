@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -96,7 +97,7 @@ func (a *API) sandboxIsLocalOwner(sb queries.RemoteVm) bool {
 	if !sb.ServerID.Valid {
 		return true
 	}
-	return a.sandboxSvc != nil && a.sandboxSvc.ServerID != uuid.Nil && uuid.UUID(sb.ServerID.Bytes) == a.sandboxSvc.ServerID
+	return a.sandboxSvc != nil && a.sandboxSvc.Runtime != nil && a.sandboxSvc.ServerID != uuid.Nil && uuid.UUID(sb.ServerID.Bytes) == a.sandboxSvc.ServerID
 }
 
 func (a *API) sandboxOwnerOrigin(ctx context.Context, sb queries.RemoteVm) (*url.URL, error) {
@@ -168,7 +169,8 @@ func (a *API) addSandboxProxyHeaders(req *http.Request) {
 func copySandboxProxyableHeaders(dst, src http.Header) {
 	for k, values := range src {
 		switch strings.ToLower(k) {
-		case "connection", "upgrade", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding":
+		case "connection", "upgrade", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding",
+			"sec-websocket-key", "sec-websocket-version", "sec-websocket-protocol", "sec-websocket-extensions":
 			continue
 		default:
 			for _, v := range values {
@@ -209,7 +211,7 @@ func (a *API) proxySandboxHTTPRequest(w http.ResponseWriter, r *http.Request, sb
 	targetURL := *origin
 	targetURL.Path = r.URL.Path
 	targetURL.RawQuery = r.URL.RawQuery
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL.String(), strings.NewReader(string(body)))
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL.String(), bytes.NewReader(body))
 	if err != nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "sandbox_proxy", "build proxy request")
 		return true
