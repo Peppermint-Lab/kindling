@@ -295,6 +295,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 		go runSandboxExpiryLoop(ctx, databaseURL, q, recs.sandbox)
 		go runSandboxIdleLoop(ctx, databaseURL, q, recs.sandbox)
 		go runBuildRecoveryLoop(ctx, databaseURL, q, recs.build)
+		go runWebhookPollingLoop(ctx, databaseURL, q, recs.deployment, cfgMgr)
 	}
 
 	// API server.

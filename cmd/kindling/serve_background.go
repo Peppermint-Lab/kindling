@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/autoscale"
 	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/githubapi"
 	"github.com/kindlingvm/kindling/internal/preview"
 	"github.com/kindlingvm/kindling/internal/reconciler"
 	"github.com/kindlingvm/kindling/internal/sandbox"
@@ -226,5 +229,107 @@ func runIdleScaleDownOnce(ctx context.Context, databaseURL string, q *queries.Qu
 		}
 		deploymentReconciler.ScheduleNow(uuid.UUID(dep.ID.Bytes))
 		slog.Info("idle scale-to-zero", "project_id", p.ID, "deployment_id", dep.ID)
+	}
+}
+
+const webhookPollingInterval = 5 * time.Minute // interval between GitHub commit polling sweeps
+
+// runWebhookPollingLoop periodically compares each project's GitHub branch HEAD
+// against the last successful production deployment. If GitHub is ahead, it
+// triggers a new deployment. This serves as a fallback when webhooks are missed.
+func runWebhookPollingLoop(ctx context.Context, databaseURL string, q *queries.Queries, deploymentReconciler *reconciler.Scheduler, cfgMgr *config.Manager) {
+	ticker := time.NewTicker(webhookPollingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runWebhookPollingOnce(ctx, databaseURL, q, deploymentReconciler, cfgMgr)
+		}
+	}
+}
+
+func runWebhookPollingOnce(ctx context.Context, databaseURL string, q *queries.Queries, deploymentReconciler *reconciler.Scheduler, cfgMgr *config.Manager) {
+	githubToken := ""
+	if cfgMgr != nil && cfgMgr.Snapshot() != nil {
+		githubToken = cfgMgr.Snapshot().GitHubToken
+	}
+
+	projects, err := q.ProjectFindAllWithGitHub(ctx)
+	if err != nil {
+		slog.Warn("webhook polling: list projects", "error", err)
+		return
+	}
+	for _, proj := range projects {
+		repo := strings.TrimSpace(proj.GithubRepository)
+		if repo == "" {
+			continue
+		}
+
+		// Resolve the default branch HEAD commit.
+		headSHA, _, err := githubapi.ResolveCommit(ctx, nil, githubToken, repo, "")
+		if err != nil {
+			slog.Warn("webhook polling: resolve commit",
+				"project_id", proj.ID, "repo", repo, "error", err)
+			continue
+		}
+
+		// The default production branch to track (main or master).
+		// Use "main" as the default since the webhook handler ignores non-main branches.
+		defaultBranch := "main"
+
+		// Find all services for this project and create deployments for each
+		// (matching the webhook push handler behavior).
+		services, err := q.ServiceListByProjectID(ctx, proj.ID)
+		if err != nil {
+			slog.Warn("webhook polling: list services",
+				"project_id", proj.ID, "error", err)
+			continue
+		}
+		for _, svc := range services {
+			// Find the latest successful production deployment for this service.
+			latestDep, err := q.DeploymentLatestSuccessfulForProject(ctx, queries.DeploymentLatestSuccessfulForProjectParams{
+				ProjectID: proj.ID,
+				ServiceID: svc.ID,
+			})
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				slog.Warn("webhook polling: latest deployment",
+					"project_id", proj.ID, "service_id", svc.ID, "error", err)
+				continue
+			}
+			if !errors.Is(err, pgx.ErrNoRows) && latestDep.GithubCommit == headSHA {
+				continue // already deployed
+			}
+
+			slog.Info("webhook polling: new commit detected, triggering deploy",
+				"project_id", proj.ID, "service_id", svc.ID, "repo", repo,
+				"current_sha", headSHA,
+				"last_deployed_sha", func() string {
+					if latestDep.GithubCommit != "" {
+						return latestDep.GithubCommit
+					}
+					return "(none)"
+				}())
+
+			dep, err := q.DeploymentCreate(ctx, queries.DeploymentCreateParams{
+				ID:             pgtype.UUID{Bytes: uuid.New(), Valid: true},
+				ProjectID:       proj.ID,
+				ServiceID:       svc.ID,
+				BuildID:         pgtype.UUID{Valid: false},
+				ImageID:         pgtype.UUID{Valid: false},
+				GithubCommit:    headSHA,
+				GithubBranch:    defaultBranch,
+				DeploymentKind:  "production",
+			})
+			if err != nil {
+				slog.Warn("webhook polling: create deployment",
+					"project_id", proj.ID, "service_id", svc.ID, "error", err)
+				continue
+			}
+			if deploymentReconciler != nil {
+				deploymentReconciler.ScheduleNow(uuid.UUID(dep.ID.Bytes))
+			}
+		}
 	}
 }

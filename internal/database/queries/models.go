@@ -131,6 +131,7 @@ type Deployment struct {
 	PreviewEnvironmentID     pgtype.UUID        `json:"preview_environment_id"`
 	PreviewLastRequestAt     pgtype.Timestamptz `json:"preview_last_request_at"`
 	PreviewScaledToZero      bool               `json:"preview_scaled_to_zero"`
+	CircuitBroken            bool               `json:"circuit_broken"`
 	RunningAt                pgtype.Timestamptz `json:"running_at"`
 	StoppedAt                pgtype.Timestamptz `json:"stopped_at"`
 	FailedAt                 pgtype.Timestamptz `json:"failed_at"`
@@ -148,6 +149,8 @@ type DeploymentInstance struct {
 	Role                  string             `json:"role"`
 	CloneSourceInstanceID pgtype.UUID        `json:"clone_source_instance_id"`
 	Status                string             `json:"status"`
+	RestartCount          int32              `json:"restart_count"`
+	LastRestartAt         pgtype.Timestamptz `json:"last_restart_at"`
 	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`

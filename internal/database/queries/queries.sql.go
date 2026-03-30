@@ -1483,6 +1483,46 @@ func (q *Queries) ClusterSettingsAll(ctx context.Context) ([]ClusterSettingsAllR
 	return items, nil
 }
 
+const deploymentCircuitBreak = `-- name: DeploymentCircuitBreak :one
+UPDATE deployments
+SET circuit_broken = true, updated_at = NOW()
+WHERE id = $1
+  AND circuit_broken = false
+  AND deleted_at IS NULL
+RETURNING id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, circuit_broken, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at
+`
+
+// Circuit breaker: trips a deployment's restart circuit when too many restarts occur
+// within the budget window.
+func (q *Queries) DeploymentCircuitBreak(ctx context.Context, id pgtype.UUID) (Deployment, error) {
+	row := q.db.QueryRow(ctx, deploymentCircuitBreak, id)
+	var i Deployment
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServiceID,
+		&i.BuildID,
+		&i.ImageID,
+		&i.VmID,
+		&i.PromotedFromDeploymentID,
+		&i.GithubCommit,
+		&i.GithubBranch,
+		&i.DeploymentKind,
+		&i.PreviewEnvironmentID,
+		&i.PreviewLastRequestAt,
+		&i.PreviewScaledToZero,
+		&i.CircuitBroken,
+		&i.RunningAt,
+		&i.StoppedAt,
+		&i.FailedAt,
+		&i.DeletedAt,
+		&i.WakeRequestedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const deploymentClearWakeRequested = `-- name: DeploymentClearWakeRequested :exec
 UPDATE deployments SET wake_requested_at = NULL, updated_at = NOW() WHERE id = $1
 `
@@ -1507,7 +1547,7 @@ INSERT INTO deployments (
   preview_environment_id
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at
+RETURNING id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, circuit_broken, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at
 `
 
 type DeploymentCreateParams struct {
@@ -1552,6 +1592,7 @@ func (q *Queries) DeploymentCreate(ctx context.Context, arg DeploymentCreatePara
 		&i.PreviewEnvironmentID,
 		&i.PreviewLastRequestAt,
 		&i.PreviewScaledToZero,
+		&i.CircuitBroken,
 		&i.RunningAt,
 		&i.StoppedAt,
 		&i.FailedAt,
@@ -1564,7 +1605,7 @@ func (q *Queries) DeploymentCreate(ctx context.Context, arg DeploymentCreatePara
 }
 
 const deploymentFindByProjectID = `-- name: DeploymentFindByProjectID :many
-SELECT id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments WHERE project_id = $1 ORDER BY created_at DESC
+SELECT id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, circuit_broken, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments WHERE project_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) DeploymentFindByProjectID(ctx context.Context, projectID pgtype.UUID) ([]Deployment, error) {
@@ -1590,6 +1631,7 @@ func (q *Queries) DeploymentFindByProjectID(ctx context.Context, projectID pgtyp
 			&i.PreviewEnvironmentID,
 			&i.PreviewLastRequestAt,
 			&i.PreviewScaledToZero,
+			&i.CircuitBroken,
 			&i.RunningAt,
 			&i.StoppedAt,
 			&i.FailedAt,
@@ -1609,7 +1651,7 @@ func (q *Queries) DeploymentFindByProjectID(ctx context.Context, projectID pgtyp
 }
 
 const deploymentFindByServiceID = `-- name: DeploymentFindByServiceID :many
-SELECT id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
+SELECT id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, circuit_broken, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
 WHERE service_id = $1
   AND deleted_at IS NULL
 ORDER BY created_at DESC
@@ -1638,6 +1680,7 @@ func (q *Queries) DeploymentFindByServiceID(ctx context.Context, serviceID pgtyp
 			&i.PreviewEnvironmentID,
 			&i.PreviewLastRequestAt,
 			&i.PreviewScaledToZero,
+			&i.CircuitBroken,
 			&i.RunningAt,
 			&i.StoppedAt,
 			&i.FailedAt,
@@ -1657,7 +1700,7 @@ func (q *Queries) DeploymentFindByServiceID(ctx context.Context, serviceID pgtyp
 }
 
 const deploymentFindByVMID = `-- name: DeploymentFindByVMID :one
-SELECT d.id, d.project_id, d.service_id, d.build_id, d.image_id, d.vm_id, d.promoted_from_deployment_id, d.github_commit, d.github_branch, d.deployment_kind, d.preview_environment_id, d.preview_last_request_at, d.preview_scaled_to_zero, d.running_at, d.stopped_at, d.failed_at, d.deleted_at, d.wake_requested_at, d.created_at, d.updated_at FROM deployments d
+SELECT d.id, d.project_id, d.service_id, d.build_id, d.image_id, d.vm_id, d.promoted_from_deployment_id, d.github_commit, d.github_branch, d.deployment_kind, d.preview_environment_id, d.preview_last_request_at, d.preview_scaled_to_zero, d.circuit_broken, d.running_at, d.stopped_at, d.failed_at, d.deleted_at, d.wake_requested_at, d.created_at, d.updated_at FROM deployments d
 JOIN deployment_instances di ON di.deployment_id = d.id AND di.deleted_at IS NULL
 WHERE di.vm_id = $1 AND d.deleted_at IS NULL
 `
@@ -1679,6 +1722,7 @@ func (q *Queries) DeploymentFindByVMID(ctx context.Context, vmID pgtype.UUID) (D
 		&i.PreviewEnvironmentID,
 		&i.PreviewLastRequestAt,
 		&i.PreviewScaledToZero,
+		&i.CircuitBroken,
 		&i.RunningAt,
 		&i.StoppedAt,
 		&i.FailedAt,
@@ -1897,7 +1941,7 @@ func (q *Queries) DeploymentFindRecentWithProjectForOrg(ctx context.Context, arg
 }
 
 const deploymentFindRecoverableByServerID = `-- name: DeploymentFindRecoverableByServerID :many
-SELECT DISTINCT d.id, d.project_id, d.service_id, d.build_id, d.image_id, d.vm_id, d.promoted_from_deployment_id, d.github_commit, d.github_branch, d.deployment_kind, d.preview_environment_id, d.preview_last_request_at, d.preview_scaled_to_zero, d.running_at, d.stopped_at, d.failed_at, d.deleted_at, d.wake_requested_at, d.created_at, d.updated_at FROM deployments d
+SELECT DISTINCT d.id, d.project_id, d.service_id, d.build_id, d.image_id, d.vm_id, d.promoted_from_deployment_id, d.github_commit, d.github_branch, d.deployment_kind, d.preview_environment_id, d.preview_last_request_at, d.preview_scaled_to_zero, d.circuit_broken, d.running_at, d.stopped_at, d.failed_at, d.deleted_at, d.wake_requested_at, d.created_at, d.updated_at FROM deployments d
 JOIN deployment_instances di ON di.deployment_id = d.id AND di.deleted_at IS NULL
 LEFT JOIN vms v ON di.vm_id = v.id AND v.deleted_at IS NULL
 WHERE (di.server_id = $1 OR v.server_id = $1)
@@ -1930,6 +1974,7 @@ func (q *Queries) DeploymentFindRecoverableByServerID(ctx context.Context, serve
 			&i.PreviewEnvironmentID,
 			&i.PreviewLastRequestAt,
 			&i.PreviewScaledToZero,
+			&i.CircuitBroken,
 			&i.RunningAt,
 			&i.StoppedAt,
 			&i.FailedAt,
@@ -1949,7 +1994,7 @@ func (q *Queries) DeploymentFindRecoverableByServerID(ctx context.Context, serve
 }
 
 const deploymentFindRunningAndOlder = `-- name: DeploymentFindRunningAndOlder :many
-SELECT id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
+SELECT id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, circuit_broken, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
 WHERE project_id = $1
   AND deployment_kind = 'production'
   AND running_at IS NOT NULL
@@ -1988,6 +2033,7 @@ func (q *Queries) DeploymentFindRunningAndOlder(ctx context.Context, arg Deploym
 			&i.PreviewEnvironmentID,
 			&i.PreviewLastRequestAt,
 			&i.PreviewScaledToZero,
+			&i.CircuitBroken,
 			&i.RunningAt,
 			&i.StoppedAt,
 			&i.FailedAt,
@@ -2007,7 +2053,7 @@ func (q *Queries) DeploymentFindRunningAndOlder(ctx context.Context, arg Deploym
 }
 
 const deploymentFindRunningByServerID = `-- name: DeploymentFindRunningByServerID :many
-SELECT DISTINCT d.id, d.project_id, d.service_id, d.build_id, d.image_id, d.vm_id, d.promoted_from_deployment_id, d.github_commit, d.github_branch, d.deployment_kind, d.preview_environment_id, d.preview_last_request_at, d.preview_scaled_to_zero, d.running_at, d.stopped_at, d.failed_at, d.deleted_at, d.wake_requested_at, d.created_at, d.updated_at FROM deployments d
+SELECT DISTINCT d.id, d.project_id, d.service_id, d.build_id, d.image_id, d.vm_id, d.promoted_from_deployment_id, d.github_commit, d.github_branch, d.deployment_kind, d.preview_environment_id, d.preview_last_request_at, d.preview_scaled_to_zero, d.circuit_broken, d.running_at, d.stopped_at, d.failed_at, d.deleted_at, d.wake_requested_at, d.created_at, d.updated_at FROM deployments d
 JOIN deployment_instances di ON di.deployment_id = d.id AND di.deleted_at IS NULL
 JOIN vms v ON di.vm_id = v.id AND v.deleted_at IS NULL
 WHERE v.server_id = $1
@@ -2040,6 +2086,7 @@ func (q *Queries) DeploymentFindRunningByServerID(ctx context.Context, serverID 
 			&i.PreviewEnvironmentID,
 			&i.PreviewLastRequestAt,
 			&i.PreviewScaledToZero,
+			&i.CircuitBroken,
 			&i.RunningAt,
 			&i.StoppedAt,
 			&i.FailedAt,
@@ -2059,7 +2106,7 @@ func (q *Queries) DeploymentFindRunningByServerID(ctx context.Context, serverID 
 }
 
 const deploymentFirstByID = `-- name: DeploymentFirstByID :one
-SELECT id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments WHERE id = $1
+SELECT id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, circuit_broken, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments WHERE id = $1
 `
 
 func (q *Queries) DeploymentFirstByID(ctx context.Context, id pgtype.UUID) (Deployment, error) {
@@ -2079,6 +2126,7 @@ func (q *Queries) DeploymentFirstByID(ctx context.Context, id pgtype.UUID) (Depl
 		&i.PreviewEnvironmentID,
 		&i.PreviewLastRequestAt,
 		&i.PreviewScaledToZero,
+		&i.CircuitBroken,
 		&i.RunningAt,
 		&i.StoppedAt,
 		&i.FailedAt,
@@ -2132,7 +2180,7 @@ func (q *Queries) DeploymentInstanceActiveCountByServerID(ctx context.Context, s
 const deploymentInstanceAttachVM = `-- name: DeploymentInstanceAttachVM :one
 UPDATE deployment_instances SET vm_id = $2, status = $3, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, deleted_at, created_at, updated_at
+RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, restart_count, last_restart_at, deleted_at, created_at, updated_at
 `
 
 type DeploymentInstanceAttachVMParams struct {
@@ -2152,6 +2200,8 @@ func (q *Queries) DeploymentInstanceAttachVM(ctx context.Context, arg Deployment
 		&i.Role,
 		&i.CloneSourceInstanceID,
 		&i.Status,
+		&i.RestartCount,
+		&i.LastRestartAt,
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -2175,7 +2225,7 @@ const deploymentInstanceCreate = `-- name: DeploymentInstanceCreate :one
 
 INSERT INTO deployment_instances (id, deployment_id, role, status)
 VALUES ($1, $2, 'active', 'pending')
-RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, deleted_at, created_at, updated_at
+RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, restart_count, last_restart_at, deleted_at, created_at, updated_at
 `
 
 type DeploymentInstanceCreateParams struct {
@@ -2195,6 +2245,8 @@ func (q *Queries) DeploymentInstanceCreate(ctx context.Context, arg DeploymentIn
 		&i.Role,
 		&i.CloneSourceInstanceID,
 		&i.Status,
+		&i.RestartCount,
+		&i.LastRestartAt,
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -2203,7 +2255,7 @@ func (q *Queries) DeploymentInstanceCreate(ctx context.Context, arg DeploymentIn
 }
 
 const deploymentInstanceFindByDeploymentID = `-- name: DeploymentInstanceFindByDeploymentID :many
-SELECT id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, deleted_at, created_at, updated_at FROM deployment_instances
+SELECT id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, restart_count, last_restart_at, deleted_at, created_at, updated_at FROM deployment_instances
 WHERE deployment_id = $1 AND deleted_at IS NULL
 ORDER BY created_at ASC
 `
@@ -2225,6 +2277,57 @@ func (q *Queries) DeploymentInstanceFindByDeploymentID(ctx context.Context, depl
 			&i.Role,
 			&i.CloneSourceInstanceID,
 			&i.Status,
+			&i.RestartCount,
+			&i.LastRestartAt,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const deploymentInstanceFindExceedingRestartBudget = `-- name: DeploymentInstanceFindExceedingRestartBudget :many
+SELECT di.id, di.deployment_id, di.server_id, di.vm_id, di.role, di.clone_source_instance_id, di.status, di.restart_count, di.last_restart_at, di.deleted_at, di.created_at, di.updated_at FROM deployment_instances di
+WHERE di.deployment_id = $1
+  AND di.deleted_at IS NULL
+  AND di.status IN ('starting', 'running', 'failed')
+  AND di.restart_count >= $2
+  AND (di.last_restart_at IS NULL OR di.last_restart_at > NOW() - ($3::bigint * INTERVAL '1 second'))
+`
+
+type DeploymentInstanceFindExceedingRestartBudgetParams struct {
+	DeploymentID pgtype.UUID `json:"deployment_id"`
+	RestartCount int32       `json:"restart_count"`
+	Column3      int64       `json:"column_3"`
+}
+
+// Returns instances that have exceeded their restart budget.
+func (q *Queries) DeploymentInstanceFindExceedingRestartBudget(ctx context.Context, arg DeploymentInstanceFindExceedingRestartBudgetParams) ([]DeploymentInstance, error) {
+	rows, err := q.db.Query(ctx, deploymentInstanceFindExceedingRestartBudget, arg.DeploymentID, arg.RestartCount, arg.Column3)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DeploymentInstance{}
+	for rows.Next() {
+		var i DeploymentInstance
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.ServerID,
+			&i.VmID,
+			&i.Role,
+			&i.CloneSourceInstanceID,
+			&i.Status,
+			&i.RestartCount,
+			&i.LastRestartAt,
 			&i.DeletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -2240,7 +2343,7 @@ func (q *Queries) DeploymentInstanceFindByDeploymentID(ctx context.Context, depl
 }
 
 const deploymentInstanceFirstByID = `-- name: DeploymentInstanceFirstByID :one
-SELECT id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, deleted_at, created_at, updated_at FROM deployment_instances WHERE id = $1
+SELECT id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, restart_count, last_restart_at, deleted_at, created_at, updated_at FROM deployment_instances WHERE id = $1
 `
 
 func (q *Queries) DeploymentInstanceFirstByID(ctx context.Context, id pgtype.UUID) (DeploymentInstance, error) {
@@ -2254,6 +2357,8 @@ func (q *Queries) DeploymentInstanceFirstByID(ctx context.Context, id pgtype.UUI
 		&i.Role,
 		&i.CloneSourceInstanceID,
 		&i.Status,
+		&i.RestartCount,
+		&i.LastRestartAt,
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -2263,11 +2368,17 @@ func (q *Queries) DeploymentInstanceFirstByID(ctx context.Context, id pgtype.UUI
 
 const deploymentInstancePrepareRetry = `-- name: DeploymentInstancePrepareRetry :one
 UPDATE deployment_instances
-SET server_id = NULL, vm_id = NULL, role = 'active', clone_source_instance_id = NULL, status = 'pending', updated_at = NOW()
+SET server_id = NULL, vm_id = NULL, role = 'active', clone_source_instance_id = NULL,
+    status = 'pending',
+    restart_count = restart_count + 1,
+    last_restart_at = NOW(),
+    updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, deleted_at, created_at, updated_at
+RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, restart_count, last_restart_at, deleted_at, created_at, updated_at
 `
 
+// Increments restart_count and resets last_restart_at to now.
+// This is called when an instance is being restarted (not just re-assigned).
 func (q *Queries) DeploymentInstancePrepareRetry(ctx context.Context, id pgtype.UUID) (DeploymentInstance, error) {
 	row := q.db.QueryRow(ctx, deploymentInstancePrepareRetry, id)
 	var i DeploymentInstance
@@ -2279,6 +2390,8 @@ func (q *Queries) DeploymentInstancePrepareRetry(ctx context.Context, id pgtype.
 		&i.Role,
 		&i.CloneSourceInstanceID,
 		&i.Status,
+		&i.RestartCount,
+		&i.LastRestartAt,
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -2288,13 +2401,42 @@ func (q *Queries) DeploymentInstancePrepareRetry(ctx context.Context, id pgtype.
 
 const deploymentInstanceResetForDeadServer = `-- name: DeploymentInstanceResetForDeadServer :exec
 UPDATE deployment_instances
-SET server_id = NULL, vm_id = NULL, role = 'active', clone_source_instance_id = NULL, status = 'pending', updated_at = NOW()
+SET server_id = NULL, vm_id = NULL, role = 'active', clone_source_instance_id = NULL, status = 'pending', restart_count = 0, last_restart_at = NULL, updated_at = NOW()
 WHERE server_id = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) DeploymentInstanceResetForDeadServer(ctx context.Context, serverID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deploymentInstanceResetForDeadServer, serverID)
 	return err
+}
+
+const deploymentInstanceResetForRetry = `-- name: DeploymentInstanceResetForRetry :one
+UPDATE deployment_instances
+SET server_id = NULL, vm_id = NULL, role = 'active', clone_source_instance_id = NULL, status = 'pending', updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, restart_count, last_restart_at, deleted_at, created_at, updated_at
+`
+
+// Non-restart reset: clears server/VM assignment without incrementing restart_count.
+// Used for planned re-assignments (volume pinning, draining).
+func (q *Queries) DeploymentInstanceResetForRetry(ctx context.Context, id pgtype.UUID) (DeploymentInstance, error) {
+	row := q.db.QueryRow(ctx, deploymentInstanceResetForRetry, id)
+	var i DeploymentInstance
+	err := row.Scan(
+		&i.ID,
+		&i.DeploymentID,
+		&i.ServerID,
+		&i.VmID,
+		&i.Role,
+		&i.CloneSourceInstanceID,
+		&i.Status,
+		&i.RestartCount,
+		&i.LastRestartAt,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const deploymentInstanceRetainedStateByServerID = `-- name: DeploymentInstanceRetainedStateByServerID :many
@@ -2342,7 +2484,7 @@ func (q *Queries) DeploymentInstanceRetainedStateByServerID(ctx context.Context,
 const deploymentInstanceSetCloneSource = `-- name: DeploymentInstanceSetCloneSource :one
 UPDATE deployment_instances SET clone_source_instance_id = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, deleted_at, created_at, updated_at
+RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, restart_count, last_restart_at, deleted_at, created_at, updated_at
 `
 
 type DeploymentInstanceSetCloneSourceParams struct {
@@ -2361,6 +2503,8 @@ func (q *Queries) DeploymentInstanceSetCloneSource(ctx context.Context, arg Depl
 		&i.Role,
 		&i.CloneSourceInstanceID,
 		&i.Status,
+		&i.RestartCount,
+		&i.LastRestartAt,
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -2390,7 +2534,7 @@ func (q *Queries) DeploymentInstanceSoftDeleteByDeploymentID(ctx context.Context
 const deploymentInstanceUpdateRole = `-- name: DeploymentInstanceUpdateRole :one
 UPDATE deployment_instances SET role = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, deleted_at, created_at, updated_at
+RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, restart_count, last_restart_at, deleted_at, created_at, updated_at
 `
 
 type DeploymentInstanceUpdateRoleParams struct {
@@ -2409,6 +2553,8 @@ func (q *Queries) DeploymentInstanceUpdateRole(ctx context.Context, arg Deployme
 		&i.Role,
 		&i.CloneSourceInstanceID,
 		&i.Status,
+		&i.RestartCount,
+		&i.LastRestartAt,
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -2419,7 +2565,7 @@ func (q *Queries) DeploymentInstanceUpdateRole(ctx context.Context, arg Deployme
 const deploymentInstanceUpdateServer = `-- name: DeploymentInstanceUpdateServer :one
 UPDATE deployment_instances SET server_id = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, deleted_at, created_at, updated_at
+RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, restart_count, last_restart_at, deleted_at, created_at, updated_at
 `
 
 type DeploymentInstanceUpdateServerParams struct {
@@ -2438,6 +2584,8 @@ func (q *Queries) DeploymentInstanceUpdateServer(ctx context.Context, arg Deploy
 		&i.Role,
 		&i.CloneSourceInstanceID,
 		&i.Status,
+		&i.RestartCount,
+		&i.LastRestartAt,
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -2448,7 +2596,7 @@ func (q *Queries) DeploymentInstanceUpdateServer(ctx context.Context, arg Deploy
 const deploymentInstanceUpdateStatus = `-- name: DeploymentInstanceUpdateStatus :one
 UPDATE deployment_instances SET status = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, deleted_at, created_at, updated_at
+RETURNING id, deployment_id, server_id, vm_id, role, clone_source_instance_id, status, restart_count, last_restart_at, deleted_at, created_at, updated_at
 `
 
 type DeploymentInstanceUpdateStatusParams struct {
@@ -2467,6 +2615,8 @@ func (q *Queries) DeploymentInstanceUpdateStatus(ctx context.Context, arg Deploy
 		&i.Role,
 		&i.CloneSourceInstanceID,
 		&i.Status,
+		&i.RestartCount,
+		&i.LastRestartAt,
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -2540,7 +2690,7 @@ func (q *Queries) DeploymentInstancesRunningForUsageOnServer(ctx context.Context
 }
 
 const deploymentLatestRunningByProjectID = `-- name: DeploymentLatestRunningByProjectID :one
-SELECT id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
+SELECT id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, circuit_broken, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
 WHERE project_id = $1
   AND deployment_kind = 'production'
   AND running_at IS NOT NULL
@@ -2568,6 +2718,7 @@ func (q *Queries) DeploymentLatestRunningByProjectID(ctx context.Context, projec
 		&i.PreviewEnvironmentID,
 		&i.PreviewLastRequestAt,
 		&i.PreviewScaledToZero,
+		&i.CircuitBroken,
 		&i.RunningAt,
 		&i.StoppedAt,
 		&i.FailedAt,
@@ -2580,7 +2731,7 @@ func (q *Queries) DeploymentLatestRunningByProjectID(ctx context.Context, projec
 }
 
 const deploymentLatestRunningByServiceID = `-- name: DeploymentLatestRunningByServiceID :one
-SELECT id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
+SELECT id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, circuit_broken, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
 WHERE service_id = $1
   AND deployment_kind = 'production'
   AND running_at IS NOT NULL
@@ -2608,6 +2759,7 @@ func (q *Queries) DeploymentLatestRunningByServiceID(ctx context.Context, servic
 		&i.PreviewEnvironmentID,
 		&i.PreviewLastRequestAt,
 		&i.PreviewScaledToZero,
+		&i.CircuitBroken,
 		&i.RunningAt,
 		&i.StoppedAt,
 		&i.FailedAt,
@@ -2620,7 +2772,7 @@ func (q *Queries) DeploymentLatestRunningByServiceID(ctx context.Context, servic
 }
 
 const deploymentLatestRunningPreviewByServiceAndPreviewEnvironmentID = `-- name: DeploymentLatestRunningPreviewByServiceAndPreviewEnvironmentID :one
-SELECT id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
+SELECT id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, circuit_broken, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
 WHERE service_id = $1
   AND preview_environment_id = $2
   AND deployment_kind = 'preview'
@@ -2654,6 +2806,55 @@ func (q *Queries) DeploymentLatestRunningPreviewByServiceAndPreviewEnvironmentID
 		&i.PreviewEnvironmentID,
 		&i.PreviewLastRequestAt,
 		&i.PreviewScaledToZero,
+		&i.CircuitBroken,
+		&i.RunningAt,
+		&i.StoppedAt,
+		&i.FailedAt,
+		&i.DeletedAt,
+		&i.WakeRequestedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const deploymentLatestSuccessfulForProject = `-- name: DeploymentLatestSuccessfulForProject :one
+SELECT id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, circuit_broken, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
+WHERE project_id = $1
+  AND service_id = $2
+  AND deployment_kind = 'production'
+  AND running_at IS NOT NULL
+  AND stopped_at IS NULL
+  AND failed_at IS NULL
+  AND deleted_at IS NULL
+ORDER BY running_at DESC
+LIMIT 1
+`
+
+type DeploymentLatestSuccessfulForProjectParams struct {
+	ProjectID pgtype.UUID `json:"project_id"`
+	ServiceID pgtype.UUID `json:"service_id"`
+}
+
+// Returns the most recent successful (running) production deployment for a project+service.
+func (q *Queries) DeploymentLatestSuccessfulForProject(ctx context.Context, arg DeploymentLatestSuccessfulForProjectParams) (Deployment, error) {
+	row := q.db.QueryRow(ctx, deploymentLatestSuccessfulForProject, arg.ProjectID, arg.ServiceID)
+	var i Deployment
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.ServiceID,
+		&i.BuildID,
+		&i.ImageID,
+		&i.VmID,
+		&i.PromotedFromDeploymentID,
+		&i.GithubCommit,
+		&i.GithubBranch,
+		&i.DeploymentKind,
+		&i.PreviewEnvironmentID,
+		&i.PreviewLastRequestAt,
+		&i.PreviewScaledToZero,
+		&i.CircuitBroken,
 		&i.RunningAt,
 		&i.StoppedAt,
 		&i.FailedAt,
@@ -2724,7 +2925,7 @@ const deploymentRequestWake = `-- name: DeploymentRequestWake :one
 UPDATE deployments
 SET wake_requested_at = COALESCE(wake_requested_at, NOW()), updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL AND failed_at IS NULL AND stopped_at IS NULL
-RETURNING id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at
+RETURNING id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, circuit_broken, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at
 `
 
 func (q *Queries) DeploymentRequestWake(ctx context.Context, id pgtype.UUID) (Deployment, error) {
@@ -2744,6 +2945,7 @@ func (q *Queries) DeploymentRequestWake(ctx context.Context, id pgtype.UUID) (De
 		&i.PreviewEnvironmentID,
 		&i.PreviewLastRequestAt,
 		&i.PreviewScaledToZero,
+		&i.CircuitBroken,
 		&i.RunningAt,
 		&i.StoppedAt,
 		&i.FailedAt,
@@ -2753,6 +2955,18 @@ func (q *Queries) DeploymentRequestWake(ctx context.Context, id pgtype.UUID) (De
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const deploymentResetCircuit = `-- name: DeploymentResetCircuit :exec
+UPDATE deployments
+SET circuit_broken = false, updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+// Resets a deployment's circuit breaker (e.g., after a successful promotion).
+func (q *Queries) DeploymentResetCircuit(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deploymentResetCircuit, id)
+	return err
 }
 
 const deploymentRunningBackendIPs = `-- name: DeploymentRunningBackendIPs :many
@@ -2789,7 +3003,7 @@ func (q *Queries) DeploymentRunningBackendIPs(ctx context.Context, deploymentID 
 }
 
 const deploymentUpdateBuild = `-- name: DeploymentUpdateBuild :one
-UPDATE deployments SET build_id = $2, updated_at = NOW() WHERE id = $1 RETURNING id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at
+UPDATE deployments SET build_id = $2, updated_at = NOW() WHERE id = $1 RETURNING id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, circuit_broken, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at
 `
 
 type DeploymentUpdateBuildParams struct {
@@ -2814,6 +3028,7 @@ func (q *Queries) DeploymentUpdateBuild(ctx context.Context, arg DeploymentUpdat
 		&i.PreviewEnvironmentID,
 		&i.PreviewLastRequestAt,
 		&i.PreviewScaledToZero,
+		&i.CircuitBroken,
 		&i.RunningAt,
 		&i.StoppedAt,
 		&i.FailedAt,
@@ -2835,7 +3050,7 @@ func (q *Queries) DeploymentUpdateFailedAt(ctx context.Context, id pgtype.UUID) 
 }
 
 const deploymentUpdateImage = `-- name: DeploymentUpdateImage :one
-UPDATE deployments SET image_id = $2, updated_at = NOW() WHERE id = $1 RETURNING id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at
+UPDATE deployments SET image_id = $2, updated_at = NOW() WHERE id = $1 RETURNING id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, circuit_broken, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at
 `
 
 type DeploymentUpdateImageParams struct {
@@ -2860,6 +3075,7 @@ func (q *Queries) DeploymentUpdateImage(ctx context.Context, arg DeploymentUpdat
 		&i.PreviewEnvironmentID,
 		&i.PreviewLastRequestAt,
 		&i.PreviewScaledToZero,
+		&i.CircuitBroken,
 		&i.RunningAt,
 		&i.StoppedAt,
 		&i.FailedAt,
@@ -2872,7 +3088,7 @@ func (q *Queries) DeploymentUpdateImage(ctx context.Context, arg DeploymentUpdat
 }
 
 const deploymentUpdateVM = `-- name: DeploymentUpdateVM :one
-UPDATE deployments SET vm_id = $2, updated_at = NOW() WHERE id = $1 RETURNING id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at
+UPDATE deployments SET vm_id = $2, updated_at = NOW() WHERE id = $1 RETURNING id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, circuit_broken, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at
 `
 
 type DeploymentUpdateVMParams struct {
@@ -2897,6 +3113,7 @@ func (q *Queries) DeploymentUpdateVM(ctx context.Context, arg DeploymentUpdateVM
 		&i.PreviewEnvironmentID,
 		&i.PreviewLastRequestAt,
 		&i.PreviewScaledToZero,
+		&i.CircuitBroken,
 		&i.RunningAt,
 		&i.StoppedAt,
 		&i.FailedAt,
@@ -2909,7 +3126,7 @@ func (q *Queries) DeploymentUpdateVM(ctx context.Context, arg DeploymentUpdateVM
 }
 
 const deploymentsByPreviewEnvironmentID = `-- name: DeploymentsByPreviewEnvironmentID :many
-SELECT id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
+SELECT id, project_id, service_id, build_id, image_id, vm_id, promoted_from_deployment_id, github_commit, github_branch, deployment_kind, preview_environment_id, preview_last_request_at, preview_scaled_to_zero, circuit_broken, running_at, stopped_at, failed_at, deleted_at, wake_requested_at, created_at, updated_at FROM deployments
 WHERE preview_environment_id = $1 AND deleted_at IS NULL
 ORDER BY created_at DESC
 `
@@ -2937,6 +3154,7 @@ func (q *Queries) DeploymentsByPreviewEnvironmentID(ctx context.Context, preview
 			&i.PreviewEnvironmentID,
 			&i.PreviewLastRequestAt,
 			&i.PreviewScaledToZero,
+			&i.CircuitBroken,
 			&i.RunningAt,
 			&i.StoppedAt,
 			&i.FailedAt,
@@ -2956,7 +3174,7 @@ func (q *Queries) DeploymentsByPreviewEnvironmentID(ctx context.Context, preview
 }
 
 const deploymentsFindPreviewForIdleScaleDown = `-- name: DeploymentsFindPreviewForIdleScaleDown :many
-SELECT deployments.id, deployments.project_id, deployments.service_id, deployments.build_id, deployments.image_id, deployments.vm_id, deployments.promoted_from_deployment_id, deployments.github_commit, deployments.github_branch, deployments.deployment_kind, deployments.preview_environment_id, deployments.preview_last_request_at, deployments.preview_scaled_to_zero, deployments.running_at, deployments.stopped_at, deployments.failed_at, deployments.deleted_at, deployments.wake_requested_at, deployments.created_at, deployments.updated_at
+SELECT deployments.id, deployments.project_id, deployments.service_id, deployments.build_id, deployments.image_id, deployments.vm_id, deployments.promoted_from_deployment_id, deployments.github_commit, deployments.github_branch, deployments.deployment_kind, deployments.preview_environment_id, deployments.preview_last_request_at, deployments.preview_scaled_to_zero, deployments.circuit_broken, deployments.running_at, deployments.stopped_at, deployments.failed_at, deployments.deleted_at, deployments.wake_requested_at, deployments.created_at, deployments.updated_at
 FROM deployments
 JOIN preview_environments pe ON pe.id = deployments.preview_environment_id
 WHERE deployment_kind = 'preview'
@@ -2995,6 +3213,7 @@ func (q *Queries) DeploymentsFindPreviewForIdleScaleDown(ctx context.Context, do
 			&i.PreviewEnvironmentID,
 			&i.PreviewLastRequestAt,
 			&i.PreviewScaledToZero,
+			&i.CircuitBroken,
 			&i.RunningAt,
 			&i.StoppedAt,
 			&i.FailedAt,
@@ -6112,6 +6331,49 @@ SELECT id, org_id, name, github_repository, github_installation_id, github_webho
 
 func (q *Queries) ProjectFindAllByOrgID(ctx context.Context, orgID pgtype.UUID) ([]Project, error) {
 	rows, err := q.db.Query(ctx, projectFindAllByOrgID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Project{}
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Name,
+			&i.GithubRepository,
+			&i.GithubInstallationID,
+			&i.GithubWebhookSecret,
+			&i.RootDirectory,
+			&i.DockerfilePath,
+			&i.DesiredInstanceCount,
+			&i.MinInstanceCount,
+			&i.MaxInstanceCount,
+			&i.LastRequestAt,
+			&i.ScaledToZero,
+			&i.ScaleToZeroEnabled,
+			&i.BuildOnlyOnRootChanges,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const projectFindAllWithGitHub = `-- name: ProjectFindAllWithGitHub :many
+SELECT id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at FROM projects WHERE github_repository != '' ORDER BY created_at DESC
+`
+
+// Returns all projects that have a GitHub repository configured.
+func (q *Queries) ProjectFindAllWithGitHub(ctx context.Context) ([]Project, error) {
+	rows, err := q.db.Query(ctx, projectFindAllWithGitHub)
 	if err != nil {
 		return nil, err
 	}

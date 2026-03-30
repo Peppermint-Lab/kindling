@@ -407,6 +407,10 @@ func (d *Deployer) promoteDeployment(ctx context.Context, rc *reconcileContext, 
 	if err := d.q.DeploymentMarkRunning(ctx, rc.dep.ID); err != nil {
 		return fmt.Errorf("mark running: %w", err)
 	}
+	// Reset circuit breaker on successful promotion (instances are healthy).
+	if err := d.q.DeploymentResetCircuit(ctx, rc.dep.ID); err != nil {
+		rc.logger.Warn("reset circuit breaker after promotion", "deployment_id", rc.dep.ID, "error", err)
+	}
 	if ready == 0 {
 		rc.logger.Info("deployment is running (scaled to zero instances)")
 	} else {

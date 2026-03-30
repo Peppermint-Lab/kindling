@@ -789,6 +789,7 @@ CREATE TABLE IF NOT EXISTS deployments (
     preview_environment_id UUID REFERENCES preview_environments(id) ON DELETE SET NULL,
     preview_last_request_at TIMESTAMPTZ,
     preview_scaled_to_zero BOOLEAN NOT NULL DEFAULT false,
+    circuit_broken      BOOLEAN NOT NULL DEFAULT false,
     running_at          TIMESTAMPTZ,
     stopped_at          TIMESTAMPTZ,
     failed_at           TIMESTAMPTZ,
@@ -893,6 +894,16 @@ DO $$ BEGIN
     END IF;
 END $$;
 
+-- Upgrade path: add circuit_broken if missing (now part of CREATE TABLE above)
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'deployments' AND column_name = 'circuit_broken'
+    ) THEN
+        ALTER TABLE deployments ADD COLUMN circuit_broken BOOLEAN NOT NULL DEFAULT false;
+    END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_deployments_preview_environment_id
     ON deployments(preview_environment_id) WHERE preview_environment_id IS NOT NULL AND deleted_at IS NULL;
 
@@ -907,6 +918,8 @@ CREATE TABLE IF NOT EXISTS deployment_instances (
     clone_source_instance_id UUID REFERENCES deployment_instances(id),
     status          TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'starting', 'running', 'failed', 'stopped')),
+    restart_count   INT NOT NULL DEFAULT 0,
+    last_restart_at TIMESTAMPTZ,
     deleted_at      TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -943,6 +956,25 @@ DO $$ BEGIN
         WHERE table_schema = 'public' AND table_name = 'deployment_instances' AND column_name = 'clone_source_instance_id'
     ) THEN
         ALTER TABLE deployment_instances ADD COLUMN clone_source_instance_id UUID REFERENCES deployment_instances(id);
+    END IF;
+END $$;
+
+-- Restart budget tracking for instance self-healing
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'deployment_instances' AND column_name = 'restart_count'
+    ) THEN
+        ALTER TABLE deployment_instances ADD COLUMN restart_count INT NOT NULL DEFAULT 0;
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'deployment_instances' AND column_name = 'last_restart_at'
+    ) THEN
+        ALTER TABLE deployment_instances ADD COLUMN last_restart_at TIMESTAMPTZ;
     END IF;
 END $$;
 

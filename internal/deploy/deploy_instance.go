@@ -15,6 +15,10 @@ import (
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
+// Restart budget constants: max restarts per time window before circuit breaker trips.
+const maxRestartCount = 3               // max restarts within the budget window before giving up
+const restartBudgetSeconds = 5 * 60    // 5-minute window for restart budget
+
 func (d *Deployer) reconcileOneInstance(
 	ctx context.Context,
 	dep queries.Deployment,
@@ -28,6 +32,30 @@ func (d *Deployer) reconcileOneInstance(
 ) error {
 	if inst.Role == deploymentInstanceRoleTemplate {
 		return nil
+	}
+
+	// Circuit breaker: if the deployment's circuit is broken, stop retrying.
+	if dep.CircuitBroken {
+		logger.Info("circuit breaker open for deployment, skipping instance retry",
+			"instance_id", pguuid.FromPgtype(inst.ID))
+		return nil
+	}
+
+	// Restart budget: if the instance has exceeded the restart budget, trip the circuit
+	// breaker for this deployment and stop retrying.
+	if inst.RestartCount >= maxRestartCount && inst.LastRestartAt.Valid {
+		windowStart := inst.LastRestartAt.Time.Add(time.Duration(restartBudgetSeconds) * time.Second)
+		if time.Now().Before(windowStart) {
+			logger.Warn("restart budget exceeded, tripping circuit breaker",
+				"instance_id", pguuid.FromPgtype(inst.ID),
+				"restart_count", inst.RestartCount,
+				"last_restart_at", inst.LastRestartAt.Time)
+			if _, err := d.q.DeploymentCircuitBreak(ctx, dep.ID); err != nil {
+				logger.Warn("failed to trip circuit breaker", "deployment_id", dep.ID, "error", err)
+			}
+			return nil
+		}
+		// Budget window has passed; reset and allow retry.
 	}
 
 	inst, err := d.reconcileInstanceServerAssignment(ctx, dep, inst, persistentVolume, logger)
@@ -83,7 +111,7 @@ func (d *Deployer) reconcileInstanceServerAssignment(
 			return inst, fmt.Errorf("load project volume: %w", err)
 		}
 		if projectVolume != nil && projectVolume.ServerID.Valid && inst.ServerID != projectVolume.ServerID {
-			if _, err := d.q.DeploymentInstancePrepareRetry(ctx, inst.ID); err != nil {
+			if _, err := d.q.DeploymentInstanceResetForRetry(ctx, inst.ID); err != nil {
 				return inst, fmt.Errorf("reset instance for pinned volume server: %w", err)
 			}
 			inst, err = d.q.DeploymentInstanceFirstByID(ctx, inst.ID)
@@ -113,7 +141,7 @@ func (d *Deployer) reconcileInstanceServerAssignment(
 		}
 	}
 	if inst.Status != "running" || !inst.VmID.Valid {
-		if _, err := d.q.DeploymentInstancePrepareRetry(ctx, inst.ID); err != nil {
+		if _, err := d.q.DeploymentInstanceResetForRetry(ctx, inst.ID); err != nil {
 			return inst, fmt.Errorf("release instance from draining server: %w", err)
 		}
 		inst, err = d.q.DeploymentInstanceFirstByID(ctx, inst.ID)

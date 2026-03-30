@@ -859,10 +859,24 @@ WHERE di.server_id = $1
 
 -- name: DeploymentInstanceResetForDeadServer :exec
 UPDATE deployment_instances
-SET server_id = NULL, vm_id = NULL, role = 'active', clone_source_instance_id = NULL, status = 'pending', updated_at = NOW()
+SET server_id = NULL, vm_id = NULL, role = 'active', clone_source_instance_id = NULL, status = 'pending', restart_count = 0, last_restart_at = NULL, updated_at = NOW()
 WHERE server_id = $1 AND deleted_at IS NULL;
 
 -- name: DeploymentInstancePrepareRetry :one
+-- Increments restart_count and resets last_restart_at to now.
+-- This is called when an instance is being restarted (not just re-assigned).
+UPDATE deployment_instances
+SET server_id = NULL, vm_id = NULL, role = 'active', clone_source_instance_id = NULL,
+    status = 'pending',
+    restart_count = restart_count + 1,
+    last_restart_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING *;
+
+-- name: DeploymentInstanceResetForRetry :one
+-- Non-restart reset: clears server/VM assignment without incrementing restart_count.
+-- Used for planned re-assignments (volume pinning, draining).
 UPDATE deployment_instances
 SET server_id = NULL, vm_id = NULL, role = 'active', clone_source_instance_id = NULL, status = 'pending', updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
@@ -1313,6 +1327,23 @@ WHERE project_id = $1
 ORDER BY running_at DESC
 LIMIT 1;
 
+-- name: ProjectFindAllWithGitHub :many
+-- Returns all projects that have a GitHub repository configured.
+SELECT * FROM projects WHERE github_repository != '' ORDER BY created_at DESC;
+
+-- name: DeploymentLatestSuccessfulForProject :one
+-- Returns the most recent successful (running) production deployment for a project+service.
+SELECT * FROM deployments
+WHERE project_id = $1
+  AND service_id = $2
+  AND deployment_kind = 'production'
+  AND running_at IS NOT NULL
+  AND stopped_at IS NULL
+  AND failed_at IS NULL
+  AND deleted_at IS NULL
+ORDER BY running_at DESC
+LIMIT 1;
+
 -- name: DeploymentLatestRunningByServiceID :one
 SELECT * FROM deployments
 WHERE service_id = $1
@@ -1347,6 +1378,31 @@ WHERE di.deployment_id = $1
   AND vm.deleted_at IS NULL
   AND vm.status = 'running'
 ORDER BY vm.ip_address;
+
+-- Circuit breaker: trips a deployment's restart circuit when too many restarts occur
+-- within the budget window.
+-- name: DeploymentCircuitBreak :one
+UPDATE deployments
+SET circuit_broken = true, updated_at = NOW()
+WHERE id = $1
+  AND circuit_broken = false
+  AND deleted_at IS NULL
+RETURNING *;
+
+-- Resets a deployment's circuit breaker (e.g., after a successful promotion).
+-- name: DeploymentResetCircuit :exec
+UPDATE deployments
+SET circuit_broken = false, updated_at = NOW()
+WHERE id = $1 AND deleted_at IS NULL;
+
+-- Returns instances that have exceeded their restart budget.
+-- name: DeploymentInstanceFindExceedingRestartBudget :many
+SELECT di.* FROM deployment_instances di
+WHERE di.deployment_id = $1
+  AND di.deleted_at IS NULL
+  AND di.status IN ('starting', 'running', 'failed')
+  AND di.restart_count >= $2
+  AND (di.last_restart_at IS NULL OR di.last_restart_at > NOW() - ($3::bigint * INTERVAL '1 second'));
 
 -- name: DeploymentFindRecentWithProject :many
 SELECT
