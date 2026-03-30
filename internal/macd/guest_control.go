@@ -94,6 +94,35 @@ func streamGuestHTTP(ctx context.Context, conn net.Conn, argv []string, cwd stri
 	return &upgradedConn{Conn: conn, reader: reader}, nil
 }
 
+func streamGuestTCPHTTP(ctx context.Context, conn net.Conn, port int) (io.ReadWriteCloser, error) {
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	} else {
+		_ = conn.SetDeadline(time.Now().Add(guestControlTimeout))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost/tcp-connect?port="+url.QueryEscape(fmt.Sprintf("%d", port)), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "kindling-tcp-v1")
+	if err := req.Write(conn); err != nil {
+		return nil, err
+	}
+	reader := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(reader, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		defer resp.Body.Close()
+		msg, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("guest tcp stream: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+	}
+	_ = conn.SetDeadline(time.Time{})
+	return &upgradedConn{Conn: conn, reader: reader}, nil
+}
+
 func doGuestHTTPRequest(ctx context.Context, conn net.Conn, method, reqPath string, body io.Reader, contentType string) (*http.Response, error) {
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)

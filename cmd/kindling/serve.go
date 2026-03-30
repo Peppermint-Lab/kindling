@@ -299,10 +299,16 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	}
 
 	// API server.
-	if components.api || components.worker {
+	// In split-mode deployments the dedicated worker process should not also
+	// compete for the API listen socket; only the API component serves HTTP.
+	if shouldServeHTTP(components) {
 		return startAPIServer(ctx, q, cfgMgr, dashboardEvents, recs.deployment, recs.ciJob, recs.sandbox, recs.sandboxTpl, sandboxSvc, ciSvc, listenAddr)
 	}
 
 	<-ctx.Done()
 	return nil
+}
+
+func shouldServeHTTP(components serveComponents) bool {
+	return components.api
 }

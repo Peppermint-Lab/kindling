@@ -10,12 +10,15 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
+
+var closedPoolExitOnce sync.Once
 
 func hostname() string {
 	h, _ := os.Hostname()
@@ -140,6 +143,7 @@ func runServerHeartbeat(ctx context.Context, q *queries.Queries, serverID uuid.U
 			return
 		case <-ticker.C:
 			if err := q.ServerHeartbeat(ctx, pgtype.UUID{Bytes: serverID, Valid: true}); err != nil {
+				maybeExitForClosedPool(err, "server heartbeat")
 				slog.Error("server heartbeat failed", "error", err)
 			}
 		}
@@ -163,6 +167,7 @@ func runServerComponentHeartbeat(ctx context.Context, q *queries.Queries, server
 			LastSuccessAt: &now,
 			Metadata:      metadata,
 		}); err != nil && ctx.Err() == nil {
+			maybeExitForClosedPool(err, "component heartbeat")
 			slog.Warn("component status heartbeat", "component", component, "error", err)
 		}
 	}
@@ -178,4 +183,17 @@ func runServerComponentHeartbeat(ctx context.Context, q *queries.Queries, server
 			write()
 		}
 	}
+}
+
+func maybeExitForClosedPool(err error, subsystem string) {
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "closed pool") {
+		return
+	}
+	closedPoolExitOnce.Do(func() {
+		slog.Error("database pool closed unexpectedly; exiting for systemd restart", "subsystem", subsystem, "error", err)
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			os.Exit(1)
+		}()
+	})
 }

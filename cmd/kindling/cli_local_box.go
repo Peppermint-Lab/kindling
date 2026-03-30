@@ -17,6 +17,8 @@ func cliLocalBoxCmd() *cobra.Command {
 	cmd.AddCommand(cliLocalBoxStopCmd())
 	cmd.AddCommand(cliLocalBoxStatusCmd())
 	cmd.AddCommand(cliLocalBoxShellCmd())
+	cmd.AddCommand(cliLocalBoxExecCmd())
+	cmd.AddCommand(cliLocalBoxPortForwardCmd())
 	return cmd
 }
 
@@ -99,4 +101,47 @@ func cliLocalBoxShellCmd() *cobra.Command {
 			return api.RunShell(cmd.Context(), id, []string{"sh"}, "/", nil)
 		},
 	}
+}
+
+func cliLocalBoxExecCmd() *cobra.Command {
+	var cwdFlag string
+	var envFlags []string
+
+	cmd := &cobra.Command{
+		Use:   "exec -- <command>",
+		Short: "Execute a command in the box VM",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			api, err := localAPI()
+			if err != nil {
+				return err
+			}
+
+			var box map[string]any
+			if err := api.doContext(cmd.Context(), "POST", "/box.start", nil, &box); err != nil {
+				return fmt.Errorf("start box: %w", err)
+			}
+			id, _ := box["id"].(string)
+			if id == "" {
+				return fmt.Errorf("box not configured")
+			}
+
+			var req = map[string]any{"id": id, "argv": args, "cwd": cwdFlag, "env": envFlags}
+			var out struct {
+				ExitCode int    `json:"exit_code"`
+				Output   string `json:"output"`
+			}
+			if err := api.doContext(cmd.Context(), "POST", "/vm.exec", req, &out); err != nil {
+				return err
+			}
+			fmt.Print(out.Output)
+			if out.ExitCode != 0 {
+				return fmt.Errorf("command exited with code %d", out.ExitCode)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&cwdFlag, "cwd", "/", "Working directory")
+	cmd.Flags().StringArrayVar(&envFlags, "env", nil, "Environment variables (KEY=value)")
+	return cmd
 }

@@ -1,4 +1,4 @@
-.PHONY: build dev db db-down migrate sqlc vet clean e2e-drain \
+.PHONY: build dev db db-vm db-down migrate sqlc vet clean e2e-drain \
        landing-dev landing-build \
        install-deps remote-provision remote-sync remote-build remote-initramfs remote-run \
        dev-up dev-down dashboard-build remote-dashboard remote-restart
@@ -81,6 +81,10 @@ initramfs:
 # Start local Postgres (see contrib/dev-postgres.sh; no Docker required)
 db:
 	@bash contrib/dev-postgres.sh start
+
+# Start local Postgres inside the persistent kindling-mac box VM (macOS)
+db-vm:
+	@bash contrib/dev-postgres-vm.sh start
 
 # Stop local Postgres
 db-down:

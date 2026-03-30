@@ -80,6 +80,27 @@ See [[Kindling/notes/Development]] for the full contributor guide. The short ver
 - `make dev-up` and `make dev-down` manage the remote development loop
 - Kernel and initramfs helpers exist for VM-backed local development, especially on macOS
 
+### macOS dogfood flow: Postgres inside `kindling-mac`
+
+If you want to dogfood the local VM product while keeping `kindling serve` on macOS, use the persistent `box` VM as the home for your dev PostgreSQL instance.
+
+```bash
+kindling-mac
+kindling local box start
+contrib/dev-postgres-vm.sh init
+kindling local box port-forward --guest-port 5432 --host-port 5432
+
+# In another terminal
+DATABASE_URL=postgres://kindling:kindling@127.0.0.1:5432/kindling?sslmode=disable \
+  bin/kindling serve
+```
+
+Notes:
+
+- This path uses native PostgreSQL inside the box VM, not Docker/Podman.
+- `make db-vm` is a shorthand for `contrib/dev-postgres-vm.sh start`.
+- Containerized Postgres inside the box is intentionally out of scope for this dev workflow.
+
 ## Docs
 
 All canonical documentation lives in the Obsidian vault at `~/Desktop/vault/Kindling/`:

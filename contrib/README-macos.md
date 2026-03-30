@@ -145,6 +145,23 @@ box:
       guest_path: "/workspace"   # Linux mount point
 ```
 
+## Dogfood: VM-hosted dev Postgres
+
+You can keep `kindling serve` on macOS while hosting the dev PostgreSQL instance inside the persistent `box` VM.
+
+```bash
+kindling-mac
+kindling local box start
+contrib/dev-postgres-vm.sh init
+kindling local box port-forward --guest-port 5432 --host-port 5432
+
+# In another terminal
+DATABASE_URL=postgres://kindling:kindling@127.0.0.1:5432/kindling?sslmode=disable \
+  bin/kindling serve
+```
+
+This flow deliberately uses native PostgreSQL inside the Linux guest instead of a guest-side container runtime. The persistent box VM keeps the database files across restarts, and the foreground `port-forward` command exposes guest `127.0.0.1:5432` on macOS loopback so the host control plane can connect normally.
+
 ## Rosetta (x86_64 on Apple Silicon)
 
 Run Intel/AMD binaries inside the Linux VM without emulation:

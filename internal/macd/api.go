@@ -48,6 +48,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	mux.HandleFunc("/vm.delete", withVMManager(s.mgr, s.handleVMDelete))
 	mux.HandleFunc("/vm.shell", withVMManager(s.mgr, s.handleVMShell))
 	mux.HandleFunc("/vm.exec", withVMManager(s.mgr, s.handleVMExec))
+	mux.HandleFunc("/vm.tcp", withVMManager(s.mgr, s.handleVMTCP))
 	mux.HandleFunc("/box.start", withVMManager(s.mgr, s.handleBoxStart))
 	mux.HandleFunc("/box.stop", withVMManager(s.mgr, s.handleBoxStop))
 	mux.HandleFunc("/box.status", withVMManager(s.mgr, s.handleBoxStatus))
@@ -239,6 +240,59 @@ func (s *Server) handleVMExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"exit_code": code, "output": output})
+}
+
+func (s *Server) handleVMTCP(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID   string `json:"id"`
+		Port int    `json:"port"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "decode request: %v", err)
+		return
+	}
+	if req.Port <= 0 || req.Port > 65535 {
+		writeError(w, 400, "invalid port")
+		return
+	}
+
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		writeError(w, 500, "tcp stream: hijacking not supported")
+		return
+	}
+	mgr := vmManagerFrom(r.Context())
+	stream, err := mgr.OpenTCP(r.Context(), req.ID, req.Port)
+	if err != nil {
+		writeError(w, 500, "tcp stream: %v", err)
+		return
+	}
+	conn, rw, err := hijacker.Hijack()
+	if err != nil {
+		stream.Close()
+		return
+	}
+	client := &upgradedConn{Conn: conn, reader: rw.Reader}
+	resp := &http.Response{
+		StatusCode: http.StatusSwitchingProtocols,
+		Status:     fmt.Sprintf("%d %s", http.StatusSwitchingProtocols, http.StatusText(http.StatusSwitchingProtocols)),
+		ProtoMajor: 1,
+		ProtoMinor: 1,
+		Header:     make(http.Header),
+	}
+	resp.Header.Set("Connection", "Upgrade")
+	resp.Header.Set("Upgrade", "kindling-tcp-v1")
+	if err := resp.Write(rw); err != nil {
+		stream.Close()
+		conn.Close()
+		return
+	}
+	if err := rw.Flush(); err != nil {
+		stream.Close()
+		conn.Close()
+		return
+	}
+	proxyBidirectional(client, stream)
 }
 
 func (s *Server) handleBoxStart(w http.ResponseWriter, r *http.Request) {

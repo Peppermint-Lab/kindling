@@ -30,9 +30,9 @@ const (
 	vsockStatsPort     = 1026
 	vsockTCPBridgePort = 1025
 
-	// Guest networking.
-	guestNATCIDR = "10.0.0.1/31"
-	guestGW      = "10.0.0.0"
+	// Guest networking. Apple VZ NAT presents the host bridge on 192.168.64.1.
+	guestNATCIDR = "192.168.64.2/24"
+	guestGW      = "192.168.64.1"
 )
 
 // VM represents a running microVM instance.
@@ -42,10 +42,11 @@ type localVM struct {
 	hostGroup string // "box" or "temp"
 	status    string
 
-	vm       *vz.VirtualMachine
-	vsock    *vz.VirtioSocketDevice
-	hostPort int
-	appDir   string
+	vm            *vz.VirtualMachine
+	vsock         *vz.VirtioSocketDevice
+	controlDialer func() (net.Conn, error)
+	hostPort      int
+	appDir        string
 
 	mu        sync.Mutex
 	cancel    context.CancelFunc
@@ -378,6 +379,9 @@ func (m *Manager) bootVM(ctx context.Context, vm *VM, hostGroup string, cfg Grou
 	if len(socketDevices) > 0 {
 		vsockDev = socketDevices[0]
 		lvm.vsock = vsockDev
+		lvm.controlDialer = func() (net.Conn, error) {
+			return vsockDev.Connect(vsockControlPort)
+		}
 		listener, err := vsockDev.Listen(vsockConfigPort)
 		if err != nil {
 			cancel()
@@ -706,11 +710,11 @@ func (m *Manager) Exec(ctx context.Context, id string, argv []string, cwd string
 	lvm, ok := m.vms[id]
 	m.mu.Unlock()
 
-	if !ok || lvm.vsock == nil {
+	if !ok {
 		return 0, "", fmt.Errorf("vm not running: %s", id)
 	}
 
-	conn, err := lvm.vsock.Connect(vsockControlPort)
+	conn, err := lvm.openControlConn()
 	if err != nil {
 		return 0, "", fmt.Errorf("vsock connect: %w", err)
 	}
@@ -729,11 +733,11 @@ func (m *Manager) OpenShell(ctx context.Context, id string, argv []string, cwd s
 	lvm, ok := m.vms[id]
 	m.mu.Unlock()
 
-	if !ok || lvm.vsock == nil {
+	if !ok {
 		return nil, fmt.Errorf("vm not running: %s", id)
 	}
 
-	conn, err := lvm.vsock.Connect(vsockControlPort)
+	conn, err := lvm.openControlConn()
 	if err != nil {
 		return nil, fmt.Errorf("vsock connect: %w", err)
 	}
@@ -749,6 +753,41 @@ func (m *Manager) OpenShell(ctx context.Context, id string, argv []string, cwd s
 		return nil, err
 	}
 	return stream, nil
+}
+
+// OpenTCP opens a proxied raw TCP stream to guest loopback on the requested port.
+func (m *Manager) OpenTCP(ctx context.Context, id string, port int) (io.ReadWriteCloser, error) {
+	m.mu.Lock()
+	lvm, ok := m.vms[id]
+	m.mu.Unlock()
+
+	if !ok {
+		return nil, fmt.Errorf("vm not running: %s", id)
+	}
+	if port <= 0 || port > 65535 {
+		return nil, fmt.Errorf("invalid guest port %d", port)
+	}
+
+	conn, err := lvm.openControlConn()
+	if err != nil {
+		return nil, fmt.Errorf("vsock connect: %w", err)
+	}
+	stream, err := streamGuestTCPHTTP(ctx, conn, port)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return stream, nil
+}
+
+func (lvm *localVM) openControlConn() (net.Conn, error) {
+	if lvm.controlDialer != nil {
+		return lvm.controlDialer()
+	}
+	if lvm.vsock == nil {
+		return nil, fmt.Errorf("control socket unavailable")
+	}
+	return lvm.vsock.Connect(vsockControlPort)
 }
 
 // ToPublic converts a localVM to a public VM info struct.

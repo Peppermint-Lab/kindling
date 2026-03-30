@@ -111,19 +111,19 @@ func setupWorker(
 
 	deploymentReconciler := reconciler.New(reconciler.Config{
 		Name:      "deployment",
-		Reconcile: deployer.ReconcileDeployment,
+		Reconcile: failFastOnClosedPool("deployment", deployer.ReconcileDeployment),
 	})
 	deployer.SetReconciler(deploymentReconciler)
 
 	buildReconciler := reconciler.New(reconciler.Config{
 		Name:      "build",
-		Reconcile: bldr.ReconcileBuild,
+		Reconcile: failFastOnClosedPool("build", bldr.ReconcileBuild),
 	})
 
 	ciSvc := ciworker.NewJobService(q, cfgMgr, serverID)
 	ciJobReconciler := reconciler.New(reconciler.Config{
 		Name:      "ci_job",
-		Reconcile: ciSvc.Reconcile,
+		Reconcile: failFastOnClosedPool("ci_job", ciSvc.Reconcile),
 	})
 
 	vmReconciler := reconciler.New(reconciler.Config{
@@ -149,15 +149,15 @@ func setupWorker(
 
 	serverReconciler := reconciler.New(reconciler.Config{
 		Name:      "server",
-		Reconcile: serverDrainHandler.Reconcile,
+		Reconcile: failFastOnClosedPool("server", serverDrainHandler.Reconcile),
 	})
 	migrationReconciler := reconciler.New(reconciler.Config{
 		Name:      "instance_migration",
-		Reconcile: migrationHandler.Reconcile,
+		Reconcile: failFastOnClosedPool("instance_migration", migrationHandler.Reconcile),
 	})
 	volumeOpReconciler := reconciler.New(reconciler.Config{
 		Name:      "project_volume_operation",
-		Reconcile: volumeHandler.Reconcile,
+		Reconcile: failFastOnClosedPool("project_volume_operation", volumeHandler.Reconcile),
 	})
 	deployer.SetServerScheduler(serverReconciler)
 
@@ -168,11 +168,11 @@ func setupWorker(
 	}
 	sandboxReconciler := reconciler.New(reconciler.Config{
 		Name:      "sandbox",
-		Reconcile: sandboxSvc.Reconcile,
+		Reconcile: failFastOnClosedPool("sandbox", sandboxSvc.Reconcile),
 	})
 	sandboxTemplateReconciler := reconciler.New(reconciler.Config{
 		Name:      "sandbox_template",
-		Reconcile: sandboxSvc.ReconcileTemplate,
+		Reconcile: failFastOnClosedPool("sandbox_template", sandboxSvc.ReconcileTemplate),
 	})
 
 	return workerSetupResult{
@@ -193,6 +193,16 @@ func setupWorker(
 			sandboxTpl: sandboxTemplateReconciler,
 		},
 	}, nil
+}
+
+func failFastOnClosedPool(name string, reconcileFn reconciler.ReconcileFunc) reconciler.ReconcileFunc {
+	return func(ctx context.Context, id uuid.UUID) error {
+		err := reconcileFn(ctx, id)
+		if err != nil {
+			maybeExitForClosedPool(err, name+" reconcile")
+		}
+		return err
+	}
 }
 
 // startReconcilers launches all reconciler goroutines and performs startup

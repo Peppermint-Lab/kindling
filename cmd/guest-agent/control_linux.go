@@ -94,6 +94,9 @@ func handleExecRequest(c net.Conn, req *http.Request) {
 			exitCode = ee.ExitCode()
 		} else {
 			exitCode = 1
+			if len(out) == 0 {
+				out = []byte(err.Error())
+			}
 		}
 	}
 	b, _ := json.Marshal(guestExecResponse{ExitCode: exitCode, Output: string(out)})
