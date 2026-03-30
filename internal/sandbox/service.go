@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	HostGroupLinux = "linux-sandbox"
-	HostGroupMac   = "mac-sandbox"
+	HostGroupLinux = "linux-remote-vm"
+	HostGroupMac   = "mac-remote-vm"
 
 	DefaultBaseImageRef      = "docker.io/library/alpine:latest"
 	DefaultPublishedHTTPPort = 3000
@@ -37,7 +37,7 @@ type Service struct {
 }
 
 func (s *Service) Reconcile(ctx context.Context, sandboxID uuid.UUID) error {
-	sb, err := s.Q.SandboxFirstByID(ctx, pguuid.ToPgtype(sandboxID))
+	sb, err := s.Q.RemoteVMFirstByID(ctx, pguuid.ToPgtype(sandboxID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
@@ -59,7 +59,7 @@ func (s *Service) Reconcile(ctx context.Context, sandboxID uuid.UUID) error {
 		if err := s.assignSandbox(ctx, sb); err != nil {
 			return err
 		}
-		sb, err = s.Q.SandboxFirstByID(ctx, sb.ID)
+		sb, err = s.Q.RemoteVMFirstByID(ctx, sb.ID)
 		if err != nil {
 			return fmt.Errorf("re-fetch sandbox after assign: %w", err)
 		}
@@ -80,7 +80,7 @@ func (s *Service) Reconcile(ctx context.Context, sandboxID uuid.UUID) error {
 }
 
 func (s *Service) ReconcileTemplate(ctx context.Context, templateID uuid.UUID) error {
-	tpl, err := s.Q.SandboxTemplateFirstByID(ctx, pguuid.ToPgtype(templateID))
+	tpl, err := s.Q.RemoteVMTemplateFirstByID(ctx, pguuid.ToPgtype(templateID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
@@ -90,15 +90,15 @@ func (s *Service) ReconcileTemplate(ctx context.Context, templateID uuid.UUID) e
 	if tpl.DeletedAt.Valid || tpl.Status == "ready" || tpl.Status == "deleted" {
 		return nil
 	}
-	if !tpl.SourceSandboxID.Valid {
-		_, _ = s.Q.SandboxTemplateMarkFailed(ctx, queries.SandboxTemplateMarkFailedParams{
+	if !tpl.SourceRemoteVmID.Valid {
+		_, _ = s.Q.RemoteVMTemplateMarkFailed(ctx, queries.RemoteVMTemplateMarkFailedParams{
 			ID:             tpl.ID,
 			FailureMessage: "template is missing source sandbox",
 		})
 		return nil
 	}
 
-	sb, err := s.Q.SandboxFirstByID(ctx, tpl.SourceSandboxID)
+	sb, err := s.Q.RemoteVMFirstByID(ctx, tpl.SourceRemoteVmID)
 	if err != nil {
 		return fmt.Errorf("fetch source sandbox: %w", err)
 	}
@@ -106,7 +106,7 @@ func (s *Service) ReconcileTemplate(ctx context.Context, templateID uuid.UUID) e
 		return nil
 	}
 	if sb.DesiredState != "stopped" {
-		if _, err := s.Q.SandboxUpdateDesiredState(ctx, queries.SandboxUpdateDesiredStateParams{
+		if _, err := s.Q.RemoteVMUpdateDesiredState(ctx, queries.RemoteVMUpdateDesiredStateParams{
 			ID:           sb.ID,
 			DesiredState: "stopped",
 		}); err != nil {
@@ -120,13 +120,13 @@ func (s *Service) ReconcileTemplate(ctx context.Context, templateID uuid.UUID) e
 
 	snapshotRef, err := s.Runtime.CreateTemplate(ctx, uuid.UUID(sb.ID.Bytes))
 	if err != nil {
-		_, _ = s.Q.SandboxTemplateMarkFailed(ctx, queries.SandboxTemplateMarkFailedParams{
+		_, _ = s.Q.RemoteVMTemplateMarkFailed(ctx, queries.RemoteVMTemplateMarkFailedParams{
 			ID:             tpl.ID,
 			FailureMessage: err.Error(),
 		})
 		return fmt.Errorf("create runtime template: %w", err)
 	}
-	if _, err := s.Q.SandboxTemplateMarkReady(ctx, queries.SandboxTemplateMarkReadyParams{
+	if _, err := s.Q.RemoteVMTemplateMarkReady(ctx, queries.RemoteVMTemplateMarkReadyParams{
 		ID:          tpl.ID,
 		ServerID:    pguuid.ToPgtype(s.ServerID),
 		SnapshotRef: snapshotRef,
@@ -136,7 +136,7 @@ func (s *Service) ReconcileTemplate(ctx context.Context, templateID uuid.UUID) e
 	return nil
 }
 
-func (s *Service) assignSandbox(ctx context.Context, sb queries.Sandbox) error {
+func (s *Service) assignSandbox(ctx context.Context, sb queries.RemoteVm) error {
 	hostGroup := strings.TrimSpace(sb.HostGroup)
 	if hostGroup == "" {
 		hostGroup = defaultHostGroup()
@@ -144,9 +144,9 @@ func (s *Service) assignSandbox(ctx context.Context, sb queries.Sandbox) error {
 	backend := strings.TrimSpace(sb.Backend)
 	arch := strings.TrimSpace(sb.Arch)
 
-	var tpl *queries.SandboxTemplate
+	var tpl *queries.RemoteVmTemplate
 	if sb.TemplateID.Valid {
-		v, err := s.Q.SandboxTemplateFirstByID(ctx, sb.TemplateID)
+		v, err := s.Q.RemoteVMTemplateFirstByID(ctx, sb.TemplateID)
 		if err == nil {
 			tpl = &v
 			hostGroup = firstNonEmpty(tpl.HostGroup, hostGroup)
@@ -162,7 +162,7 @@ func (s *Service) assignSandbox(ctx context.Context, sb queries.Sandbox) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.Q.SandboxUpdatePlacement(ctx, queries.SandboxUpdatePlacementParams{
+	_, err = s.Q.RemoteVMUpdatePlacement(ctx, queries.RemoteVMUpdatePlacementParams{
 		ID:        sb.ID,
 		HostGroup: hostGroup,
 		Backend:   resolvedBackend,
@@ -175,7 +175,7 @@ func (s *Service) assignSandbox(ctx context.Context, sb queries.Sandbox) error {
 	return nil
 }
 
-func (s *Service) pickServer(ctx context.Context, hostGroup, backend, arch string, tpl *queries.SandboxTemplate) (uuid.UUID, string, string, error) {
+func (s *Service) pickServer(ctx context.Context, hostGroup, backend, arch string, tpl *queries.RemoteVmTemplate) (uuid.UUID, string, string, error) {
 	if tpl != nil && tpl.ServerID.Valid {
 		return uuid.UUID(tpl.ServerID.Bytes), firstNonEmpty(tpl.Backend, backend), firstNonEmpty(tpl.Arch, arch), nil
 	}
@@ -202,24 +202,24 @@ func (s *Service) pickServer(ctx context.Context, hostGroup, backend, arch strin
 			continue
 		}
 		meta := metaByServer[srv.ID.Bytes]
-		if !meta.SandboxEnabled {
+		if !meta.RemoteVmEnabled {
 			continue
 		}
-		if backend != "" && meta.SandboxBackend != "" && meta.SandboxBackend != backend {
+		if backend != "" && meta.RemoteVmBackend != "" && meta.RemoteVmBackend != backend {
 			continue
 		}
-		if arch != "" && meta.SandboxArch != "" && meta.SandboxArch != arch {
+		if arch != "" && meta.RemoteVmArch != "" && meta.RemoteVmArch != arch {
 			continue
 		}
-		if hostGroup == HostGroupMac && meta.SandboxBackend != "apple-vz" {
+		if hostGroup == HostGroupMac && meta.RemoteVmBackend != "apple-vz" {
 			continue
 		}
-		if hostGroup == HostGroupLinux && meta.SandboxBackend != "cloud-hypervisor" {
+		if hostGroup == HostGroupLinux && meta.RemoteVmBackend != "cloud-hypervisor" {
 			continue
 		}
 		chosen = uuid.UUID(srv.ID.Bytes)
-		chosenBackend = firstNonEmpty(meta.SandboxBackend, backend)
-		chosenArch = firstNonEmpty(meta.SandboxArch, arch, runtime.GOARCH)
+		chosenBackend = firstNonEmpty(meta.RemoteVmBackend, backend)
+		chosenArch = firstNonEmpty(meta.RemoteVmArch, arch, runtime.GOARCH)
 		break
 	}
 	if chosen == uuid.Nil {
@@ -228,9 +228,9 @@ func (s *Service) pickServer(ctx context.Context, hostGroup, backend, arch strin
 	return chosen, chosenBackend, chosenArch, nil
 }
 
-func (s *Service) reconcileStopped(ctx context.Context, sb queries.Sandbox) error {
+func (s *Service) reconcileStopped(ctx context.Context, sb queries.RemoteVm) error {
 	if !sb.VmID.Valid {
-		_, err := s.Q.SandboxUpdateObservedState(ctx, queries.SandboxUpdateObservedStateParams{
+		_, err := s.Q.RemoteVMUpdateObservedState(ctx, queries.RemoteVMUpdateObservedStateParams{
 			ID:             sb.ID,
 			ObservedState:  "stopped",
 			RuntimeUrl:     "",
@@ -243,7 +243,7 @@ func (s *Service) reconcileStopped(ctx context.Context, sb queries.Sandbox) erro
 		return fmt.Errorf("fetch vm: %w", err)
 	}
 	if vm.Status == "suspended" || sb.ObservedState == "stopped" {
-		_, err := s.Q.SandboxUpdateObservedState(ctx, queries.SandboxUpdateObservedStateParams{
+		_, err := s.Q.RemoteVMUpdateObservedState(ctx, queries.RemoteVMUpdateObservedStateParams{
 			ID:             sb.ID,
 			ObservedState:  "stopped",
 			RuntimeUrl:     "",
@@ -252,7 +252,7 @@ func (s *Service) reconcileStopped(ctx context.Context, sb queries.Sandbox) erro
 		return err
 	}
 	if err := s.Runtime.Suspend(ctx, uuid.UUID(sb.ID.Bytes)); err != nil {
-		_, _ = s.Q.SandboxUpdateObservedState(ctx, queries.SandboxUpdateObservedStateParams{
+		_, _ = s.Q.RemoteVMUpdateObservedState(ctx, queries.RemoteVMUpdateObservedStateParams{
 			ID:             sb.ID,
 			ObservedState:  "failed",
 			RuntimeUrl:     "",
@@ -266,7 +266,7 @@ func (s *Service) reconcileStopped(ctx context.Context, sb queries.Sandbox) erro
 	}); err != nil {
 		return fmt.Errorf("mark vm suspended: %w", err)
 	}
-	_, err = s.Q.SandboxUpdateObservedState(ctx, queries.SandboxUpdateObservedStateParams{
+	_, err = s.Q.RemoteVMUpdateObservedState(ctx, queries.RemoteVMUpdateObservedStateParams{
 		ID:             sb.ID,
 		ObservedState:  "stopped",
 		RuntimeUrl:     "",
@@ -275,7 +275,7 @@ func (s *Service) reconcileStopped(ctx context.Context, sb queries.Sandbox) erro
 	return err
 }
 
-func (s *Service) reconcileRunning(ctx context.Context, sb queries.Sandbox) error {
+func (s *Service) reconcileRunning(ctx context.Context, sb queries.RemoteVm) error {
 	if sb.VmID.Valid {
 		vm, err := s.Q.VMFirstByID(ctx, sb.VmID)
 		if err == nil {
@@ -284,7 +284,7 @@ func (s *Service) reconcileRunning(ctx context.Context, sb queries.Sandbox) erro
 			}
 			if vm.Status == "running" && s.Runtime.Healthy(ctx, uuid.UUID(sb.ID.Bytes)) {
 				_ = s.syncSandboxSSHAccess(ctx, sb)
-				_, err := s.Q.SandboxUpdateObservedState(ctx, queries.SandboxUpdateObservedStateParams{
+				_, err := s.Q.RemoteVMUpdateObservedState(ctx, queries.RemoteVMUpdateObservedStateParams{
 					ID:             sb.ID,
 					ObservedState:  "running",
 					RuntimeUrl:     sb.RuntimeUrl,
@@ -294,7 +294,7 @@ func (s *Service) reconcileRunning(ctx context.Context, sb queries.Sandbox) erro
 			}
 			_ = s.Runtime.Stop(ctx, uuid.UUID(sb.ID.Bytes))
 			_ = s.Q.VMSoftDelete(ctx, sb.VmID)
-			if _, err := s.Q.SandboxClearVM(ctx, sb.ID); err != nil {
+			if _, err := s.Q.RemoteVMClearVM(ctx, sb.ID); err != nil {
 				return fmt.Errorf("clear stale vm: %w", err)
 			}
 			sb.VmID = pgtype.UUID{}
@@ -302,7 +302,7 @@ func (s *Service) reconcileRunning(ctx context.Context, sb queries.Sandbox) erro
 	}
 
 	if sb.TemplateID.Valid {
-		tpl, err := s.Q.SandboxTemplateFirstByID(ctx, sb.TemplateID)
+		tpl, err := s.Q.RemoteVMTemplateFirstByID(ctx, sb.TemplateID)
 		if err != nil {
 			return fmt.Errorf("fetch template: %w", err)
 		}
@@ -317,7 +317,7 @@ func (s *Service) reconcileRunning(ctx context.Context, sb queries.Sandbox) erro
 	return s.startCold(ctx, sb)
 }
 
-func (s *Service) resumeSandbox(ctx context.Context, sb queries.Sandbox, vm queries.Vm) error {
+func (s *Service) resumeSandbox(ctx context.Context, sb queries.RemoteVm, vm queries.Vm) error {
 	runtimeURL, err := s.Runtime.Resume(ctx, uuid.UUID(sb.ID.Bytes))
 	if err != nil {
 		return fmt.Errorf("resume sandbox: %w", err)
@@ -334,7 +334,7 @@ func (s *Service) resumeSandbox(ctx context.Context, sb queries.Sandbox, vm quer
 	}); err != nil {
 		return fmt.Errorf("mark resumed vm running: %w", err)
 	}
-	_, err = s.Q.SandboxUpdateObservedState(ctx, queries.SandboxUpdateObservedStateParams{
+	_, err = s.Q.RemoteVMUpdateObservedState(ctx, queries.RemoteVMUpdateObservedStateParams{
 		ID:             sb.ID,
 		ObservedState:  "running",
 		RuntimeUrl:     runtimeURL,
@@ -347,7 +347,7 @@ func (s *Service) resumeSandbox(ctx context.Context, sb queries.Sandbox, vm quer
 	return nil
 }
 
-func (s *Service) startCold(ctx context.Context, sb queries.Sandbox) error {
+func (s *Service) startCold(ctx context.Context, sb queries.RemoteVm) error {
 	inst := kruntime.Instance{
 		ID:       uuid.UUID(sb.ID.Bytes),
 		ImageRef: firstNonEmpty(strings.TrimSpace(sb.BaseImageRef), DefaultBaseImageRef),
@@ -358,7 +358,7 @@ func (s *Service) startCold(ctx context.Context, sb queries.Sandbox) error {
 	}
 	runtimeURL, err := s.Runtime.Start(ctx, inst)
 	if err != nil {
-		_, _ = s.Q.SandboxUpdateObservedState(ctx, queries.SandboxUpdateObservedStateParams{
+		_, _ = s.Q.RemoteVMUpdateObservedState(ctx, queries.RemoteVMUpdateObservedStateParams{
 			ID:             sb.ID,
 			ObservedState:  "failed",
 			RuntimeUrl:     "",
@@ -370,7 +370,7 @@ func (s *Service) startCold(ctx context.Context, sb queries.Sandbox) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.Q.SandboxAttachVM(ctx, queries.SandboxAttachVMParams{
+	_, err = s.Q.RemoteVMAttachVM(ctx, queries.RemoteVMAttachVMParams{
 		ID:            sb.ID,
 		VmID:          pguuid.ToPgtype(vmID),
 		ObservedState: "running",
@@ -383,7 +383,7 @@ func (s *Service) startCold(ctx context.Context, sb queries.Sandbox) error {
 	return nil
 }
 
-func (s *Service) startClone(ctx context.Context, sb queries.Sandbox, tpl queries.SandboxTemplate) error {
+func (s *Service) startClone(ctx context.Context, sb queries.RemoteVm, tpl queries.RemoteVmTemplate) error {
 	inst := kruntime.Instance{
 		ID:       uuid.UUID(sb.ID.Bytes),
 		ImageRef: firstNonEmpty(strings.TrimSpace(sb.BaseImageRef), strings.TrimSpace(tpl.BaseImageRef), DefaultBaseImageRef),
@@ -394,7 +394,7 @@ func (s *Service) startClone(ctx context.Context, sb queries.Sandbox, tpl querie
 	}
 	runtimeURL, meta, err := s.Runtime.StartClone(ctx, inst, tpl.SnapshotRef, uuid.Nil)
 	if err != nil {
-		_, _ = s.Q.SandboxUpdateObservedState(ctx, queries.SandboxUpdateObservedStateParams{
+		_, _ = s.Q.RemoteVMUpdateObservedState(ctx, queries.RemoteVMUpdateObservedStateParams{
 			ID:             sb.ID,
 			ObservedState:  "failed",
 			RuntimeUrl:     "",
@@ -406,7 +406,7 @@ func (s *Service) startClone(ctx context.Context, sb queries.Sandbox, tpl querie
 	if err != nil {
 		return err
 	}
-	_, err = s.Q.SandboxAttachVM(ctx, queries.SandboxAttachVMParams{
+	_, err = s.Q.RemoteVMAttachVM(ctx, queries.RemoteVMAttachVMParams{
 		ID:            sb.ID,
 		VmID:          pguuid.ToPgtype(vmID),
 		ObservedState: "running",
@@ -419,18 +419,18 @@ func (s *Service) startClone(ctx context.Context, sb queries.Sandbox, tpl querie
 	return nil
 }
 
-func (s *Service) reconcileDelete(ctx context.Context, sb queries.Sandbox) error {
+func (s *Service) reconcileDelete(ctx context.Context, sb queries.RemoteVm) error {
 	if sb.ServerID.Valid && uuid.UUID(sb.ServerID.Bytes) == s.ServerID {
 		_ = s.Runtime.Stop(ctx, uuid.UUID(sb.ID.Bytes))
 	}
 	if sb.VmID.Valid {
 		_ = s.Q.VMSoftDelete(ctx, sb.VmID)
 	}
-	_, err := s.Q.SandboxMarkDeleted(ctx, sb.ID)
+	_, err := s.Q.RemoteVMMarkDeleted(ctx, sb.ID)
 	return err
 }
 
-func (s *Service) persistSandboxVM(ctx context.Context, sb queries.Sandbox, imageRef, runtimeURL, status string, meta kruntime.StartMetadata) (uuid.UUID, error) {
+func (s *Service) persistSandboxVM(ctx context.Context, sb queries.RemoteVm, imageRef, runtimeURL, status string, meta kruntime.StartMetadata) (uuid.UUID, error) {
 	registry, repository, tag := splitImageRef(imageRef)
 	img, err := s.Q.ImageFindOrCreate(ctx, queries.ImageFindOrCreateParams{
 		ID:         pguuid.ToPgtype(uuid.New()),
@@ -487,24 +487,24 @@ func (s *Service) persistRuntimeAddress(ctx context.Context, vmID pgtype.UUID, r
 }
 
 type workerMetadata struct {
-	Runtime         string `json:"runtime"`
-	SandboxEnabled  bool   `json:"sandbox_enabled"`
-	SandboxBackend  string `json:"sandbox_backend"`
-	SandboxArch     string `json:"sandbox_arch"`
-	SandboxRosetta  bool   `json:"sandbox_rosetta"`
-	SandboxCapacity int    `json:"sandbox_capacity"`
+	Runtime          string `json:"runtime"`
+	RemoteVmEnabled  bool   `json:"remote_vm_enabled"`
+	RemoteVmBackend  string `json:"remote_vm_backend"`
+	RemoteVmArch     string `json:"remote_vm_arch"`
+	RemoteVmRosetta  bool   `json:"remote_vm_rosetta"`
+	RemoteVmCapacity int    `json:"remote_vm_capacity"`
 }
 
 func decodeWorkerMetadata(raw []byte) workerMetadata {
 	var out workerMetadata
 	_ = json.Unmarshal(raw, &out)
-	if out.SandboxBackend == "" {
-		out.SandboxBackend = strings.TrimSpace(out.Runtime)
+	if out.RemoteVmBackend == "" {
+		out.RemoteVmBackend = strings.TrimSpace(out.Runtime)
 	}
 	return out
 }
 
-func sandboxEnv(sb queries.Sandbox) []string {
+func sandboxEnv(sb queries.RemoteVm) []string {
 	out := []string{}
 	var envMap map[string]string
 	if len(sb.EnvJson) > 0 {
@@ -518,15 +518,15 @@ func sandboxEnv(sb queries.Sandbox) []string {
 		out = append(out, key+"="+v)
 	}
 	if repo := strings.TrimSpace(sb.GitRepo); repo != "" {
-		out = append(out, "KINDLING_SANDBOX_GIT_REPO="+repo)
+		out = append(out, "KINDLING_REMOTE_VM_GIT_REPO="+repo)
 	}
 	if ref := strings.TrimSpace(sb.GitRef); ref != "" {
-		out = append(out, "KINDLING_SANDBOX_GIT_REF="+ref)
+		out = append(out, "KINDLING_REMOTE_VM_GIT_REF="+ref)
 	}
 	return out
 }
 
-func sandboxPort(sb queries.Sandbox) int {
+func sandboxPort(sb queries.RemoteVm) int {
 	if sb.PublishedHttpPort.Valid && sb.PublishedHttpPort.Int32 > 0 {
 		return int(sb.PublishedHttpPort.Int32)
 	}
@@ -607,7 +607,7 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func (s *Service) syncSandboxSSHAccess(ctx context.Context, sb queries.Sandbox) error {
+func (s *Service) syncSandboxSSHAccess(ctx context.Context, sb queries.RemoteVm) error {
 	access, ok := s.Runtime.(kruntime.GuestAccess)
 	if !ok {
 		return nil
@@ -632,7 +632,7 @@ func (s *Service) syncSandboxSSHAccess(ctx context.Context, sb queries.Sandbox) 
 	}
 	script := fmt.Sprintf(`
 set -eu
-sandbox_id=%q
+remote_vm_id=%q
 if ! id -u kindling >/dev/null 2>&1; then
   if command -v useradd >/dev/null 2>&1; then
     useradd -m -s /bin/sh kindling || true
@@ -665,7 +665,7 @@ elif [ -x /usr/bin/ssh-keygen ]; then
   ssh_keygen_bin="/usr/bin/ssh-keygen"
 fi
 host_key_path="/etc/ssh/kindling_host_ed25519_key"
-host_key_marker="/etc/ssh/kindling_host_ed25519_key.sandbox-id"
+host_key_marker="/etc/ssh/kindling_host_ed25519_key.remote-vm-id"
 managed_pidfile="/run/kindling-sshd.pid"
 host_pub=""
 restart_sshd=0
@@ -675,10 +675,10 @@ if [ -n "$sshd_bin" ] && [ -n "$ssh_keygen_bin" ]; then
   if [ -f "$host_key_marker" ]; then
     current_marker="$(cat "$host_key_marker" 2>/dev/null || true)"
   fi
-  if [ ! -f "$host_key_path" ] || [ ! -f "$host_key_path.pub" ] || [ "$current_marker" != "$sandbox_id" ]; then
+  if [ ! -f "$host_key_path" ] || [ ! -f "$host_key_path.pub" ] || [ "$current_marker" != "$remote_vm_id" ]; then
     rm -f "$host_key_path" "$host_key_path.pub"
     "$ssh_keygen_bin" -q -t ed25519 -N '' -f "$host_key_path" >/dev/null
-    printf '%%s\n' "$sandbox_id" > "$host_key_marker"
+    printf '%%s\n' "$remote_vm_id" > "$host_key_marker"
     restart_sshd=1
   fi
   if [ ! -f "$managed_pidfile" ] || ! kill -0 "$(cat "$managed_pidfile" 2>/dev/null)" 2>/dev/null; then
@@ -713,7 +713,7 @@ fi
 	if hostKey == sb.SshHostPublicKey {
 		return nil
 	}
-	_, err = s.Q.SandboxUpdateSSHHostPublicKey(ctx, queries.SandboxUpdateSSHHostPublicKeyParams{
+	_, err = s.Q.RemoteVMUpdateSSHHostPublicKey(ctx, queries.RemoteVMUpdateSSHHostPublicKeyParams{
 		ID:               sb.ID,
 		SshHostPublicKey: hostKey,
 	})
@@ -728,16 +728,16 @@ func RunExpiryOnce(ctx context.Context, databaseURL string, q *queries.Queries, 
 	defer leaderConn.Close(context.Background())
 
 	qLeader := queries.New(leaderConn)
-	acquired, err := qLeader.TrySessionAdvisoryLock(ctx, "kindling_sandbox_expiry")
+	acquired, err := qLeader.TrySessionAdvisoryLock(ctx, "kindling_remote_vm_expiry")
 	if err != nil || !acquired {
 		return
 	}
-	rows, err := q.SandboxesDueForExpiry(ctx)
+	rows, err := q.RemoteVMsDueForExpiry(ctx)
 	if err != nil {
 		return
 	}
 	for _, sb := range rows {
-		if _, err := q.SandboxUpdateDesiredState(ctx, queries.SandboxUpdateDesiredStateParams{
+		if _, err := q.RemoteVMUpdateDesiredState(ctx, queries.RemoteVMUpdateDesiredStateParams{
 			ID:           sb.ID,
 			DesiredState: "deleted",
 		}); err == nil && sched != nil {
@@ -754,16 +754,16 @@ func RunIdleSuspendOnce(ctx context.Context, databaseURL string, q *queries.Quer
 	defer leaderConn.Close(context.Background())
 
 	qLeader := queries.New(leaderConn)
-	acquired, err := qLeader.TrySessionAdvisoryLock(ctx, "kindling_sandbox_idle")
+	acquired, err := qLeader.TrySessionAdvisoryLock(ctx, "kindling_remote_vm_idle")
 	if err != nil || !acquired {
 		return
 	}
-	rows, err := q.SandboxesDueForIdleSuspend(ctx)
+	rows, err := q.RemoteVMsDueForIdleSuspend(ctx)
 	if err != nil {
 		return
 	}
 	for _, sb := range rows {
-		if _, err := q.SandboxUpdateDesiredState(ctx, queries.SandboxUpdateDesiredStateParams{
+		if _, err := q.RemoteVMUpdateDesiredState(ctx, queries.RemoteVMUpdateDesiredStateParams{
 			ID:           sb.ID,
 			DesiredState: "stopped",
 		}); err == nil && sched != nil {

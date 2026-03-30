@@ -93,7 +93,7 @@ export function SandboxDetailPage() {
       setAutoSuspendSeconds(String(sandboxValue.auto_suspend_seconds > 0 ? sandboxValue.auto_suspend_seconds : 900))
       setTemplateName(`${sandboxValue.name}-template`)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load sandbox")
+      setError(err instanceof Error ? err.message : "Failed to load remote VM")
     }
   }
 
@@ -101,7 +101,7 @@ export function SandboxDetailPage() {
     void load()
   }, [id])
 
-  const sshCommand = useMemo(() => `kindling sandbox ssh --sandbox ${id}`, [id])
+  const sshCommand = useMemo(() => `kindling vm ssh --vm ${id}`, [id])
   const sshHostKeySummary = sandbox?.ssh_host_public_key ? compactSSHKey(sandbox.ssh_host_public_key) : null
   const imageContract = sandbox ? sandboxImageContract(baseImageRef || sandbox.base_image_ref) : null
   const canEditSandboxConfig = sandbox?.observed_state !== "running"
@@ -109,7 +109,7 @@ export function SandboxDetailPage() {
   if (!sandbox) {
     return (
       <Card>
-        <CardContent className="pt-6 text-sm text-muted-foreground">{error || "Loading sandbox…"}</CardContent>
+        <CardContent className="pt-6 text-sm text-muted-foreground">{error || "Loading remote VM…"}</CardContent>
       </Card>
     )
   }
@@ -137,8 +137,8 @@ export function SandboxDetailPage() {
           <Button
             variant="destructive"
             onClick={() => {
-              if (!window.confirm("Delete this sandbox?")) return
-              void api.deleteSandbox(id).then(() => navigate("/sandboxes"))
+              if (!window.confirm("Delete this remote VM?")) return
+              void api.deleteSandbox(id).then(() => navigate("/vms"))
             }}
           >
             <Trash2Icon className="mr-2 size-4" />
@@ -212,11 +212,11 @@ export function SandboxDetailPage() {
                     </Button>
                   </div>
                 </div>
-                <p className="text-xs text-muted-foreground">Kindling records this sandbox's host key and the CLI verifies it before connecting.</p>
+                <p className="text-xs text-muted-foreground">Kindling records this remote VM's host key and the CLI verifies it before connecting.</p>
               </div>
             ) : (
               <div className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
-                Host key not ready yet. Start the sandbox and ensure the guest image includes `sshd` and `ssh-keygen`.
+                Host key not ready yet. Start the remote VM and ensure the guest image includes `sshd` and `ssh-keygen`.
               </div>
             )}
           </CardContent>
@@ -226,7 +226,7 @@ export function SandboxDetailPage() {
       <Card>
         <CardHeader>
           <CardTitle>Lifecycle</CardTitle>
-          <CardDescription>Sandboxes are always on by default. Opt into idle auto-suspend only when you want it.</CardDescription>
+          <CardDescription>Remote VMs are always on by default. Opt into idle auto-suspend only when you want it.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-[auto_160px_auto] md:items-end">
           <label className="flex items-start gap-3 text-sm">
@@ -238,7 +238,7 @@ export function SandboxDetailPage() {
             />
             <span>
               <span className="block font-medium">Enable auto-suspend</span>
-              <span className="block text-muted-foreground">When disabled, the sandbox stays on until you stop or delete it.</span>
+              <span className="block text-muted-foreground">When disabled, the remote VM stays on until you stop or delete it.</span>
             </span>
           </label>
           <div className="space-y-2">
@@ -272,7 +272,7 @@ export function SandboxDetailPage() {
       <Card>
         <CardHeader>
           <CardTitle>Templates</CardTitle>
-          <CardDescription>Capture this sandbox into a reusable template. Kindling will stop it if needed, snapshot it, then make it available from the Sandboxes page.</CardDescription>
+          <CardDescription>Capture this remote VM into a reusable template. Kindling will stop it if needed, snapshot it, then make it available from the Remote VMs page.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-[1fr_auto] md:items-end">
           <div className="space-y-2">
@@ -285,8 +285,8 @@ export function SandboxDetailPage() {
             />
             <p className="text-xs text-muted-foreground">
               {sandbox.observed_state === "running"
-                ? "The sandbox is running now, so capture will stop it before creating the snapshot."
-                : "Stopped sandboxes usually become ready faster because they can be snapshotted immediately."}
+                ? "The remote VM is running now, so capture will stop it before creating the snapshot."
+                : "Stopped remote VMs usually become ready faster because they can be snapshotted immediately."}
             </p>
           </div>
           <Button
@@ -295,7 +295,7 @@ export function SandboxDetailPage() {
               setError(null)
               setNotice(null)
               void api.createSandboxTemplate(id, { name: templateName.trim() || undefined }).then((template) => {
-                setNotice(`Template capture started for ${template.name}. It will show up on the Sandboxes page as it moves to ready.`)
+                setNotice(`Template capture started for ${template.name}. It will show up on the Remote VMs page as it moves to ready.`)
                 void load()
               }).catch((err: unknown) => {
                 setError(err instanceof Error ? err.message : "Failed to start template capture")
@@ -310,7 +310,7 @@ export function SandboxDetailPage() {
       <Card>
         <CardHeader>
           <CardTitle>Guest Image</CardTitle>
-          <CardDescription>Kindling expects interactive sandbox images to include `/bin/sh`, and SSH access additionally depends on `sshd` and `ssh-keygen`.</CardDescription>
+          <CardDescription>Kindling expects interactive remote VM images to include `/bin/sh`, and SSH access additionally depends on `sshd` and `ssh-keygen`.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className={`rounded-lg border p-3 text-sm ${imageContract?.tone === "caution" ? "border-amber-400/50 bg-amber-500/10" : "bg-muted/20"}`}>
@@ -370,8 +370,8 @@ export function SandboxDetailPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-xs text-muted-foreground">
               {canEditSandboxConfig
-                ? "These changes apply the next time the sandbox starts."
-                : "Stop the sandbox before editing its base image or resources."}
+                ? "These changes apply the next time the remote VM starts."
+                : "Stop the remote VM before editing its base image or resources."}
             </p>
             <Button
               variant="outline"
@@ -405,7 +405,7 @@ export function SandboxDetailPage() {
       <Card>
         <CardHeader>
           <CardTitle>HTTP Publish</CardTitle>
-          <CardDescription>Expose a stable managed hostname for an HTTP port inside this sandbox.</CardDescription>
+          <CardDescription>Expose a stable managed hostname for an HTTP port inside this remote VM.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-[160px_1fr_auto_auto]">
           <div className="space-y-2">
@@ -454,7 +454,7 @@ export function SandboxDetailPage() {
       <Card>
         <CardHeader>
           <CardTitle>Access History</CardTitle>
-          <CardDescription>Recent shell, SSH, exec, and file transfer activity for this sandbox.</CardDescription>
+          <CardDescription>Recent shell, SSH, exec, and file transfer activity for this remote VM.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           {events.map((event) => (

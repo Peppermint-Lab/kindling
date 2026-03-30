@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-func TestSandboxSSHHostAlias(t *testing.T) {
+func TestRemoteVMSSHHostAlias(t *testing.T) {
 	t.Parallel()
 
-	if got := sandboxSSHHostAlias("12345678-1234-1234-1234-123456789abc"); got != "sandbox-12345678" {
-		t.Fatalf("sandboxSSHHostAlias = %q", got)
+	if got := remoteVMSSHHostAlias("12345678-1234-1234-1234-123456789abc"); got != "vm-12345678" {
+		t.Fatalf("remoteVMSSHHostAlias = %q", got)
 	}
 }
 
@@ -28,7 +28,7 @@ func TestWriteSandboxKnownHosts(t *testing.T) {
 		t.Fatalf("ReadFile: %v", err)
 	}
 	got := string(data)
-	if !strings.Contains(got, "sandbox-12345678 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB4P80v4v+8WgM6eTHAiSl4KjkJN96YjKf0CrQxQcf7e") {
+	if !strings.Contains(got, "vm-12345678 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB4P80v4v+8WgM6eTHAiSl4KjkJN96YjKf0CrQxQcf7e") {
 		t.Fatalf("known_hosts content = %q", got)
 	}
 }
@@ -37,6 +37,6 @@ func TestWriteSandboxKnownHostsRequiresManagedKey(t *testing.T) {
 	t.Parallel()
 
 	if _, err := writeSandboxKnownHosts("12345678-1234-1234-1234-123456789abc", ""); err == nil {
-		t.Fatal("expected error when sandbox host key is missing")
+		t.Fatal("expected error when remote VM host key is missing")
 	}
 }

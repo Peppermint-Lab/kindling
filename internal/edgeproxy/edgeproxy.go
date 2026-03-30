@@ -187,7 +187,7 @@ func New(cfg Config) (*Service, error) {
 					return nil
 				}
 			}
-			if _, err := q.SandboxPublishedPortLookupByHostname(ctx, name); err == nil {
+			if _, err := q.RemoteVMPublishedPortLookupByHostname(ctx, name); err == nil {
 				return nil
 			}
 			_, err := q.DomainVerified(ctx, name)
@@ -578,7 +578,7 @@ func (s *Service) waitForBackend(ctx context.Context, host string) (Route, bool)
 }
 
 func (s *Service) lookupSandboxRoute(ctx context.Context, host string) (Route, bool) {
-	row, err := s.q.SandboxPublishedPortLookupByHostname(ctx, host)
+	row, err := s.q.RemoteVMPublishedPortLookupByHostname(ctx, host)
 	if err != nil {
 		return Route{}, false
 	}
@@ -602,7 +602,7 @@ func (s *Service) lookupSandboxRoute(ctx context.Context, host string) (Route, b
 		return Route{}, false
 	}
 	return Route{
-		DeploymentKind: "sandbox",
+		DeploymentKind: "remote_vm",
 		Backends: []Backend{{
 			IP:   hostName,
 			Port: int32(port),

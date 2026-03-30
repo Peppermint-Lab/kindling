@@ -48,7 +48,7 @@ func (a *API) sandboxShellWS(w http.ResponseWriter, r *http.Request) {
 	env := append([]string(nil), r.URL.Query()["env"]...)
 	stream, err := access.StreamGuest(r.Context(), uuid.UUID(sb.ID.Bytes), []string{shellPath}, cwd, env)
 	if err != nil {
-		a.recordSandboxAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "shell_ws", "failed", nil, err.Error())
+		a.recordRemoteVMAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "shell_ws", "failed", nil, err.Error())
 		writeAPIErrorFromErr(w, http.StatusConflict, "sandbox_shell", err)
 		return
 	}
@@ -60,7 +60,7 @@ func (a *API) sandboxShellWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ws.Close()
 
-	a.recordSandboxAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "shell_ws", "started", nil, "")
+	a.recordRemoteVMAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "shell_ws", "started", nil, "")
 	runSandboxAccessKeepalive(r.Context(), a.q, sb.ID)
 
 	var (
@@ -102,7 +102,7 @@ func (a *API) sandboxShellWS(w http.ResponseWriter, r *http.Request) {
 				done <- err
 				return
 			}
-			_ = a.q.SandboxUpdateLastUsedAt(context.Background(), sb.ID)
+			_ = a.q.RemoteVMUpdateLastUsedAt(context.Background(), sb.ID)
 		}
 	}()
 
@@ -110,12 +110,12 @@ func (a *API) sandboxShellWS(w http.ResponseWriter, r *http.Request) {
 	exitMu.Lock()
 	finalExit := exitCode
 	exitMu.Unlock()
-	_ = a.q.SandboxUpdateLastUsedAt(context.Background(), sb.ID)
+	_ = a.q.RemoteVMUpdateLastUsedAt(context.Background(), sb.ID)
 	if isExpectedSocketClose(err) || errors.Is(err, io.EOF) {
-		a.recordSandboxAccessEvent(context.Background(), uuid.UUID(sb.ID.Bytes), p.UserID, "shell_ws", "ended", finalExit, "")
+		a.recordRemoteVMAccessEvent(context.Background(), uuid.UUID(sb.ID.Bytes), p.UserID, "shell_ws", "ended", finalExit, "")
 		return
 	}
-	a.recordSandboxAccessEvent(context.Background(), uuid.UUID(sb.ID.Bytes), p.UserID, "shell_ws", "failed", finalExit, err.Error())
+	a.recordRemoteVMAccessEvent(context.Background(), uuid.UUID(sb.ID.Bytes), p.UserID, "shell_ws", "failed", finalExit, err.Error())
 }
 
 func (a *API) sandboxSSHWS(w http.ResponseWriter, r *http.Request) {
@@ -139,7 +139,7 @@ func (a *API) sandboxSSHWS(w http.ResponseWriter, r *http.Request) {
 	}
 	stream, err := access.ConnectGuestTCP(r.Context(), uuid.UUID(sb.ID.Bytes), 22)
 	if err != nil {
-		a.recordSandboxAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "ssh", "failed", nil, err.Error())
+		a.recordRemoteVMAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "ssh", "failed", nil, err.Error())
 		writeAPIErrorFromErr(w, http.StatusConflict, "sandbox_ssh", err)
 		return
 	}
@@ -151,7 +151,7 @@ func (a *API) sandboxSSHWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ws.Close()
 
-	a.recordSandboxAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "ssh", "started", nil, "")
+	a.recordRemoteVMAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "ssh", "started", nil, "")
 	runSandboxAccessKeepalive(r.Context(), a.q, sb.ID)
 
 	done := make(chan error, 2)
@@ -187,20 +187,20 @@ func (a *API) sandboxSSHWS(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			_ = a.q.SandboxUpdateLastUsedAt(context.Background(), sb.ID)
+			_ = a.q.RemoteVMUpdateLastUsedAt(context.Background(), sb.ID)
 		}
 	}()
 
 	err = <-done
-	_ = a.q.SandboxUpdateLastUsedAt(context.Background(), sb.ID)
+	_ = a.q.RemoteVMUpdateLastUsedAt(context.Background(), sb.ID)
 	if isExpectedSocketClose(err) || errors.Is(err, io.EOF) {
-		a.recordSandboxAccessEvent(context.Background(), uuid.UUID(sb.ID.Bytes), p.UserID, "ssh", "ended", nil, "")
+		a.recordRemoteVMAccessEvent(context.Background(), uuid.UUID(sb.ID.Bytes), p.UserID, "ssh", "ended", nil, "")
 		return
 	}
-	a.recordSandboxAccessEvent(context.Background(), uuid.UUID(sb.ID.Bytes), p.UserID, "ssh", "failed", nil, err.Error())
+	a.recordRemoteVMAccessEvent(context.Background(), uuid.UUID(sb.ID.Bytes), p.UserID, "ssh", "failed", nil, err.Error())
 }
 
-func (a *API) sandboxTCPAccess(w http.ResponseWriter, sb queries.Sandbox) (kruntime.GuestTCPAccess, bool) {
+func (a *API) sandboxTCPAccess(w http.ResponseWriter, sb queries.RemoteVm) (kruntime.GuestTCPAccess, bool) {
 	rt, ok := a.sandboxLocalRuntime(w, sb)
 	if !ok {
 		return nil, false
@@ -225,7 +225,7 @@ func runSandboxAccessKeepalive(ctx context.Context, q *queries.Queries, sandboxI
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				_ = q.SandboxUpdateLastUsedAt(context.Background(), sandboxID)
+				_ = q.RemoteVMUpdateLastUsedAt(context.Background(), sandboxID)
 			}
 		}
 	}()

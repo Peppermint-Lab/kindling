@@ -2,7 +2,7 @@ export type SandboxImagePreset = {
   id: string
   name: string
   description: string
-  host_group: "linux-sandbox" | "mac-sandbox"
+  host_group: "linux-remote-vm" | "mac-remote-vm"
   base_image_ref: string
   vcpu: number
   memory_mb: number
@@ -16,7 +16,7 @@ export const sandboxImagePresets: SandboxImagePreset[] = [
     id: "ubuntu-dev",
     name: "Ubuntu Dev Box",
     description: "General-purpose Linux sandbox with a familiar package ecosystem and the best odds of interactive success.",
-    host_group: "linux-sandbox",
+    host_group: "linux-remote-vm",
     base_image_ref: "docker.io/library/ubuntu:24.04",
     vcpu: 2,
     memory_mb: 2048,
@@ -28,7 +28,7 @@ export const sandboxImagePresets: SandboxImagePreset[] = [
     id: "debian-dev",
     name: "Debian Stable",
     description: "A leaner base than Ubuntu while still staying friendly to shell sessions and package installs.",
-    host_group: "linux-sandbox",
+    host_group: "linux-remote-vm",
     base_image_ref: "docker.io/library/debian:12-slim",
     vcpu: 2,
     memory_mb: 2048,
@@ -40,7 +40,7 @@ export const sandboxImagePresets: SandboxImagePreset[] = [
     id: "node-workbench",
     name: "Node Workbench",
     description: "Preloaded Node runtime for quick app prototyping, package installs, and HTTP sandbox publishing.",
-    host_group: "linux-sandbox",
+    host_group: "linux-remote-vm",
     base_image_ref: "docker.io/library/node:22-bookworm",
     vcpu: 2,
     memory_mb: 3072,
@@ -52,7 +52,7 @@ export const sandboxImagePresets: SandboxImagePreset[] = [
     id: "python-lab",
     name: "Python Lab",
     description: "Python runtime with a fuller Debian base so ad hoc tooling and SSH setup are less painful.",
-    host_group: "linux-sandbox",
+    host_group: "linux-remote-vm",
     base_image_ref: "docker.io/library/python:3.12-bookworm",
     vcpu: 2,
     memory_mb: 3072,
@@ -64,7 +64,7 @@ export const sandboxImagePresets: SandboxImagePreset[] = [
     id: "alpine-minimal",
     name: "Alpine Minimal",
     description: "Fast and tiny, but convenience features are on you. Keep it for tightly controlled, low-level setups.",
-    host_group: "linux-sandbox",
+    host_group: "linux-remote-vm",
     base_image_ref: "docker.io/library/alpine:latest",
     vcpu: 1,
     memory_mb: 1024,
@@ -114,7 +114,7 @@ export function sandboxPresetByID(id: string) {
 }
 
 export function hostGroupLabel(hostGroup: string) {
-  if (hostGroup === "mac-sandbox") return "macOS worker"
+  if (hostGroup === "mac-remote-vm") return "macOS worker"
   return "Linux worker"
 }
 

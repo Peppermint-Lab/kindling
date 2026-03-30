@@ -61,7 +61,7 @@ type sandboxTemplateOut struct {
 	HostGroup       string  `json:"host_group"`
 	Backend         string  `json:"backend,omitempty"`
 	Arch            string  `json:"arch,omitempty"`
-	SourceSandboxID *string `json:"source_sandbox_id,omitempty"`
+	SourceRemoteVmID *string `json:"source_remote_vm_id,omitempty"`
 	ServerID        *string `json:"server_id,omitempty"`
 	BaseImageRef    string  `json:"base_image_ref"`
 	SnapshotRef     string  `json:"snapshot_ref,omitempty"`
@@ -74,7 +74,7 @@ type sandboxTemplateOut struct {
 	UpdatedAt       *string `json:"updated_at,omitempty"`
 }
 
-func sandboxToOut(sb queries.Sandbox, ports []queries.SandboxPublishedPort) sandboxOut {
+func sandboxToOut(sb queries.RemoteVm, ports []queries.RemoteVmPublishedPort) sandboxOut {
 	out := sandboxOut{
 		ID:                 pguuid.ToString(sb.ID),
 		Name:               sb.Name,
@@ -140,15 +140,15 @@ func normalizeSandboxBaseImageRef(v string) (string, error) {
 	return trimmed, nil
 }
 
-func sandboxDeleteCanBypassReconciler(sb queries.Sandbox) bool {
+func sandboxDeleteCanBypassReconciler(sb queries.RemoteVm) bool {
 	return !sb.VmID.Valid
 }
 
-func sandboxRuntimeObservabilityReady(sb queries.Sandbox) bool {
+func sandboxRuntimeObservabilityReady(sb queries.RemoteVm) bool {
 	return strings.EqualFold(strings.TrimSpace(sb.ObservedState), "running")
 }
 
-func resolveSandboxHostGroup(requested string, template *queries.SandboxTemplate) string {
+func resolveSandboxHostGroup(requested string, template *queries.RemoteVmTemplate) string {
 	if trimmed := strings.TrimSpace(requested); trimmed != "" {
 		return trimmed
 	}
@@ -160,14 +160,14 @@ func resolveSandboxHostGroup(requested string, template *queries.SandboxTemplate
 	return sandbox.HostGroupLinux
 }
 
-func sandboxTemplateToOut(tpl queries.SandboxTemplate) sandboxTemplateOut {
+func sandboxTemplateToOut(tpl queries.RemoteVmTemplate) sandboxTemplateOut {
 	return sandboxTemplateOut{
 		ID:              pguuid.ToString(tpl.ID),
 		Name:            tpl.Name,
 		HostGroup:       tpl.HostGroup,
 		Backend:         tpl.Backend,
 		Arch:            tpl.Arch,
-		SourceSandboxID: optionalUUIDString(tpl.SourceSandboxID),
+		SourceRemoteVmID: optionalUUIDString(tpl.SourceRemoteVmID),
 		ServerID:        optionalUUIDString(tpl.ServerID),
 		BaseImageRef:    tpl.BaseImageRef,
 		SnapshotRef:     tpl.SnapshotRef,
@@ -200,7 +200,7 @@ func (a *API) listSandboxes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rows, err := a.q.SandboxListByOrg(r.Context(), p.OrganizationID)
+	rows, err := a.q.RemoteVMListByOrg(r.Context(), p.OrganizationID)
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "list_sandboxes", err)
 		return
@@ -219,7 +219,7 @@ func (a *API) listSandboxes(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]sandboxOut, 0, end-offset)
 	for _, row := range rows[offset:end] {
-		ports, _ := a.q.SandboxPublishedPortsBySandboxID(r.Context(), row.ID)
+		ports, _ := a.q.RemoteVMPublishedPortsByRemoteVMID(r.Context(), row.ID)
 		out = append(out, sandboxToOut(row, ports))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": out, "total": total, "limit": limit, "offset": offset})
@@ -270,14 +270,14 @@ func (a *API) createSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	templateID := pgtype.UUID{}
-	var template *queries.SandboxTemplate
+	var template *queries.RemoteVmTemplate
 	if strings.TrimSpace(req.TemplateID) != "" {
 		id, err := parseUUID(req.TemplateID)
 		if err != nil {
 			writeAPIError(w, http.StatusBadRequest, "validation_error", "invalid template_id")
 			return
 		}
-		tpl, err := a.q.SandboxTemplateFirstByIDAndOrg(r.Context(), queries.SandboxTemplateFirstByIDAndOrgParams{
+		tpl, err := a.q.RemoteVMTemplateFirstByIDAndOrg(r.Context(), queries.RemoteVMTemplateFirstByIDAndOrgParams{
 			ID:    id,
 			OrgID: p.OrganizationID,
 		})
@@ -324,7 +324,7 @@ func (a *API) createSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row, err := a.q.SandboxCreate(r.Context(), queries.SandboxCreateParams{
+	row, err := a.q.RemoteVMCreate(r.Context(), queries.RemoteVMCreateParams{
 		ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		OrgID:              p.OrganizationID,
 		Name:               name,
@@ -372,7 +372,7 @@ func (a *API) getSandbox(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox id")
 		return
 	}
-	row, err := a.q.SandboxFirstByIDAndOrg(r.Context(), queries.SandboxFirstByIDAndOrgParams{
+	row, err := a.q.RemoteVMFirstByIDAndOrg(r.Context(), queries.RemoteVMFirstByIDAndOrgParams{
 		ID:    id,
 		OrgID: p.OrganizationID,
 	})
@@ -380,7 +380,7 @@ func (a *API) getSandbox(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "not_found", "sandbox not found")
 		return
 	}
-	ports, _ := a.q.SandboxPublishedPortsBySandboxID(r.Context(), row.ID)
+	ports, _ := a.q.RemoteVMPublishedPortsByRemoteVMID(r.Context(), row.ID)
 	writeJSON(w, http.StatusOK, sandboxToOut(row, ports))
 }
 
@@ -397,7 +397,7 @@ func (a *API) patchSandbox(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox id")
 		return
 	}
-	sb, err := a.q.SandboxFirstByIDAndOrg(r.Context(), queries.SandboxFirstByIDAndOrgParams{
+	sb, err := a.q.RemoteVMFirstByIDAndOrg(r.Context(), queries.RemoteVMFirstByIDAndOrgParams{
 		ID:    id,
 		OrgID: p.OrganizationID,
 	})
@@ -476,7 +476,7 @@ func (a *API) patchSandbox(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	sb, err = a.q.SandboxUpdateSettings(r.Context(), queries.SandboxUpdateSettingsParams{
+	sb, err = a.q.RemoteVMUpdateSettings(r.Context(), queries.RemoteVMUpdateSettingsParams{
 		ID:                 sb.ID,
 		BaseImageRef:       baseImageRef,
 		Vcpu:               vcpu,
@@ -517,7 +517,7 @@ func (a *API) setSandboxDesiredState(w http.ResponseWriter, r *http.Request, sta
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox id")
 		return
 	}
-	row, err := a.q.SandboxFirstByIDAndOrg(r.Context(), queries.SandboxFirstByIDAndOrgParams{
+	row, err := a.q.RemoteVMFirstByIDAndOrg(r.Context(), queries.RemoteVMFirstByIDAndOrgParams{
 		ID:    id,
 		OrgID: p.OrganizationID,
 	})
@@ -525,7 +525,7 @@ func (a *API) setSandboxDesiredState(w http.ResponseWriter, r *http.Request, sta
 		writeAPIError(w, http.StatusNotFound, "not_found", "sandbox not found")
 		return
 	}
-	row, err = a.q.SandboxUpdateDesiredState(r.Context(), queries.SandboxUpdateDesiredStateParams{
+	row, err = a.q.RemoteVMUpdateDesiredState(r.Context(), queries.RemoteVMUpdateDesiredStateParams{
 		ID:           row.ID,
 		DesiredState: state,
 	})
@@ -534,7 +534,7 @@ func (a *API) setSandboxDesiredState(w http.ResponseWriter, r *http.Request, sta
 		return
 	}
 	if state == "deleted" && sandboxDeleteCanBypassReconciler(row) {
-		row, err = a.q.SandboxMarkDeleted(r.Context(), row.ID)
+		row, err = a.q.RemoteVMMarkDeleted(r.Context(), row.ID)
 		if err != nil {
 			writeAPIErrorFromErr(w, http.StatusInternalServerError, "sandbox_state", err)
 			return
@@ -561,7 +561,7 @@ func (a *API) createSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox id")
 		return
 	}
-	sb, err := a.q.SandboxFirstByIDAndOrg(r.Context(), queries.SandboxFirstByIDAndOrgParams{
+	sb, err := a.q.RemoteVMFirstByIDAndOrg(r.Context(), queries.RemoteVMFirstByIDAndOrgParams{
 		ID:    id,
 		OrgID: p.OrganizationID,
 	})
@@ -577,14 +577,14 @@ func (a *API) createSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = sb.Name + "-template"
 	}
-	tpl, err := a.q.SandboxTemplateCreate(r.Context(), queries.SandboxTemplateCreateParams{
+	tpl, err := a.q.RemoteVMTemplateCreate(r.Context(), queries.RemoteVMTemplateCreateParams{
 		ID:              pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		OrgID:           p.OrganizationID,
 		Name:            name,
 		HostGroup:       sb.HostGroup,
 		Backend:         sb.Backend,
 		Arch:            sb.Arch,
-		SourceSandboxID: sb.ID,
+		SourceRemoteVmID: sb.ID,
 		ServerID:        sb.ServerID,
 		BaseImageRef:    sb.BaseImageRef,
 		SnapshotRef:     "",
@@ -613,7 +613,7 @@ func (a *API) listSandboxTemplates(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := a.q.SandboxTemplateListByOrg(r.Context(), p.OrganizationID)
+	rows, err := a.q.RemoteVMTemplateListByOrg(r.Context(), p.OrganizationID)
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "list_sandbox_templates", err)
 		return
@@ -635,7 +635,7 @@ func (a *API) getSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox template id")
 		return
 	}
-	row, err := a.q.SandboxTemplateFirstByIDAndOrg(r.Context(), queries.SandboxTemplateFirstByIDAndOrgParams{
+	row, err := a.q.RemoteVMTemplateFirstByIDAndOrg(r.Context(), queries.RemoteVMTemplateFirstByIDAndOrgParams{
 		ID:    id,
 		OrgID: p.OrganizationID,
 	})
@@ -659,7 +659,7 @@ func (a *API) deleteSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox template id")
 		return
 	}
-	row, err := a.q.SandboxTemplateFirstByIDAndOrg(r.Context(), queries.SandboxTemplateFirstByIDAndOrgParams{
+	row, err := a.q.RemoteVMTemplateFirstByIDAndOrg(r.Context(), queries.RemoteVMTemplateFirstByIDAndOrgParams{
 		ID:    id,
 		OrgID: p.OrganizationID,
 	})
@@ -667,7 +667,7 @@ func (a *API) deleteSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "not_found", "sandbox template not found")
 		return
 	}
-	row, err = a.q.SandboxTemplateMarkDeleted(r.Context(), row.ID)
+	row, err = a.q.RemoteVMTemplateMarkDeleted(r.Context(), row.ID)
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "delete_sandbox_template", err)
 		return
@@ -688,7 +688,7 @@ func (a *API) cloneSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox template id")
 		return
 	}
-	tpl, err := a.q.SandboxTemplateFirstByIDAndOrg(r.Context(), queries.SandboxTemplateFirstByIDAndOrgParams{
+	tpl, err := a.q.RemoteVMTemplateFirstByIDAndOrg(r.Context(), queries.RemoteVMTemplateFirstByIDAndOrgParams{
 		ID:    id,
 		OrgID: p.OrganizationID,
 	})
@@ -704,7 +704,7 @@ func (a *API) cloneSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = tpl.Name + "-clone"
 	}
-	row, err := a.q.SandboxCreate(r.Context(), queries.SandboxCreateParams{
+	row, err := a.q.RemoteVMCreate(r.Context(), queries.RemoteVMCreateParams{
 		ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		OrgID:              p.OrganizationID,
 		Name:               name,
@@ -754,7 +754,7 @@ func (a *API) publishSandboxHTTP(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox id")
 		return
 	}
-	sb, err := a.q.SandboxFirstByIDAndOrg(r.Context(), queries.SandboxFirstByIDAndOrgParams{
+	sb, err := a.q.RemoteVMFirstByIDAndOrg(r.Context(), queries.RemoteVMFirstByIDAndOrgParams{
 		ID:    id,
 		OrgID: p.OrganizationID,
 	})
@@ -778,9 +778,9 @@ func (a *API) publishSandboxHTTP(w http.ResponseWriter, r *http.Request) {
 	if hostname == "" {
 		hostname = a.defaultSandboxHostname(sb)
 	}
-	if _, err := a.q.SandboxPublishedPortUpsert(r.Context(), queries.SandboxPublishedPortUpsertParams{
+	if _, err := a.q.RemoteVMPublishedPortUpsert(r.Context(), queries.RemoteVMPublishedPortUpsertParams{
 		ID:             pgtype.UUID{Bytes: uuid.New(), Valid: true},
-		SandboxID:      sb.ID,
+		RemoteVmID:      sb.ID,
 		TargetPort:     req.TargetPort,
 		Protocol:       "http",
 		Visibility:     "public",
@@ -789,7 +789,7 @@ func (a *API) publishSandboxHTTP(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "publish_sandbox_http", err)
 		return
 	}
-	sb, err = a.q.SandboxUpdatePublishPort(r.Context(), queries.SandboxUpdatePublishPortParams{
+	sb, err = a.q.RemoteVMUpdatePublishPort(r.Context(), queries.RemoteVMUpdatePublishPortParams{
 		ID:                sb.ID,
 		PublishedHttpPort: pgtype.Int4{Int32: req.TargetPort, Valid: true},
 	})
@@ -832,15 +832,15 @@ func (a *API) execSandbox(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "validation_error", "argv is required")
 		return
 	}
-	a.recordSandboxAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "exec", "started", nil, "")
+	a.recordRemoteVMAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "exec", "started", nil, "")
 	out, err := access.ExecGuest(r.Context(), uuid.UUID(sb.ID.Bytes), req.Argv, req.Cwd, req.Env)
 	if err != nil {
-		a.recordSandboxAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "exec", "failed", nil, err.Error())
+		a.recordRemoteVMAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "exec", "failed", nil, err.Error())
 		writeAPIErrorFromErr(w, http.StatusConflict, "sandbox_exec", err)
 		return
 	}
-	_ = a.q.SandboxUpdateLastUsedAt(r.Context(), sb.ID)
-	a.recordSandboxAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "exec", "ended", &out.ExitCode, "")
+	_ = a.q.RemoteVMUpdateLastUsedAt(r.Context(), sb.ID)
+	a.recordRemoteVMAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "exec", "ended", &out.ExitCode, "")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"exit_code": out.ExitCode,
 		"output":    out.Output,
@@ -877,12 +877,12 @@ func (a *API) copyIntoSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := access.WriteGuestFile(r.Context(), uuid.UUID(sb.ID.Bytes), targetPath, data); err != nil {
-		a.recordSandboxAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "copy_in", "failed", nil, err.Error())
+		a.recordRemoteVMAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "copy_in", "failed", nil, err.Error())
 		writeAPIErrorFromErr(w, http.StatusConflict, "sandbox_copy_in", err)
 		return
 	}
-	_ = a.q.SandboxUpdateLastUsedAt(r.Context(), sb.ID)
-	a.recordSandboxAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "copy_in", "ended", nil, "")
+	_ = a.q.RemoteVMUpdateLastUsedAt(r.Context(), sb.ID)
+	a.recordRemoteVMAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "copy_in", "ended", nil, "")
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
@@ -912,12 +912,12 @@ func (a *API) copyOutOfSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := access.ReadGuestFile(r.Context(), uuid.UUID(sb.ID.Bytes), sourcePath)
 	if err != nil {
-		a.recordSandboxAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "copy_out", "failed", nil, err.Error())
+		a.recordRemoteVMAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "copy_out", "failed", nil, err.Error())
 		writeAPIErrorFromErr(w, http.StatusConflict, "sandbox_copy_out", err)
 		return
 	}
-	_ = a.q.SandboxUpdateLastUsedAt(r.Context(), sb.ID)
-	a.recordSandboxAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "copy_out", "ended", nil, "")
+	_ = a.q.RemoteVMUpdateLastUsedAt(r.Context(), sb.ID)
+	a.recordRemoteVMAccessEvent(r.Context(), uuid.UUID(sb.ID.Bytes), p.UserID, "copy_out", "ended", nil, "")
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
@@ -1012,7 +1012,7 @@ func (a *API) unpublishSandboxHTTP(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox id")
 		return
 	}
-	sb, err := a.q.SandboxFirstByIDAndOrg(r.Context(), queries.SandboxFirstByIDAndOrgParams{
+	sb, err := a.q.RemoteVMFirstByIDAndOrg(r.Context(), queries.RemoteVMFirstByIDAndOrgParams{
 		ID:    id,
 		OrgID: p.OrganizationID,
 	})
@@ -1021,12 +1021,12 @@ func (a *API) unpublishSandboxHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if sb.PublishedHttpPort.Valid {
-		_ = a.q.SandboxPublishedPortDeleteBySandboxAndPort(r.Context(), queries.SandboxPublishedPortDeleteBySandboxAndPortParams{
-			SandboxID:  sb.ID,
+		_ = a.q.RemoteVMPublishedPortDeleteByRemoteVMAndPort(r.Context(), queries.RemoteVMPublishedPortDeleteByRemoteVMAndPortParams{
+			RemoteVmID:  sb.ID,
 			TargetPort: sb.PublishedHttpPort.Int32,
 		})
 	}
-	sb, err = a.q.SandboxUpdatePublishPort(r.Context(), queries.SandboxUpdatePublishPortParams{
+	sb, err = a.q.RemoteVMUpdatePublishPort(r.Context(), queries.RemoteVMUpdatePublishPortParams{
 		ID:                sb.ID,
 		PublishedHttpPort: pgtype.Int4{},
 	})
@@ -1055,28 +1055,28 @@ func optionalInt4(v *int32) pgtype.Int4 {
 	return pgtype.Int4{Int32: *v, Valid: true}
 }
 
-func (a *API) requireSandboxAccess(w http.ResponseWriter, r *http.Request, p auth.Principal) (queries.Sandbox, bool) {
+func (a *API) requireSandboxAccess(w http.ResponseWriter, r *http.Request, p auth.Principal) (queries.RemoteVm, bool) {
 	id, err := parseUUID(r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_id", "invalid sandbox id")
-		return queries.Sandbox{}, false
+		return queries.RemoteVm{}, false
 	}
-	sb, err := a.q.SandboxFirstByIDAndOrg(r.Context(), queries.SandboxFirstByIDAndOrgParams{
+	sb, err := a.q.RemoteVMFirstByIDAndOrg(r.Context(), queries.RemoteVMFirstByIDAndOrgParams{
 		ID:    id,
 		OrgID: p.OrganizationID,
 	})
 	if err != nil {
 		writeAPIError(w, http.StatusNotFound, "not_found", "sandbox not found")
-		return queries.Sandbox{}, false
+		return queries.RemoteVm{}, false
 	}
 	if sb.ObservedState != "running" {
 		writeAPIError(w, http.StatusConflict, "sandbox_not_running", "sandbox must be running")
-		return queries.Sandbox{}, false
+		return queries.RemoteVm{}, false
 	}
 	return sb, true
 }
 
-func (a *API) sandboxLocalRuntime(w http.ResponseWriter, sb queries.Sandbox) (kruntime.Runtime, bool) {
+func (a *API) sandboxLocalRuntime(w http.ResponseWriter, sb queries.RemoteVm) (kruntime.Runtime, bool) {
 	if a.sandboxSvc == nil || a.sandboxSvc.Runtime == nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "sandbox_runtime", "sandbox runtime is unavailable on this server")
 		return nil, false
@@ -1088,7 +1088,7 @@ func (a *API) sandboxLocalRuntime(w http.ResponseWriter, sb queries.Sandbox) (kr
 	return a.sandboxSvc.Runtime, true
 }
 
-func (a *API) sandboxGuestAccess(w http.ResponseWriter, sb queries.Sandbox) (kruntime.GuestAccess, bool) {
+func (a *API) sandboxGuestAccess(w http.ResponseWriter, sb queries.RemoteVm) (kruntime.GuestAccess, bool) {
 	rt, ok := a.sandboxLocalRuntime(w, sb)
 	if !ok {
 		return nil, false
@@ -1101,7 +1101,7 @@ func (a *API) sandboxGuestAccess(w http.ResponseWriter, sb queries.Sandbox) (kru
 	return access, true
 }
 
-func (a *API) sandboxStreamAccess(w http.ResponseWriter, sb queries.Sandbox) (kruntime.GuestStreamAccess, bool) {
+func (a *API) sandboxStreamAccess(w http.ResponseWriter, sb queries.RemoteVm) (kruntime.GuestStreamAccess, bool) {
 	rt, ok := a.sandboxLocalRuntime(w, sb)
 	if !ok {
 		return nil, false
@@ -1114,11 +1114,11 @@ func (a *API) sandboxStreamAccess(w http.ResponseWriter, sb queries.Sandbox) (kr
 	return access, true
 }
 
-func (a *API) defaultSandboxHostname(sb queries.Sandbox) string {
+func (a *API) defaultSandboxHostname(sb queries.RemoteVm) string {
 	if a == nil || a.cfg == nil || a.cfg.Snapshot() == nil {
 		return ""
 	}
-	base := strings.Trim(strings.TrimSpace(a.cfg.Snapshot().SandboxBaseDomain), ".")
+	base := strings.Trim(strings.TrimSpace(a.cfg.Snapshot().RemoteVMBaseDomain), ".")
 	if base == "" {
 		return ""
 	}

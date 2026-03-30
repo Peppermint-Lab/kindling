@@ -94,14 +94,14 @@ func (a *API) requireValidSandboxProxyIfPresent(w http.ResponseWriter, r *http.R
 	return true
 }
 
-func (a *API) sandboxIsLocalOwner(sb queries.Sandbox) bool {
+func (a *API) sandboxIsLocalOwner(sb queries.RemoteVm) bool {
 	if !sb.ServerID.Valid {
 		return true
 	}
 	return a.sandboxSvc != nil && a.sandboxSvc.ServerID != uuid.Nil && uuid.UUID(sb.ServerID.Bytes) == a.sandboxSvc.ServerID
 }
 
-func (a *API) sandboxOwnerOrigin(ctx context.Context, sb queries.Sandbox) (*url.URL, error) {
+func (a *API) sandboxOwnerOrigin(ctx context.Context, sb queries.RemoteVm) (*url.URL, error) {
 	if !sb.ServerID.Valid {
 		return nil, fmt.Errorf("sandbox has no assigned worker")
 	}
@@ -171,7 +171,7 @@ func copyResponseHeaders(dst, src http.Header) {
 	}
 }
 
-func (a *API) proxySandboxHTTPRequest(w http.ResponseWriter, r *http.Request, sb queries.Sandbox) bool {
+func (a *API) proxySandboxHTTPRequest(w http.ResponseWriter, r *http.Request, sb queries.RemoteVm) bool {
 	if a.sandboxIsLocalOwner(sb) {
 		return false
 	}
@@ -208,7 +208,7 @@ func (a *API) proxySandboxHTTPRequest(w http.ResponseWriter, r *http.Request, sb
 	return true
 }
 
-func (a *API) proxySandboxWebsocket(w http.ResponseWriter, r *http.Request, sb queries.Sandbox) bool {
+func (a *API) proxySandboxWebsocket(w http.ResponseWriter, r *http.Request, sb queries.RemoteVm) bool {
 	if a.sandboxIsLocalOwner(sb) {
 		return false
 	}

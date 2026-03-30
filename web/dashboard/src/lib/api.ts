@@ -134,7 +134,7 @@ export type SandboxTemplate = {
   host_group: string
   backend?: string
   arch?: string
-  source_sandbox_id?: string | null
+  source_remote_vm_id?: string | null
   server_id?: string | null
   base_image_ref: string
   snapshot_ref?: string
@@ -149,7 +149,7 @@ export type SandboxTemplate = {
 
 export type SandboxAccessEvent = {
   id: string
-  sandbox_id: string
+  remote_vm_id: string
   user_id?: string
   user_email?: string
   display_name?: string
@@ -699,7 +699,7 @@ export type ProjectDomain = {
 }
 
 export const api = {
-  listSandboxes: () => request<Sandbox[]>("/api/sandboxes"),
+  listSandboxes: () => request<Sandbox[]>("/api/vms"),
   createSandbox: (data: {
     name: string
     host_group?: string
@@ -715,8 +715,8 @@ export const api = {
     published_http_port?: number
     desired_state?: "running" | "stopped"
   }) =>
-    request<Sandbox>("/api/sandboxes", { method: "POST", body: JSON.stringify(data) }),
-  getSandbox: (id: string) => request<Sandbox>(`/api/sandboxes/${id}`),
+    request<Sandbox>("/api/vms", { method: "POST", body: JSON.stringify(data) }),
+  getSandbox: (id: string) => request<Sandbox>(`/api/vms/${id}`),
   updateSandbox: (id: string, data: {
     auto_suspend_seconds?: number
     base_image_ref?: string
@@ -725,28 +725,28 @@ export const api = {
     disk_gb?: number
     expires_at?: string
   }) =>
-    request<Sandbox>(`/api/sandboxes/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+    request<Sandbox>(`/api/vms/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteSandbox: (id: string) =>
-    request<void>(`/api/sandboxes/${id}`, { method: "DELETE" }),
+    request<void>(`/api/vms/${id}`, { method: "DELETE" }),
   sandboxAction: (id: string, action: "start" | "stop" | "suspend" | "resume") =>
-    request<Sandbox>(`/api/sandboxes/${id}/${action}`, { method: "POST", body: JSON.stringify({}) }),
+    request<Sandbox>(`/api/vms/${id}/${action}`, { method: "POST", body: JSON.stringify({}) }),
   publishSandboxHTTP: (id: string, targetPort: number, hostname?: string) =>
-    request<Sandbox>(`/api/sandboxes/${id}/publish-http`, {
+    request<Sandbox>(`/api/vms/${id}/publish-http`, {
       method: "POST",
       body: JSON.stringify({ target_port: targetPort, hostname }),
     }),
   unpublishSandboxHTTP: (id: string) =>
-    request<Sandbox>(`/api/sandboxes/${id}/unpublish-http`, { method: "POST", body: JSON.stringify({}) }),
-  getSandboxLogs: (id: string) => request<string[]>(`/api/sandboxes/${id}/logs`),
-  getSandboxStats: (id: string) => request<Record<string, unknown> | null>(`/api/sandboxes/${id}/stats`),
-  getSandboxAccessEvents: (id: string) => request<SandboxAccessEvent[]>(`/api/sandboxes/${id}/access-events`),
-  listSandboxTemplates: () => request<SandboxTemplate[]>("/api/sandbox-templates"),
+    request<Sandbox>(`/api/vms/${id}/unpublish-http`, { method: "POST", body: JSON.stringify({}) }),
+  getSandboxLogs: (id: string) => request<string[]>(`/api/vms/${id}/logs`),
+  getSandboxStats: (id: string) => request<Record<string, unknown> | null>(`/api/vms/${id}/stats`),
+  getSandboxAccessEvents: (id: string) => request<SandboxAccessEvent[]>(`/api/vms/${id}/access-events`),
+  listSandboxTemplates: () => request<SandboxTemplate[]>("/api/vm-templates"),
   createSandboxTemplate: (id: string, data?: { name?: string }) =>
-    request<SandboxTemplate>(`/api/sandboxes/${id}/template`, { method: "POST", body: JSON.stringify(data ?? {}) }),
+    request<SandboxTemplate>(`/api/vms/${id}/template`, { method: "POST", body: JSON.stringify(data ?? {}) }),
   cloneSandboxTemplate: (id: string, data?: { name?: string }) =>
-    request<Sandbox>(`/api/sandbox-templates/${id}/clone`, { method: "POST", body: JSON.stringify(data ?? {}) }),
+    request<Sandbox>(`/api/vm-templates/${id}/clone`, { method: "POST", body: JSON.stringify(data ?? {}) }),
   deleteSandboxTemplate: (id: string) =>
-    request<SandboxTemplate>(`/api/sandbox-templates/${id}`, { method: "DELETE" }),
+    request<SandboxTemplate>(`/api/vm-templates/${id}`, { method: "DELETE" }),
   listUserSSHKeys: () => request<UserSSHKey[]>("/api/me/ssh-keys"),
   createUserSSHKey: (data: { name?: string; public_key: string }) =>
     request<UserSSHKey>("/api/me/ssh-keys", { method: "POST", body: JSON.stringify(data) }),

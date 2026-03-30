@@ -37,9 +37,9 @@ func TestNormalizeSandboxBaseImageRef(t *testing.T) {
 func TestResolveSandboxHostGroup(t *testing.T) {
 	t.Parallel()
 
-	tpl := &queries.SandboxTemplate{HostGroup: sandbox.HostGroupMac}
+	tpl := &queries.RemoteVmTemplate{HostGroup: sandbox.HostGroupMac}
 
-	if got := resolveSandboxHostGroup("linux-sandbox", tpl); got != sandbox.HostGroupLinux {
+	if got := resolveSandboxHostGroup("linux-remote-vm", tpl); got != sandbox.HostGroupLinux {
 		t.Fatalf("resolveSandboxHostGroup explicit = %q, want %q", got, sandbox.HostGroupLinux)
 	}
 	if got := resolveSandboxHostGroup("", tpl); got != sandbox.HostGroupMac {
@@ -53,11 +53,11 @@ func TestResolveSandboxHostGroup(t *testing.T) {
 func TestSandboxDeleteCanBypassReconciler(t *testing.T) {
 	t.Parallel()
 
-	if !sandboxDeleteCanBypassReconciler(queries.Sandbox{}) {
+	if !sandboxDeleteCanBypassReconciler(queries.RemoteVm{}) {
 		t.Fatal("expected sandbox without vm to bypass reconciler")
 	}
 
-	if sandboxDeleteCanBypassReconciler(queries.Sandbox{
+	if sandboxDeleteCanBypassReconciler(queries.RemoteVm{
 		VmID: pguuid.ToPgtype(uuidMustParse("11111111-1111-1111-1111-111111111111")),
 	}) {
 		t.Fatal("expected sandbox with vm to require reconciler cleanup")
@@ -67,15 +67,15 @@ func TestSandboxDeleteCanBypassReconciler(t *testing.T) {
 func TestSandboxRuntimeObservabilityReady(t *testing.T) {
 	t.Parallel()
 
-	if !sandboxRuntimeObservabilityReady(queries.Sandbox{ObservedState: "running"}) {
+	if !sandboxRuntimeObservabilityReady(queries.RemoteVm{ObservedState: "running"}) {
 		t.Fatal("expected running sandbox to expose logs and stats")
 	}
 
-	if sandboxRuntimeObservabilityReady(queries.Sandbox{ObservedState: "pending"}) {
+	if sandboxRuntimeObservabilityReady(queries.RemoteVm{ObservedState: "pending"}) {
 		t.Fatal("expected pending sandbox to skip logs and stats")
 	}
 
-	if sandboxRuntimeObservabilityReady(queries.Sandbox{ObservedState: "stopped"}) {
+	if sandboxRuntimeObservabilityReady(queries.RemoteVm{ObservedState: "stopped"}) {
 		t.Fatal("expected stopped sandbox to skip logs and stats")
 	}
 }

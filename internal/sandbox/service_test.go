@@ -11,19 +11,19 @@ import (
 func TestDecodeWorkerMetadataFallsBackToRuntime(t *testing.T) {
 	t.Parallel()
 
-	meta := decodeWorkerMetadata([]byte(`{"runtime":"apple-vz","sandbox_enabled":true,"sandbox_rosetta":false}`))
-	if meta.SandboxBackend != "apple-vz" {
-		t.Fatalf("sandbox backend = %q, want apple-vz", meta.SandboxBackend)
+	meta := decodeWorkerMetadata([]byte(`{"runtime":"apple-vz","remote_vm_enabled":true,"remote_vm_rosetta":false}`))
+	if meta.RemoteVmBackend != "apple-vz" {
+		t.Fatalf("remote vm backend = %q, want apple-vz", meta.RemoteVmBackend)
 	}
-	if !meta.SandboxEnabled {
-		t.Fatal("sandbox_enabled = false, want true")
+	if !meta.RemoteVmEnabled {
+		t.Fatal("remote_vm_enabled = false, want true")
 	}
 }
 
 func TestSandboxEnvIncludesUserAndGitMetadata(t *testing.T) {
 	t.Parallel()
 
-	env := sandboxEnv(queries.Sandbox{
+	env := sandboxEnv(queries.RemoteVm{
 		EnvJson: []byte(`{"FOO":"bar","BAZ":"qux"}`),
 		GitRepo: "https://github.com/kindlingvm/kindling",
 		GitRef:  "main",
@@ -35,8 +35,8 @@ func TestSandboxEnvIncludesUserAndGitMetadata(t *testing.T) {
 	for _, want := range []string{
 		"FOO=bar",
 		"BAZ=qux",
-		"KINDLING_SANDBOX_GIT_REPO=https://github.com/kindlingvm/kindling",
-		"KINDLING_SANDBOX_GIT_REF=main",
+		"KINDLING_REMOTE_VM_GIT_REPO=https://github.com/kindlingvm/kindling",
+		"KINDLING_REMOTE_VM_GIT_REF=main",
 	} {
 		if !got[want] {
 			t.Fatalf("missing env entry %q in %#v", want, env)
@@ -75,10 +75,10 @@ func TestParseRuntimeAddress(t *testing.T) {
 func TestSandboxPortFallsBackToDefault(t *testing.T) {
 	t.Parallel()
 
-	if got := sandboxPort(queries.Sandbox{}); got != DefaultPublishedHTTPPort {
+	if got := sandboxPort(queries.RemoteVm{}); got != DefaultPublishedHTTPPort {
 		t.Fatalf("sandboxPort default = %d, want %d", got, DefaultPublishedHTTPPort)
 	}
-	if got := sandboxPort(queries.Sandbox{
+	if got := sandboxPort(queries.RemoteVm{
 		PublishedHttpPort: pgtype.Int4{Int32: 8080, Valid: true},
 	}); got != 8080 {
 		t.Fatalf("sandboxPort explicit = %d, want 8080", got)

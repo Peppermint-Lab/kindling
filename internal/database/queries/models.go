@@ -367,7 +367,7 @@ type ProjectVolumeOperation struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
-type Sandbox struct {
+type RemoteVm struct {
 	ID                 pgtype.UUID        `json:"id"`
 	OrgID              pgtype.UUID        `json:"org_id"`
 	Name               string             `json:"name"`
@@ -399,9 +399,9 @@ type Sandbox struct {
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
-type SandboxAccessEvent struct {
+type RemoteVmAccessEvent struct {
 	ID           pgtype.UUID        `json:"id"`
-	SandboxID    pgtype.UUID        `json:"sandbox_id"`
+	RemoteVmID   pgtype.UUID        `json:"remote_vm_id"`
 	UserID       pgtype.UUID        `json:"user_id"`
 	AccessMethod string             `json:"access_method"`
 	EventType    string             `json:"event_type"`
@@ -410,9 +410,9 @@ type SandboxAccessEvent struct {
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
-type SandboxPublishedPort struct {
+type RemoteVmPublishedPort struct {
 	ID             pgtype.UUID        `json:"id"`
-	SandboxID      pgtype.UUID        `json:"sandbox_id"`
+	RemoteVmID     pgtype.UUID        `json:"remote_vm_id"`
 	TargetPort     int32              `json:"target_port"`
 	Protocol       string             `json:"protocol"`
 	Visibility     string             `json:"visibility"`
@@ -421,26 +421,26 @@ type SandboxPublishedPort struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
-type SandboxTemplate struct {
-	ID              pgtype.UUID        `json:"id"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	Name            string             `json:"name"`
-	HostGroup       string             `json:"host_group"`
-	Backend         string             `json:"backend"`
-	Arch            string             `json:"arch"`
-	SourceSandboxID pgtype.UUID        `json:"source_sandbox_id"`
-	ServerID        pgtype.UUID        `json:"server_id"`
-	BaseImageRef    string             `json:"base_image_ref"`
-	SnapshotRef     string             `json:"snapshot_ref"`
-	Vcpu            int32              `json:"vcpu"`
-	MemoryMb        int32              `json:"memory_mb"`
-	DiskGb          int32              `json:"disk_gb"`
-	Status          string             `json:"status"`
-	FailureMessage  string             `json:"failure_message"`
-	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
-	DeletedAt       pgtype.Timestamptz `json:"deleted_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+type RemoteVmTemplate struct {
+	ID               pgtype.UUID        `json:"id"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	Name             string             `json:"name"`
+	HostGroup        string             `json:"host_group"`
+	Backend          string             `json:"backend"`
+	Arch             string             `json:"arch"`
+	SourceRemoteVmID pgtype.UUID        `json:"source_remote_vm_id"`
+	ServerID         pgtype.UUID        `json:"server_id"`
+	BaseImageRef     string             `json:"base_image_ref"`
+	SnapshotRef      string             `json:"snapshot_ref"`
+	Vcpu             int32              `json:"vcpu"`
+	MemoryMb         int32              `json:"memory_mb"`
+	DiskGb           int32              `json:"disk_gb"`
+	Status           string             `json:"status"`
+	FailureMessage   string             `json:"failure_message"`
+	CreatedByUserID  pgtype.UUID        `json:"created_by_user_id"`
+	DeletedAt        pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Server struct {

@@ -83,7 +83,7 @@ func (a *API) createUserSSHKey(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "create_user_ssh_key", err)
 		return
 	}
-	_ = a.q.SandboxTouchRunningByOrg(r.Context(), p.OrganizationID)
+	_ = a.q.RemoteVMTouchRunningByOrg(r.Context(), p.OrganizationID)
 	writeJSON(w, http.StatusCreated, userSSHKeyToOut(row))
 }
 
@@ -104,6 +104,6 @@ func (a *API) deleteUserSSHKey(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "delete_user_ssh_key", err)
 		return
 	}
-	_ = a.q.SandboxTouchRunningByOrg(r.Context(), p.OrganizationID)
+	_ = a.q.RemoteVMTouchRunningByOrg(r.Context(), p.OrganizationID)
 	w.WriteHeader(http.StatusNoContent)
 }

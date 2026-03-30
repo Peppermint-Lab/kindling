@@ -162,7 +162,7 @@ function Layout() {
               }
             />
             <Route
-              path="/sandboxes"
+              path="/vms"
               element={
                 <PrivateRouteContent>
                   <SandboxesPage />
@@ -170,7 +170,7 @@ function Layout() {
               }
             />
             <Route
-              path="/sandboxes/:id"
+              path="/vms/:id"
               element={
                 <PrivateRouteContent>
                   <SandboxDetailPage />

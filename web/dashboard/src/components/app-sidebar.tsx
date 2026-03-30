@@ -41,8 +41,8 @@ const data = {
       icon: <RocketIcon />,
     },
     {
-      title: "Sandboxes",
-      url: "/sandboxes",
+      title: "Remote VMs",
+      url: "/vms",
       icon: <BoxIcon />,
     },
     {

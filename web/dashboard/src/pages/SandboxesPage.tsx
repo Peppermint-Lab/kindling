@@ -22,7 +22,7 @@ type CreateMode = "preset" | "custom" | "template"
 
 type SandboxDraft = {
   name: string
-  host_group: "linux-sandbox" | "mac-sandbox"
+  host_group: "linux-remote-vm" | "mac-remote-vm"
   base_image_ref: string
   vcpu: string
   memory_mb: string
@@ -87,7 +87,7 @@ export function SandboxesPage() {
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load sandboxes")
+      setError(err instanceof Error ? err.message : "Failed to load remote VMs")
     } finally {
       setLoading(false)
     }
@@ -147,7 +147,7 @@ export function SandboxesPage() {
         })
         setDialogOpen(false)
         await load()
-        navigate(`/sandboxes/${created.id}`)
+        navigate(`/vms/${created.id}`)
         return
       }
 
@@ -155,7 +155,7 @@ export function SandboxesPage() {
       const nextMemory = Number(draft.memory_mb || "0")
       const nextDisk = Number(draft.disk_gb || "0")
       const nextAutoSuspend = draft.auto_suspend_enabled ? Number(draft.auto_suspend_seconds || "0") : 0
-      if (!draft.name.trim()) throw new Error("Sandbox name is required")
+      if (!draft.name.trim()) throw new Error("Remote VM name is required")
       if (!draft.base_image_ref.trim()) throw new Error("Base image is required")
       if (!Number.isFinite(nextVcpu) || nextVcpu <= 0) throw new Error("vCPU must be a positive number")
       if (!Number.isFinite(nextMemory) || nextMemory <= 0) throw new Error("Memory must be a positive number")
@@ -175,9 +175,9 @@ export function SandboxesPage() {
       })
       setDialogOpen(false)
       await load()
-      navigate(`/sandboxes/${created.id}`)
+      navigate(`/vms/${created.id}`)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create sandbox")
+      setError(err instanceof Error ? err.message : "Failed to create remote VM")
     } finally {
       setSubmitting(false)
     }
@@ -199,9 +199,9 @@ export function SandboxesPage() {
         desired_state: "running",
       })
       await load()
-      navigate(`/sandboxes/${created.id}`)
+      navigate(`/vms/${created.id}`)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to launch sandbox preset")
+      setError(err instanceof Error ? err.message : "Failed to launch remote VM preset")
     } finally {
       setQuickLaunchID(null)
     }
@@ -211,7 +211,7 @@ export function SandboxesPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Sandboxes</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Remote VMs</h1>
           <p className="text-sm text-muted-foreground">Persistent and disposable microVM workspaces across Linux and macOS workers.</p>
         </div>
         <div className="flex gap-2">
@@ -220,7 +220,7 @@ export function SandboxesPage() {
           </Button>
           <Button onClick={() => openPresetDialog(selectedPresetID)}>
             <CopyPlusIcon className="mr-2 size-4" />
-            New Sandbox
+            New Remote VM
           </Button>
         </div>
       </div>
@@ -275,7 +275,7 @@ export function SandboxesPage() {
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {sandboxes.map((sandbox) => (
-          <Link key={sandbox.id} to={`/sandboxes/${sandbox.id}`} className="block">
+          <Link key={sandbox.id} to={`/vms/${sandbox.id}`} className="block">
             <Card className="h-full transition-colors hover:border-foreground/30">
               <CardHeader>
                 <div className="flex items-start justify-between gap-3">
@@ -301,14 +301,14 @@ export function SandboxesPage() {
 
       {!loading && sandboxes.length === 0 ? (
         <Card>
-          <CardContent className="pt-6 text-sm text-muted-foreground">No sandboxes yet in this organization.</CardContent>
+          <CardContent className="pt-6 text-sm text-muted-foreground">No remote VMs yet in this organization.</CardContent>
         </Card>
       ) : null}
 
       <Card>
         <CardHeader>
           <CardTitle>Templates</CardTitle>
-          <CardDescription>Capture a sandbox snapshot from its detail page, then reuse it here for fast clones.</CardDescription>
+          <CardDescription>Capture a remote VM snapshot from its detail page, then reuse it here for fast clones.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -337,7 +337,7 @@ export function SandboxesPage() {
                   ) : template.status === "ready" ? (
                     <p className="text-xs text-muted-foreground">Snapshot ready for clone launches.</p>
                   ) : (
-                    <p className="text-xs text-muted-foreground">Capture in progress. The source sandbox may still be stopping or snapshotting.</p>
+                    <p className="text-xs text-muted-foreground">Capture in progress. The source remote VM may still be stopping or snapshotting.</p>
                   )}
                 </div>
                 <div className="flex gap-2">
@@ -371,7 +371,7 @@ export function SandboxesPage() {
             </div>
           ))}
           {!loading && templates.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No sandbox templates yet. Open a sandbox and capture one when you want a reusable clone source.</p>
+            <p className="text-sm text-muted-foreground">No templates yet. Open a remote VM and capture one when you want a reusable clone source.</p>
           ) : null}
         </CardContent>
       </Card>
@@ -379,9 +379,9 @@ export function SandboxesPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>New Sandbox</DialogTitle>
+            <DialogTitle>New Remote VM</DialogTitle>
             <DialogDescription>
-              Launch from a curated image, build a custom sandbox, or clone from a ready template.
+              Launch from a curated image, build a custom remote VM, or clone from a ready template.
             </DialogDescription>
           </DialogHeader>
 
@@ -418,7 +418,7 @@ export function SandboxesPage() {
                 <p className="mt-2 font-mono text-xs text-muted-foreground break-all">{selectedPreset.base_image_ref}</p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="preset-name">Sandbox Name</Label>
+                <Label htmlFor="preset-name">Remote VM Name</Label>
                 <Input
                   id="preset-name"
                   value={draft.name}
@@ -429,7 +429,7 @@ export function SandboxesPage() {
 
             <TabsContent value="custom" className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="sandbox-name">Sandbox Name</Label>
+                <Label htmlFor="sandbox-name">Remote VM Name</Label>
                 <Input
                   id="sandbox-name"
                   value={draft.name}
@@ -445,8 +445,8 @@ export function SandboxesPage() {
                     value={draft.host_group}
                     onChange={(e) => setDraft((current) => ({ ...current, host_group: e.target.value as SandboxDraft["host_group"] }))}
                   >
-                    <option value="linux-sandbox">Linux sandbox</option>
-                    <option value="mac-sandbox">macOS sandbox</option>
+                    <option value="linux-remote-vm">Linux remote VM</option>
+                    <option value="mac-remote-vm">macOS remote VM</option>
                   </select>
                 </div>
                 <div className="space-y-2">
@@ -510,7 +510,7 @@ export function SandboxesPage() {
             <TabsContent value="template" className="space-y-4">
               {readyTemplates.length === 0 ? (
                 <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                  No ready templates yet. Open a sandbox detail page and use Capture Template first.
+                  No ready templates yet. Open a remote VM detail page and use Capture Template first.
                 </div>
               ) : (
                 <>
@@ -546,7 +546,7 @@ export function SandboxesPage() {
                     </div>
                   ) : null}
                   <div className="space-y-2">
-                    <Label htmlFor="clone-name">Cloned Sandbox Name</Label>
+                    <Label htmlFor="clone-name">Cloned Remote VM Name</Label>
                     <Input
                       id="clone-name"
                       value={cloneName}
@@ -561,7 +561,7 @@ export function SandboxesPage() {
           <div className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground">
             {createMode === "template"
               ? "Template clones start with the captured image and resources. They default to always-on, then you can adjust lifecycle later."
-              : "New sandboxes default to always-on. Turn on auto-suspend only when you explicitly want idle cost control."}
+              : "New remote VMs default to always-on. Turn on auto-suspend only when you explicitly want idle cost control."}
           </div>
 
           {createMode !== "template" ? (
@@ -575,7 +575,7 @@ export function SandboxesPage() {
                 />
                 <span>
                   <span className="block font-medium">Enable auto-suspend</span>
-                  <span className="block text-muted-foreground">Leave this off for always-on sandboxes.</span>
+                  <span className="block text-muted-foreground">Leave this off for always-on remote VMs.</span>
                 </span>
               </label>
               <div className="space-y-2">
@@ -601,7 +601,7 @@ export function SandboxesPage() {
               onClick={() => void submitCreate()}
               disabled={submitting || (createMode === "template" && readyTemplates.length === 0)}
             >
-              {submitting ? "Working..." : createMode === "template" ? "Clone Sandbox" : "Create Sandbox"}
+              {submitting ? "Working..." : createMode === "template" ? "Clone Remote VM" : "Create Remote VM"}
             </Button>
           </DialogFooter>
         </DialogContent>

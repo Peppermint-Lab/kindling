@@ -167,12 +167,12 @@ func setupWorker(
 		ServerID: serverID,
 	}
 	sandboxReconciler := reconciler.New(reconciler.Config{
-		Name:      "sandbox",
-		Reconcile: failFastOnClosedPool("sandbox", sandboxSvc.Reconcile),
+		Name:      "remote_vm",
+		Reconcile: failFastOnClosedPool("remote_vm", sandboxSvc.Reconcile),
 	})
 	sandboxTemplateReconciler := reconciler.New(reconciler.Config{
-		Name:      "sandbox_template",
-		Reconcile: failFastOnClosedPool("sandbox_template", sandboxSvc.ReconcileTemplate),
+		Name:      "remote_vm_template",
+		Reconcile: failFastOnClosedPool("remote_vm_template", sandboxSvc.ReconcileTemplate),
 	})
 
 	return workerSetupResult{
@@ -240,11 +240,11 @@ func startReconcilers(ctx context.Context, q *queries.Queries, serverID uuid.UUI
 func startWorkerHeartbeats(ctx context.Context, q *queries.Queries, serverID uuid.UUID, rt crunrt.Runtime) {
 	go runServerComponentHeartbeat(ctx, q, serverID, "worker", componentHeartbeatInterval, func() map[string]any {
 		meta := map[string]any{"runtime": rt.Name()}
-		meta["sandbox_enabled"] = rt.Name() == "cloud-hypervisor" || rt.Name() == "apple-vz"
-		meta["sandbox_backend"] = rt.Name()
-		meta["sandbox_arch"] = runtime.GOARCH
-		meta["sandbox_rosetta"] = false
-		meta["sandbox_capacity"] = 1
+		meta["remote_vm_enabled"] = rt.Name() == "cloud-hypervisor" || rt.Name() == "apple-vz"
+		meta["remote_vm_backend"] = rt.Name()
+		meta["remote_vm_arch"] = runtime.GOARCH
+		meta["remote_vm_rosetta"] = false
+		meta["remote_vm_capacity"] = 1
 		if rt.Name() == "cloud-hypervisor" {
 			meta["live_migration_enabled"] = rt.Supports(crunrt.CapabilityLiveMigration)
 			if v := cloudHypervisorVersion(); v != "" {

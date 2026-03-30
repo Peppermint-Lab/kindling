@@ -506,12 +506,12 @@ WHERE pe.service_id IS NULL
   AND s.project_id = pe.project_id
   AND s.is_primary = true;
 
--- Org-scoped sandbox environments (separate from deployments/previews).
-CREATE TABLE IF NOT EXISTS sandboxes (
+-- Org-scoped remote VMs (interactive environments; separate from deployment vms/previews).
+CREATE TABLE IF NOT EXISTS remote_vms (
     id                   UUID PRIMARY KEY,
     org_id               UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     name                 TEXT NOT NULL,
-    host_group           TEXT NOT NULL DEFAULT 'linux-sandbox',
+    host_group           TEXT NOT NULL DEFAULT 'linux-remote-vm',
     backend              TEXT NOT NULL DEFAULT ''
         CHECK (backend IN ('', 'cloud-hypervisor', 'apple-vz')),
     arch                 TEXT NOT NULL DEFAULT ''
@@ -543,34 +543,34 @@ CREATE TABLE IF NOT EXISTS sandboxes (
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_sandboxes_org_id ON sandboxes(org_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_sandboxes_server_id ON sandboxes(server_id) WHERE deleted_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_sandboxes_expires_at ON sandboxes(expires_at) WHERE expires_at IS NOT NULL AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_remote_vms_org_id ON remote_vms(org_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_remote_vms_server_id ON remote_vms(server_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_remote_vms_expires_at ON remote_vms(expires_at) WHERE expires_at IS NOT NULL AND deleted_at IS NULL;
 
 DO $$ BEGIN
     IF EXISTS (
         SELECT 1
         FROM information_schema.columns
         WHERE table_schema = 'public'
-          AND table_name = 'sandboxes'
+          AND table_name = 'remote_vms'
           AND column_name = 'auto_suspend_seconds'
           AND COALESCE(column_default, '') NOT IN ('0', '0::bigint')
     ) THEN
-        ALTER TABLE sandboxes ALTER COLUMN auto_suspend_seconds SET DEFAULT 0;
-        UPDATE sandboxes SET auto_suspend_seconds = 0 WHERE auto_suspend_seconds <> 0;
+        ALTER TABLE remote_vms ALTER COLUMN auto_suspend_seconds SET DEFAULT 0;
+        UPDATE remote_vms SET auto_suspend_seconds = 0 WHERE auto_suspend_seconds <> 0;
     END IF;
 END $$;
 
-CREATE TABLE IF NOT EXISTS sandbox_templates (
+CREATE TABLE IF NOT EXISTS remote_vm_templates (
     id                 UUID PRIMARY KEY,
     org_id             UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     name               TEXT NOT NULL,
-    host_group         TEXT NOT NULL DEFAULT 'linux-sandbox',
+    host_group         TEXT NOT NULL DEFAULT 'linux-remote-vm',
     backend            TEXT NOT NULL DEFAULT ''
         CHECK (backend IN ('', 'cloud-hypervisor', 'apple-vz')),
     arch               TEXT NOT NULL DEFAULT ''
         CHECK (arch IN ('', 'amd64', 'arm64')),
-    source_sandbox_id  UUID REFERENCES sandboxes(id) ON DELETE SET NULL,
+    source_remote_vm_id UUID REFERENCES remote_vms(id) ON DELETE SET NULL,
     server_id          UUID REFERENCES servers(id) ON DELETE SET NULL,
     base_image_ref     TEXT NOT NULL DEFAULT '',
     snapshot_ref       TEXT NOT NULL DEFAULT '',
@@ -586,15 +586,15 @@ CREATE TABLE IF NOT EXISTS sandbox_templates (
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_sandbox_templates_org_id ON sandbox_templates(org_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_sandbox_templates_server_id ON sandbox_templates(server_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_remote_vm_templates_org_id ON remote_vm_templates(org_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_remote_vm_templates_server_id ON remote_vm_templates(server_id) WHERE deleted_at IS NULL;
 
 DO $$ BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'sandboxes_template_id_fkey'
+        SELECT 1 FROM pg_constraint WHERE conname = 'remote_vms_template_id_fkey'
     ) THEN
-        ALTER TABLE sandboxes ADD CONSTRAINT sandboxes_template_id_fkey
-            FOREIGN KEY (template_id) REFERENCES sandbox_templates(id) ON DELETE SET NULL;
+        ALTER TABLE remote_vms ADD CONSTRAINT remote_vms_template_id_fkey
+            FOREIGN KEY (template_id) REFERENCES remote_vm_templates(id) ON DELETE SET NULL;
     END IF;
 END $$;
 
@@ -602,27 +602,27 @@ DO $$ BEGIN
     IF NOT EXISTS (
         SELECT 1
         FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'sandboxes' AND column_name = 'ssh_host_public_key'
+        WHERE table_schema = 'public' AND table_name = 'remote_vms' AND column_name = 'ssh_host_public_key'
     ) THEN
-        ALTER TABLE sandboxes ADD COLUMN ssh_host_public_key TEXT NOT NULL DEFAULT '';
+        ALTER TABLE remote_vms ADD COLUMN ssh_host_public_key TEXT NOT NULL DEFAULT '';
     END IF;
 END $$;
 
-CREATE TABLE IF NOT EXISTS sandbox_published_ports (
+CREATE TABLE IF NOT EXISTS remote_vm_published_ports (
     id              UUID PRIMARY KEY,
-    sandbox_id      UUID NOT NULL REFERENCES sandboxes(id) ON DELETE CASCADE,
+    remote_vm_id    UUID NOT NULL REFERENCES remote_vms(id) ON DELETE CASCADE,
     target_port     INT NOT NULL CHECK (target_port > 0 AND target_port <= 65535),
     protocol        TEXT NOT NULL DEFAULT 'http' CHECK (protocol IN ('http')),
     visibility      TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public')),
     public_hostname TEXT NOT NULL DEFAULT '',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (sandbox_id, target_port)
+    UNIQUE (remote_vm_id, target_port)
 );
 
-CREATE INDEX IF NOT EXISTS idx_sandbox_published_ports_sandbox_id ON sandbox_published_ports(sandbox_id, created_at ASC);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_sandbox_published_ports_public_hostname_unique
-    ON sandbox_published_ports(LOWER(public_hostname))
+CREATE INDEX IF NOT EXISTS idx_remote_vm_published_ports_remote_vm_id ON remote_vm_published_ports(remote_vm_id, created_at ASC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_remote_vm_published_ports_public_hostname_unique
+    ON remote_vm_published_ports(LOWER(public_hostname))
     WHERE BTRIM(public_hostname) <> '';
 
 CREATE TABLE IF NOT EXISTS user_ssh_keys (
@@ -642,9 +642,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_user_ssh_keys_user_public_key_active
     ON user_ssh_keys(user_id, public_key)
     WHERE deleted_at IS NULL;
 
-CREATE TABLE IF NOT EXISTS sandbox_access_events (
+CREATE TABLE IF NOT EXISTS remote_vm_access_events (
     id             UUID PRIMARY KEY,
-    sandbox_id     UUID NOT NULL REFERENCES sandboxes(id) ON DELETE CASCADE,
+    remote_vm_id   UUID NOT NULL REFERENCES remote_vms(id) ON DELETE CASCADE,
     user_id        UUID REFERENCES users(id) ON DELETE SET NULL,
     access_method  TEXT NOT NULL CHECK (access_method IN ('shell_ws', 'ssh', 'exec', 'copy_in', 'copy_out')),
     event_type     TEXT NOT NULL CHECK (event_type IN ('started', 'ended', 'failed')),
@@ -653,10 +653,10 @@ CREATE TABLE IF NOT EXISTS sandbox_access_events (
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_sandbox_access_events_sandbox_id
-    ON sandbox_access_events(sandbox_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_sandbox_access_events_user_id
-    ON sandbox_access_events(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_remote_vm_access_events_remote_vm_id
+    ON remote_vm_access_events(remote_vm_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_remote_vm_access_events_user_id
+    ON remote_vm_access_events(user_id, created_at DESC);
 
 -- Environment variables per project (values stored as encrypted envelopes)
 CREATE TABLE IF NOT EXISTS environment_variables (
@@ -760,9 +760,9 @@ CREATE TABLE IF NOT EXISTS vms (
 
 DO $$ BEGIN
     IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'sandboxes_vm_id_fkey'
+        SELECT 1 FROM pg_constraint WHERE conname = 'remote_vms_vm_id_fkey'
     ) THEN
-        ALTER TABLE sandboxes ADD CONSTRAINT sandboxes_vm_id_fkey
+        ALTER TABLE remote_vms ADD CONSTRAINT remote_vms_vm_id_fkey
             FOREIGN KEY (vm_id) REFERENCES vms(id) ON DELETE SET NULL;
     END IF;
 END $$;

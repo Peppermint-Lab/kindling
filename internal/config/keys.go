@@ -16,7 +16,7 @@ const (
 	SettingVolumeBackupS3Prefix           = "volume_backup_s3_prefix"
 	SettingServiceBaseDomain              = "service_base_domain"
 	SettingPreviewBaseDomain              = "preview_base_domain"
-	SettingSandboxBaseDomain              = "sandbox_base_domain"
+	SettingRemoteVMBaseDomain             = "remote_vm_base_domain"
 	SettingPreviewRetentionAfterCloseSecs = "preview_retention_after_close_seconds"
 	SettingPreviewIdleSeconds             = "preview_idle_scale_seconds"
 )

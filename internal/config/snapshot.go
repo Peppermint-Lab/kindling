@@ -51,7 +51,7 @@ type Snapshot struct {
 	ScaleToZeroIdleSeconds            int64
 	ServiceBaseDomain                 string
 	PreviewBaseDomain                 string
-	SandboxBaseDomain                 string
+	RemoteVMBaseDomain                string
 	PreviewRetentionAfterCloseSeconds int64
 	PreviewIdleSeconds                int64
 	InterServerProxySharedKey         string
@@ -116,7 +116,7 @@ func LoadSnapshot(ctx context.Context, q *queries.Queries, serverID uuid.UUID, m
 	}
 	s.ServiceBaseDomain = strings.TrimSpace(settings[SettingServiceBaseDomain])
 	s.PreviewBaseDomain = strings.TrimSpace(settings[SettingPreviewBaseDomain])
-	s.SandboxBaseDomain = strings.TrimSpace(settings[SettingSandboxBaseDomain])
+	s.RemoteVMBaseDomain = strings.TrimSpace(settings[SettingRemoteVMBaseDomain])
 	if v := strings.TrimSpace(settings[SettingPreviewRetentionAfterCloseSecs]); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n >= 0 {
 			s.PreviewRetentionAfterCloseSeconds = n

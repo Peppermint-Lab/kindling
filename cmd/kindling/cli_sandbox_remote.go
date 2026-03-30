@@ -30,10 +30,10 @@ import (
 	"golang.org/x/term"
 )
 
-func cliSandboxRemoteCmd() *cobra.Command {
+func cliVMRemoteCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "sandbox",
-		Short: "Manage sandboxes via the control-plane API",
+		Use:   "vm",
+		Short: "Manage remote VMs via the control-plane API",
 	}
 	cmd.AddCommand(cliSandboxListCmd())
 	cmd.AddCommand(cliSandboxGetCmd())
@@ -61,15 +61,15 @@ func cliSandboxRemoteCmd() *cobra.Command {
 func cliSandboxListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List sandboxes in the current organization",
+		Short: "List remote VMs in the current organization",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := mustRemoteClient()
 			if err != nil {
 				return fmt.Errorf("create client: %w", err)
 			}
 			var out []map[string]any
-			if err := c.DoJSON(cmd.Context(), http.MethodGet, "/api/sandboxes", nil, &out); err != nil {
-				return fmt.Errorf("list sandboxes: %w", err)
+			if err := c.DoJSON(cmd.Context(), http.MethodGet, "/api/vms", nil, &out); err != nil {
+				return fmt.Errorf("list remote VMs: %w", err)
 			}
 			if !remoteJSON {
 				for _, row := range out {
@@ -86,27 +86,27 @@ func cliSandboxGetCmd() *cobra.Command {
 	var sandboxID string
 	cmd := &cobra.Command{
 		Use:   "get",
-		Short: "Get one sandbox by id",
+		Short: "Get one remote VM by id",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(sandboxID)
 			if id == "" {
-				return fmt.Errorf("--sandbox is required")
+				return fmt.Errorf("--vm is required")
 			}
 			if _, err := uuid.Parse(id); err != nil {
-				return fmt.Errorf("invalid sandbox id: %w", err)
+				return fmt.Errorf("invalid remote VM id: %w", err)
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
 				return fmt.Errorf("create client: %w", err)
 			}
 			var out map[string]any
-			if err := c.DoJSON(cmd.Context(), http.MethodGet, "/api/sandboxes/"+id, nil, &out); err != nil {
-				return fmt.Errorf("fetch sandbox: %w", err)
+			if err := c.DoJSON(cmd.Context(), http.MethodGet, "/api/vms/"+id, nil, &out); err != nil {
+				return fmt.Errorf("fetch remote VM: %w", err)
 			}
 			return printRemote(out)
 		},
 	}
-	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
+	cmd.Flags().StringVar(&sandboxID, "vm", "", "Remote VM UUID")
 	return cmd
 }
 
@@ -120,7 +120,7 @@ func cliSandboxCreateCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "create",
-		Short: "Create a sandbox (org admin)",
+		Short: "Create a remote VM (org admin)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if strings.TrimSpace(name) == "" {
 				return fmt.Errorf("--name is required")
@@ -151,14 +151,14 @@ func cliSandboxCreateCmd() *cobra.Command {
 				return fmt.Errorf("create client: %w", err)
 			}
 			var out map[string]any
-			if err := c.DoJSON(cmd.Context(), http.MethodPost, "/api/sandboxes", body, &out); err != nil {
-				return fmt.Errorf("create sandbox: %w", err)
+			if err := c.DoJSON(cmd.Context(), http.MethodPost, "/api/vms", body, &out); err != nil {
+				return fmt.Errorf("create remote VM: %w", err)
 			}
 			return printRemote(out)
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "Sandbox name")
-	cmd.Flags().StringVar(&hostGroup, "host-group", "", "Host group (linux-sandbox or mac-sandbox)")
+	cmd.Flags().StringVar(&hostGroup, "host-group", "", "Host group (linux-remote-vm or mac-remote-vm)")
 	cmd.Flags().StringVar(&imageRef, "image", "", "Base OCI image reference")
 	cmd.Flags().StringVar(&templateID, "template", "", "Sandbox template UUID")
 	cmd.Flags().StringVar(&gitRepo, "git-repo", "", "Optional repo URL")
@@ -169,7 +169,7 @@ func cliSandboxCreateCmd() *cobra.Command {
 	cmd.Flags().Int64Var(&autoSuspend, "auto-suspend-seconds", 0, "Idle auto-suspend timeout in seconds (0 disables auto-suspend)")
 	cmd.Flags().Int32Var(&port, "port", 0, "Published HTTP port")
 	cmd.Flags().StringVar(&expiresAt, "expires-at", "", "Optional RFC3339 expiry time")
-	cmd.Flags().BoolVar(&startStopped, "stopped", false, "Create the sandbox in stopped state")
+	cmd.Flags().BoolVar(&startStopped, "stopped", false, "Create the remote VM in stopped state")
 	return cmd
 }
 
@@ -181,14 +181,14 @@ func cliSandboxUpdateCmd() *cobra.Command {
 	var expiresAt string
 	cmd := &cobra.Command{
 		Use:   "update",
-		Short: "Update sandbox settings (org admin)",
+		Short: "Update remote VM settings (org admin)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(sandboxID)
 			if id == "" {
-				return fmt.Errorf("--sandbox is required")
+				return fmt.Errorf("--vm is required")
 			}
 			if _, err := uuid.Parse(id); err != nil {
-				return fmt.Errorf("invalid sandbox id: %w", err)
+				return fmt.Errorf("invalid remote VM id: %w", err)
 			}
 			if autoSuspend < 0 {
 				autoSuspend = -1
@@ -223,13 +223,13 @@ func cliSandboxUpdateCmd() *cobra.Command {
 				return fmt.Errorf("no settings provided")
 			}
 			var out map[string]any
-			if err := c.DoJSON(cmd.Context(), http.MethodPatch, "/api/sandboxes/"+id, body, &out); err != nil {
-				return fmt.Errorf("update sandbox: %w", err)
+			if err := c.DoJSON(cmd.Context(), http.MethodPatch, "/api/vms/"+id, body, &out); err != nil {
+				return fmt.Errorf("update remote VM: %w", err)
 			}
 			return printRemote(out)
 		},
 	}
-	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
+	cmd.Flags().StringVar(&sandboxID, "vm", "", "Remote VM UUID")
 	cmd.Flags().Int64Var(&autoSuspend, "auto-suspend-seconds", -1, "Idle auto-suspend timeout in seconds (0 disables auto-suspend)")
 	cmd.Flags().StringVar(&imageRef, "image", "", "Base OCI image reference")
 	cmd.Flags().Int32Var(&vcpu, "vcpu", 0, "vCPU count")
@@ -244,54 +244,54 @@ func cliSandboxDeleteCmd() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "delete",
-		Short: "Delete a sandbox (org admin)",
+		Short: "Delete a remote VM (org admin)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(sandboxID)
 			if id == "" {
-				return fmt.Errorf("--sandbox is required")
+				return fmt.Errorf("--vm is required")
 			}
 			if _, err := uuid.Parse(id); err != nil {
-				return fmt.Errorf("invalid sandbox id: %w", err)
+				return fmt.Errorf("invalid remote VM id: %w", err)
 			}
 			if !yes {
-				return fmt.Errorf("refusing without --yes\n  kindling sandbox delete --sandbox %s --yes", id)
+				return fmt.Errorf("refusing without --yes\n  kindling vm delete --vm %s --yes", id)
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
 				return fmt.Errorf("create client: %w", err)
 			}
-			resp, err := c.Do(cmd.Context(), http.MethodDelete, "/api/sandboxes/"+id, nil)
+			resp, err := c.Do(cmd.Context(), http.MethodDelete, "/api/vms/"+id, nil)
 			if err != nil {
-				return fmt.Errorf("delete sandbox request: %w", err)
+				return fmt.Errorf("delete remote VM request: %w", err)
 			}
 			defer resp.Body.Close()
 			b, _ := io.ReadAll(resp.Body)
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 				return fmt.Errorf("delete failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(b)))
 			}
-			printRemoteMessage("sandbox deleted: " + id)
+			printRemoteMessage("remote VM deleted: " + id)
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
+	cmd.Flags().StringVar(&sandboxID, "vm", "", "Remote VM UUID")
 	cmd.Flags().BoolVar(&yes, "yes", false, "Confirm destructive delete")
 	return cmd
 }
 
 func cliSandboxStartCmd() *cobra.Command {
-	return cliSandboxActionCmd("start", "Start or resume a sandbox")
+	return cliSandboxActionCmd("start", "Start or resume a remote VM")
 }
 
 func cliSandboxStopCmd() *cobra.Command {
-	return cliSandboxActionCmd("stop", "Stop a sandbox into retained suspended state")
+	return cliSandboxActionCmd("stop", "Stop a remote VM into retained suspended state")
 }
 
 func cliSandboxSuspendCmd() *cobra.Command {
-	return cliSandboxActionCmd("suspend", "Suspend a sandbox into retained state")
+	return cliSandboxActionCmd("suspend", "Suspend a remote VM into retained state")
 }
 
 func cliSandboxResumeCmd() *cobra.Command {
-	return cliSandboxActionCmd("resume", "Resume a suspended sandbox")
+	return cliSandboxActionCmd("resume", "Resume a suspended remote VM")
 }
 
 func cliSandboxActionCmd(action, short string) *cobra.Command {
@@ -302,23 +302,23 @@ func cliSandboxActionCmd(action, short string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(sandboxID)
 			if id == "" {
-				return fmt.Errorf("--sandbox is required")
+				return fmt.Errorf("--vm is required")
 			}
 			if _, err := uuid.Parse(id); err != nil {
-				return fmt.Errorf("invalid sandbox id: %w", err)
+				return fmt.Errorf("invalid remote VM id: %w", err)
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
 				return fmt.Errorf("create client: %w", err)
 			}
 			var out map[string]any
-			if err := c.DoJSON(cmd.Context(), http.MethodPost, "/api/sandboxes/"+id+"/"+action, map[string]any{}, &out); err != nil {
-				return fmt.Errorf("%s sandbox: %w", action, err)
+			if err := c.DoJSON(cmd.Context(), http.MethodPost, "/api/vms/"+id+"/"+action, map[string]any{}, &out); err != nil {
+				return fmt.Errorf("%s remote VM: %w", action, err)
 			}
 			return printRemote(out)
 		},
 	}
-	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
+	cmd.Flags().StringVar(&sandboxID, "vm", "", "Remote VM UUID")
 	return cmd
 }
 
@@ -326,27 +326,27 @@ func cliSandboxTemplateCmd() *cobra.Command {
 	var sandboxID, name string
 	cmd := &cobra.Command{
 		Use:   "template",
-		Short: "Capture a sandbox template from a sandbox",
+		Short: "Capture a remote VM template from a remote VM",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(sandboxID)
 			if id == "" {
-				return fmt.Errorf("--sandbox is required")
+				return fmt.Errorf("--vm is required")
 			}
 			if _, err := uuid.Parse(id); err != nil {
-				return fmt.Errorf("invalid sandbox id: %w", err)
+				return fmt.Errorf("invalid remote VM id: %w", err)
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
 				return fmt.Errorf("create client: %w", err)
 			}
 			var out map[string]any
-			if err := c.DoJSON(cmd.Context(), http.MethodPost, "/api/sandboxes/"+id+"/template", map[string]any{"name": strings.TrimSpace(name)}, &out); err != nil {
-				return fmt.Errorf("create sandbox template: %w", err)
+			if err := c.DoJSON(cmd.Context(), http.MethodPost, "/api/vms/"+id+"/template", map[string]any{"name": strings.TrimSpace(name)}, &out); err != nil {
+				return fmt.Errorf("create remote VM template: %w", err)
 			}
 			return printRemote(out)
 		},
 	}
-	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
+	cmd.Flags().StringVar(&sandboxID, "vm", "", "Remote VM UUID")
 	cmd.Flags().StringVar(&name, "name", "", "Template name")
 	return cmd
 }
@@ -355,7 +355,7 @@ func cliSandboxCloneCmd() *cobra.Command {
 	var templateID, name string
 	cmd := &cobra.Command{
 		Use:   "clone",
-		Short: "Clone a sandbox template into a new sandbox",
+		Short: "Clone a remote VM template into a new remote VM",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(templateID)
 			if id == "" {
@@ -369,14 +369,14 @@ func cliSandboxCloneCmd() *cobra.Command {
 				return fmt.Errorf("create client: %w", err)
 			}
 			var out map[string]any
-			if err := c.DoJSON(cmd.Context(), http.MethodPost, "/api/sandbox-templates/"+id+"/clone", map[string]any{"name": strings.TrimSpace(name)}, &out); err != nil {
-				return fmt.Errorf("clone sandbox template: %w", err)
+			if err := c.DoJSON(cmd.Context(), http.MethodPost, "/api/vm-templates/"+id+"/clone", map[string]any{"name": strings.TrimSpace(name)}, &out); err != nil {
+				return fmt.Errorf("clone remote VM template: %w", err)
 			}
 			return printRemote(out)
 		},
 	}
 	cmd.Flags().StringVar(&templateID, "template", "", "Sandbox template UUID")
-	cmd.Flags().StringVar(&name, "name", "", "New sandbox name")
+	cmd.Flags().StringVar(&name, "name", "", "New remote VM name")
 	return cmd
 }
 
@@ -385,34 +385,34 @@ func cliSandboxPublishCmd() *cobra.Command {
 	var targetPort int32
 	cmd := &cobra.Command{
 		Use:   "publish",
-		Short: "Publish a sandbox HTTP port",
+		Short: "Publish a remote VM HTTP port",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(sandboxID)
 			if id == "" {
-				return fmt.Errorf("--sandbox is required")
+				return fmt.Errorf("--vm is required")
 			}
 			if targetPort <= 0 {
 				return fmt.Errorf("--port is required")
 			}
 			if _, err := uuid.Parse(id); err != nil {
-				return fmt.Errorf("invalid sandbox id: %w", err)
+				return fmt.Errorf("invalid remote VM id: %w", err)
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
 				return fmt.Errorf("create client: %w", err)
 			}
 			var out map[string]any
-			if err := c.DoJSON(cmd.Context(), http.MethodPost, "/api/sandboxes/"+id+"/publish-http", map[string]any{
+			if err := c.DoJSON(cmd.Context(), http.MethodPost, "/api/vms/"+id+"/publish-http", map[string]any{
 				"target_port": targetPort,
 				"hostname":    strings.TrimSpace(hostname),
 			}, &out); err != nil {
-				return fmt.Errorf("publish sandbox: %w", err)
+				return fmt.Errorf("publish remote VM port: %w", err)
 			}
 			return printRemote(out)
 		},
 	}
-	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
-	cmd.Flags().Int32Var(&targetPort, "port", 0, "Target HTTP port inside the sandbox")
+	cmd.Flags().StringVar(&sandboxID, "vm", "", "Remote VM UUID")
+	cmd.Flags().Int32Var(&targetPort, "port", 0, "Target HTTP port inside the remote VM")
 	cmd.Flags().StringVar(&hostname, "hostname", "", "Optional public hostname metadata")
 	return cmd
 }
@@ -421,27 +421,27 @@ func cliSandboxUnpublishCmd() *cobra.Command {
 	var sandboxID string
 	cmd := &cobra.Command{
 		Use:   "unpublish",
-		Short: "Remove a sandbox HTTP publication",
+		Short: "Remove a remote VM HTTP publication",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(sandboxID)
 			if id == "" {
-				return fmt.Errorf("--sandbox is required")
+				return fmt.Errorf("--vm is required")
 			}
 			if _, err := uuid.Parse(id); err != nil {
-				return fmt.Errorf("invalid sandbox id: %w", err)
+				return fmt.Errorf("invalid remote VM id: %w", err)
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
 				return fmt.Errorf("create client: %w", err)
 			}
 			var out map[string]any
-			if err := c.DoJSON(cmd.Context(), http.MethodPost, "/api/sandboxes/"+id+"/unpublish-http", map[string]any{}, &out); err != nil {
-				return fmt.Errorf("unpublish sandbox: %w", err)
+			if err := c.DoJSON(cmd.Context(), http.MethodPost, "/api/vms/"+id+"/unpublish-http", map[string]any{}, &out); err != nil {
+				return fmt.Errorf("unpublish remote VM port: %w", err)
 			}
 			return printRemote(out)
 		},
 	}
-	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
+	cmd.Flags().StringVar(&sandboxID, "vm", "", "Remote VM UUID")
 	return cmd
 }
 
@@ -449,8 +449,8 @@ func cliSandboxExecCmd() *cobra.Command {
 	var sandboxID, cwd string
 	var env []string
 	cmd := &cobra.Command{
-		Use:   "exec --sandbox <uuid> -- <command> [args...]",
-		Short: "Execute a command inside a running sandbox",
+		Use:   "exec --vm <uuid> -- <command> [args...]",
+		Short: "Execute a command inside a running remote VM",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
@@ -458,22 +458,22 @@ func cliSandboxExecCmd() *cobra.Command {
 			}
 			id := strings.TrimSpace(sandboxID)
 			if id == "" {
-				return fmt.Errorf("--sandbox is required")
+				return fmt.Errorf("--vm is required")
 			}
 			if _, err := uuid.Parse(id); err != nil {
-				return fmt.Errorf("invalid sandbox id: %w", err)
+				return fmt.Errorf("invalid remote VM id: %w", err)
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
 				return fmt.Errorf("create client: %w", err)
 			}
 			var out sandboxExecResponse
-			if err := c.DoJSON(cmd.Context(), http.MethodPost, "/api/sandboxes/"+id+"/exec", map[string]any{
+			if err := c.DoJSON(cmd.Context(), http.MethodPost, "/api/vms/"+id+"/exec", map[string]any{
 				"argv": args,
 				"cwd":  strings.TrimSpace(cwd),
 				"env":  env,
 			}, &out); err != nil {
-				return fmt.Errorf("exec sandbox: %w", err)
+				return fmt.Errorf("exec remote VM: %w", err)
 			}
 			if remoteJSON {
 				if err := printRemote(out); err != nil {
@@ -483,13 +483,13 @@ func cliSandboxExecCmd() *cobra.Command {
 				fmt.Fprint(os.Stdout, out.Output)
 			}
 			if out.ExitCode != 0 {
-				return fmt.Errorf("sandbox command exited with code %d", out.ExitCode)
+				return fmt.Errorf("remote VM command exited with code %d", out.ExitCode)
 			}
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
-	cmd.Flags().StringVar(&cwd, "cwd", "", "Optional working directory inside the sandbox")
+	cmd.Flags().StringVar(&sandboxID, "vm", "", "Remote VM UUID")
+	cmd.Flags().StringVar(&cwd, "cwd", "", "Optional working directory inside the remote VM")
 	cmd.Flags().StringArrayVar(&env, "env", nil, "Environment variable (KEY=value), repeatable")
 	return cmd
 }
@@ -498,16 +498,16 @@ func cliSandboxShellCmd() *cobra.Command {
 	var sandboxID, cwd, shellPath string
 	var env []string
 	cmd := &cobra.Command{
-		Use:   "shell --sandbox <uuid>",
-		Short: "Open an interactive shell inside a running sandbox",
+		Use:   "shell --vm <uuid>",
+		Short: "Open an interactive shell inside a running remote VM",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSandboxShell(cmd, sandboxID, cwd, shellPath, env)
 		},
 	}
-	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
-	cmd.Flags().StringVar(&cwd, "cwd", "", "Optional working directory inside the sandbox")
-	cmd.Flags().StringVar(&shellPath, "shell", "/bin/sh", "Shell binary inside the sandbox")
+	cmd.Flags().StringVar(&sandboxID, "vm", "", "Remote VM UUID")
+	cmd.Flags().StringVar(&cwd, "cwd", "", "Optional working directory inside the remote VM")
+	cmd.Flags().StringVar(&shellPath, "shell", "/bin/sh", "Shell binary inside the remote VM")
 	cmd.Flags().StringArrayVar(&env, "env", nil, "Environment variable (KEY=value), repeatable")
 	return cmd
 }
@@ -515,16 +515,16 @@ func cliSandboxShellCmd() *cobra.Command {
 func cliSandboxSSHCmd() *cobra.Command {
 	var sandboxID string
 	cmd := &cobra.Command{
-		Use:   "ssh --sandbox <uuid> [-- <ssh args...>]",
-		Short: "Open an SSH session to a running sandbox using the local ssh client with managed host-key verification",
+		Use:   "ssh --vm <uuid> [-- <ssh args...>]",
+		Short: "Open an SSH session to a running remote VM using the local ssh client with managed host-key verification",
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(sandboxID)
 			if id == "" {
-				return fmt.Errorf("--sandbox is required")
+				return fmt.Errorf("--vm is required")
 			}
 			if _, err := uuid.Parse(id); err != nil {
-				return fmt.Errorf("invalid sandbox id: %w", err)
+				return fmt.Errorf("invalid remote VM id: %w", err)
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
@@ -532,18 +532,18 @@ func cliSandboxSSHCmd() *cobra.Command {
 			}
 			sandbox, err := fetchSandboxSummary(cmd.Context(), c, id)
 			if err != nil {
-				return fmt.Errorf("fetch sandbox: %w", err)
+				return fmt.Errorf("fetch remote VM: %w", err)
 			}
 			knownHostsPath, err := writeSandboxKnownHosts(id, sandbox.SSHHostPublicKey)
 			if err != nil {
-				return fmt.Errorf("prepare sandbox ssh trust: %w", err)
+				return fmt.Errorf("prepare remote VM ssh trust: %w", err)
 			}
 			defer os.Remove(knownHostsPath)
 			exe, err := os.Executable()
 			if err != nil {
 				return fmt.Errorf("locate current binary: %w", err)
 			}
-			proxyParts := []string{shellEscape(exe), "sandbox", "ssh-proxy", "--sandbox", shellEscape(id)}
+			proxyParts := []string{shellEscape(exe), "vm", "ssh-proxy", "--vm", shellEscape(id)}
 			if strings.TrimSpace(remoteProfile) != "" {
 				proxyParts = append(proxyParts, "--profile", shellEscape(strings.TrimSpace(remoteProfile)))
 			}
@@ -560,7 +560,7 @@ func cliSandboxSSHCmd() *cobra.Command {
 				"-o", "UserKnownHostsFile=" + knownHostsPath,
 			}
 			sshArgs = append(sshArgs, args...)
-			sshArgs = append(sshArgs, "kindling@"+sandboxSSHHostAlias(id))
+			sshArgs = append(sshArgs, "kindling@"+remoteVMSSHHostAlias(id))
 			sshCmd := exec.CommandContext(cmd.Context(), "ssh", sshArgs...)
 			sshCmd.Stdin = os.Stdin
 			sshCmd.Stdout = os.Stdout
@@ -568,30 +568,30 @@ func cliSandboxSSHCmd() *cobra.Command {
 			return sshCmd.Run()
 		},
 	}
-	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
+	cmd.Flags().StringVar(&sandboxID, "vm", "", "Remote VM UUID")
 	return cmd
 }
 
 func cliSandboxSSHProxyCmd() *cobra.Command {
 	var sandboxID string
 	cmd := &cobra.Command{
-		Use:    "ssh-proxy --sandbox <uuid>",
-		Short:  "Internal helper used by `kindling sandbox ssh`",
+		Use:    "ssh-proxy --vm <uuid>",
+		Short:  "Internal helper used by `kindling vm ssh`",
 		Hidden: true,
 		Args:   cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(sandboxID)
 			if id == "" {
-				return fmt.Errorf("--sandbox is required")
+				return fmt.Errorf("--vm is required")
 			}
 			if _, err := uuid.Parse(id); err != nil {
-				return fmt.Errorf("invalid sandbox id: %w", err)
+				return fmt.Errorf("invalid remote VM id: %w", err)
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
 				return fmt.Errorf("create client: %w", err)
 			}
-			ws, _, err := sandboxDialWebsocket(cmd.Context(), c, "/api/sandboxes/"+id+"/ssh/ws")
+			ws, _, err := sandboxDialWebsocket(cmd.Context(), c, "/api/vms/"+id+"/ssh/ws")
 			if err != nil {
 				return err
 			}
@@ -636,30 +636,30 @@ func cliSandboxSSHProxyCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
+	cmd.Flags().StringVar(&sandboxID, "vm", "", "Remote VM UUID")
 	return cmd
 }
 
 func cliSandboxCPCmd() *cobra.Command {
 	var sandboxID string
 	cmd := &cobra.Command{
-		Use:   "cp --sandbox <uuid> <src> <dst>",
-		Short: "Copy a file into or out of a sandbox",
-		Long:  "Use a leading ':' to mark the sandbox path, for example ./local.txt :/workspace/local.txt or :/workspace/log.txt ./log.txt.",
+		Use:   "cp --vm <uuid> <src> <dst>",
+		Short: "Copy a file into or out of a remote VM",
+		Long:  "Use a leading ':' to mark the remote VM path, for example ./local.txt :/workspace/local.txt or :/workspace/log.txt ./log.txt.",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(sandboxID)
 			if id == "" {
-				return fmt.Errorf("--sandbox is required")
+				return fmt.Errorf("--vm is required")
 			}
 			if _, err := uuid.Parse(id); err != nil {
-				return fmt.Errorf("invalid sandbox id: %w", err)
+				return fmt.Errorf("invalid remote VM id: %w", err)
 			}
 			src, dst := args[0], args[1]
 			srcRemote := strings.HasPrefix(src, ":")
 			dstRemote := strings.HasPrefix(dst, ":")
 			if srcRemote == dstRemote {
-				return fmt.Errorf("exactly one side must be a sandbox path prefixed with ':'")
+				return fmt.Errorf("exactly one side must be a remote VM path prefixed with ':'")
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
@@ -671,7 +671,7 @@ func cliSandboxCPCmd() *cobra.Command {
 			return sandboxCopyOut(cmd, c, id, strings.TrimPrefix(src, ":"), dst)
 		},
 	}
-	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
+	cmd.Flags().StringVar(&sandboxID, "vm", "", "Remote VM UUID")
 	return cmd
 }
 
@@ -679,22 +679,22 @@ func cliSandboxLogsCmd() *cobra.Command {
 	var sandboxID string
 	cmd := &cobra.Command{
 		Use:   "logs",
-		Short: "Fetch recent sandbox logs",
+		Short: "Fetch recent remote VM logs",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(sandboxID)
 			if id == "" {
-				return fmt.Errorf("--sandbox is required")
+				return fmt.Errorf("--vm is required")
 			}
 			if _, err := uuid.Parse(id); err != nil {
-				return fmt.Errorf("invalid sandbox id: %w", err)
+				return fmt.Errorf("invalid remote VM id: %w", err)
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
 				return fmt.Errorf("create client: %w", err)
 			}
 			var out []string
-			if err := c.DoJSON(cmd.Context(), http.MethodGet, "/api/sandboxes/"+id+"/logs", nil, &out); err != nil {
-				return fmt.Errorf("sandbox logs: %w", err)
+			if err := c.DoJSON(cmd.Context(), http.MethodGet, "/api/vms/"+id+"/logs", nil, &out); err != nil {
+				return fmt.Errorf("remote VM logs: %w", err)
 			}
 			if remoteJSON {
 				return printRemote(out)
@@ -705,7 +705,7 @@ func cliSandboxLogsCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
+	cmd.Flags().StringVar(&sandboxID, "vm", "", "Remote VM UUID")
 	return cmd
 }
 
@@ -713,27 +713,27 @@ func cliSandboxStatsCmd() *cobra.Command {
 	var sandboxID string
 	cmd := &cobra.Command{
 		Use:   "stats",
-		Short: "Fetch one resource stats sample for a running sandbox",
+		Short: "Fetch one resource stats sample for a running remote VM",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(sandboxID)
 			if id == "" {
-				return fmt.Errorf("--sandbox is required")
+				return fmt.Errorf("--vm is required")
 			}
 			if _, err := uuid.Parse(id); err != nil {
-				return fmt.Errorf("invalid sandbox id: %w", err)
+				return fmt.Errorf("invalid remote VM id: %w", err)
 			}
 			c, err := mustRemoteClient()
 			if err != nil {
 				return fmt.Errorf("create client: %w", err)
 			}
 			var out map[string]any
-			if err := c.DoJSON(cmd.Context(), http.MethodGet, "/api/sandboxes/"+id+"/stats", nil, &out); err != nil {
-				return fmt.Errorf("sandbox stats: %w", err)
+			if err := c.DoJSON(cmd.Context(), http.MethodGet, "/api/vms/"+id+"/stats", nil, &out); err != nil {
+				return fmt.Errorf("remote VM stats: %w", err)
 			}
 			return printRemote(out)
 		},
 	}
-	cmd.Flags().StringVar(&sandboxID, "sandbox", "", "Sandbox UUID")
+	cmd.Flags().StringVar(&sandboxID, "vm", "", "Remote VM UUID")
 	return cmd
 }
 
@@ -758,25 +758,25 @@ func (c *sandboxUpgradedConn) Read(p []byte) (int, error) {
 
 func fetchSandboxSummary(ctx context.Context, c *kcli.Client, sandboxID string) (sandboxSummary, error) {
 	var out sandboxSummary
-	if err := c.DoJSON(ctx, http.MethodGet, "/api/sandboxes/"+sandboxID, nil, &out); err != nil {
+	if err := c.DoJSON(ctx, http.MethodGet, "/api/vms/"+sandboxID, nil, &out); err != nil {
 		return sandboxSummary{}, err
 	}
 	return out, nil
 }
 
-func sandboxSSHHostAlias(sandboxID string) string {
-	return "sandbox-" + sandboxID[:8]
+func remoteVMSSHHostAlias(remoteVMID string) string {
+	return "vm-" + remoteVMID[:8]
 }
 
 func writeSandboxKnownHosts(sandboxID, publicKey string) (string, error) {
-	line, err := sshtrust.KnownHostsLine(sandboxSSHHostAlias(sandboxID), publicKey)
+	line, err := sshtrust.KnownHostsLine(remoteVMSSHHostAlias(sandboxID), publicKey)
 	if err != nil {
 		if strings.TrimSpace(publicKey) == "" {
-			return "", fmt.Errorf("sandbox SSH host key is not ready yet; ensure the sandbox is running and the guest image includes sshd and ssh-keygen")
+			return "", fmt.Errorf("remote VM SSH host key is not ready yet; ensure the remote VM is running and the guest image includes sshd and ssh-keygen")
 		}
 		return "", err
 	}
-	f, err := os.CreateTemp("", "kindling-sandbox-known-hosts-*")
+	f, err := os.CreateTemp("", "kindling-vm-known-hosts-*")
 	if err != nil {
 		return "", err
 	}
@@ -800,22 +800,22 @@ func writeSandboxKnownHosts(sandboxID, publicKey string) (string, error) {
 func runSandboxExec(cmd *cobra.Command, sandboxID, cwd string, env []string, argv []string) error {
 	id := strings.TrimSpace(sandboxID)
 	if id == "" {
-		return fmt.Errorf("--sandbox is required")
+		return fmt.Errorf("--vm is required")
 	}
 	if _, err := uuid.Parse(id); err != nil {
-		return fmt.Errorf("invalid sandbox id: %w", err)
+		return fmt.Errorf("invalid remote VM id: %w", err)
 	}
 	c, err := mustRemoteClient()
 	if err != nil {
 		return fmt.Errorf("create client: %w", err)
 	}
 	var out sandboxExecResponse
-	if err := c.DoJSON(cmd.Context(), http.MethodPost, "/api/sandboxes/"+id+"/exec", map[string]any{
+	if err := c.DoJSON(cmd.Context(), http.MethodPost, "/api/vms/"+id+"/exec", map[string]any{
 		"argv": argv,
 		"cwd":  strings.TrimSpace(cwd),
 		"env":  env,
 	}, &out); err != nil {
-		return fmt.Errorf("exec sandbox: %w", err)
+		return fmt.Errorf("exec remote VM: %w", err)
 	}
 	if remoteJSON {
 		if err := printRemote(out); err != nil {
@@ -825,7 +825,7 @@ func runSandboxExec(cmd *cobra.Command, sandboxID, cwd string, env []string, arg
 		fmt.Fprint(os.Stdout, out.Output)
 	}
 	if out.ExitCode != 0 {
-		return fmt.Errorf("sandbox command exited with code %d", out.ExitCode)
+		return fmt.Errorf("remote VM command exited with code %d", out.ExitCode)
 	}
 	return nil
 }
@@ -833,16 +833,16 @@ func runSandboxExec(cmd *cobra.Command, sandboxID, cwd string, env []string, arg
 func runSandboxShell(cmd *cobra.Command, sandboxID, cwd, shellPath string, env []string) error {
 	id := strings.TrimSpace(sandboxID)
 	if id == "" {
-		return fmt.Errorf("--sandbox is required")
+		return fmt.Errorf("--vm is required")
 	}
 	if _, err := uuid.Parse(id); err != nil {
-		return fmt.Errorf("invalid sandbox id: %w", err)
+		return fmt.Errorf("invalid remote VM id: %w", err)
 	}
 	c, err := mustRemoteClient()
 	if err != nil {
 		return fmt.Errorf("create client: %w", err)
 	}
-	reqPath := "/api/sandboxes/" + id + "/shell/ws?shell=" + url.QueryEscape(strings.TrimSpace(shellPath))
+	reqPath := "/api/vms/" + id + "/shell/ws?shell=" + url.QueryEscape(strings.TrimSpace(shellPath))
 	if strings.TrimSpace(cwd) != "" {
 		reqPath += "&cwd=" + url.QueryEscape(strings.TrimSpace(cwd))
 	}
@@ -851,7 +851,7 @@ func runSandboxShell(cmd *cobra.Command, sandboxID, cwd, shellPath string, env [
 	}
 	ws, _, err := sandboxDialWebsocket(cmd.Context(), c, reqPath)
 	if err != nil {
-		return fmt.Errorf("open sandbox shell: %w", err)
+		return fmt.Errorf("open remote VM shell: %w", err)
 	}
 	defer ws.Close()
 
@@ -951,7 +951,7 @@ func runSandboxShell(cmd *cobra.Command, sandboxID, cwd, shellPath string, env [
 		return outErr
 	}
 	if sawExit && exitCode != 0 {
-		return fmt.Errorf("sandbox shell exited with code %d", exitCode)
+		return fmt.Errorf("remote VM shell exited with code %d", exitCode)
 	}
 	select {
 	case inErr := <-copyErr:
@@ -969,37 +969,37 @@ func sandboxCopyIn(cmd *cobra.Command, c *kcli.Client, sandboxID, localPath, rem
 		return fmt.Errorf("read local file: %w", err)
 	}
 	if strings.TrimSpace(remotePath) == "" || !strings.HasPrefix(strings.TrimSpace(remotePath), "/") {
-		return fmt.Errorf("sandbox destination path must be absolute")
+		return fmt.Errorf("remote VM destination path must be absolute")
 	}
-	reqPath := "/api/sandboxes/" + sandboxID + "/copy-in?path=" + url.QueryEscape(strings.TrimSpace(remotePath))
+	reqPath := "/api/vms/" + sandboxID + "/copy-in?path=" + url.QueryEscape(strings.TrimSpace(remotePath))
 	resp, err := sandboxRawRequest(cmd, c, http.MethodPost, reqPath, bytes.NewReader(data), "application/octet-stream")
 	if err != nil {
-		return fmt.Errorf("copy into sandbox: %w", err)
+		return fmt.Errorf("copy into remote VM: %w", err)
 	}
 	defer resp.Body.Close()
-	if err := sandboxResponseError(resp, "copy into sandbox"); err != nil {
+	if err := sandboxResponseError(resp, "copy into remote VM"); err != nil {
 		return err
 	}
-	printRemoteMessage("copied into sandbox: " + filepath.Base(localPath) + " -> " + strings.TrimSpace(remotePath))
+	printRemoteMessage("copied into remote VM: " + filepath.Base(localPath) + " -> " + strings.TrimSpace(remotePath))
 	return nil
 }
 
 func sandboxCopyOut(cmd *cobra.Command, c *kcli.Client, sandboxID, remotePath, localPath string) error {
 	if strings.TrimSpace(remotePath) == "" || !strings.HasPrefix(strings.TrimSpace(remotePath), "/") {
-		return fmt.Errorf("sandbox source path must be absolute")
+		return fmt.Errorf("remote VM source path must be absolute")
 	}
-	reqPath := "/api/sandboxes/" + sandboxID + "/copy-out?path=" + url.QueryEscape(strings.TrimSpace(remotePath))
+	reqPath := "/api/vms/" + sandboxID + "/copy-out?path=" + url.QueryEscape(strings.TrimSpace(remotePath))
 	resp, err := sandboxRawRequest(cmd, c, http.MethodGet, reqPath, nil, "")
 	if err != nil {
-		return fmt.Errorf("copy out of sandbox: %w", err)
+		return fmt.Errorf("copy out of remote VM: %w", err)
 	}
 	defer resp.Body.Close()
-	if err := sandboxResponseError(resp, "copy out of sandbox"); err != nil {
+	if err := sandboxResponseError(resp, "copy out of remote VM"); err != nil {
 		return err
 	}
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("read sandbox response: %w", err)
+		return fmt.Errorf("read remote VM response: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
 		return fmt.Errorf("create local directory: %w", err)
@@ -1007,7 +1007,7 @@ func sandboxCopyOut(cmd *cobra.Command, c *kcli.Client, sandboxID, remotePath, l
 	if err := os.WriteFile(localPath, data, 0o644); err != nil {
 		return fmt.Errorf("write local file: %w", err)
 	}
-	printRemoteMessage("copied out of sandbox: " + strings.TrimSpace(remotePath) + " -> " + localPath)
+	printRemoteMessage("copied out of remote VM: " + strings.TrimSpace(remotePath) + " -> " + localPath)
 	return nil
 }
 

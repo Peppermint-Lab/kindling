@@ -59,7 +59,7 @@ export function SSHKeysPage() {
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">SSH Keys</h1>
-        <p className="text-sm text-muted-foreground">Keys here are reconciled into running sandboxes for the dedicated <span className="font-mono">kindling</span> user.</p>
+        <p className="text-sm text-muted-foreground">Keys here are reconciled into running remote VMs for the dedicated <span className="font-mono">kindling</span> user.</p>
       </div>
 
       {error ? (

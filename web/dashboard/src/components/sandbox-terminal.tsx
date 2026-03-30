@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 function sandboxShellWebSocketURL(id: string) {
   const base = new URL(API_BASE)
   base.protocol = base.protocol === "https:" ? "wss:" : "ws:"
-  base.pathname = `/api/sandboxes/${id}/shell/ws`
+  base.pathname = `/api/vms/${id}/shell/ws`
   base.search = ""
   return base.toString()
 }
@@ -60,7 +60,7 @@ export function SandboxTerminal({ sandbox }: { sandbox: Sandbox }) {
     terminal.loadAddon(fitAddon)
     terminal.open(containerRef.current)
     fitAddon.fit()
-    terminal.writeln("Kindling sandbox terminal ready.")
+    terminal.writeln("Kindling remote VM terminal ready.")
     terminal.writeln("Click Connect to attach to the guest shell.")
 
     terminalRef.current = terminal
@@ -106,7 +106,7 @@ export function SandboxTerminal({ sandbox }: { sandbox: Sandbox }) {
     socketRef.current?.close()
     setError(null)
     terminal.clear()
-    terminal.writeln("Connecting to sandbox shell...")
+    terminal.writeln("Connecting to remote VM shell...")
 
     const socket = new WebSocket(sandboxShellWebSocketURL(sandbox.id))
     socketRef.current = socket
@@ -170,7 +170,7 @@ export function SandboxTerminal({ sandbox }: { sandbox: Sandbox }) {
         <div className="flex items-center justify-between gap-3">
           <div>
             <CardTitle>Shell</CardTitle>
-            <CardDescription>Real terminal emulation over the sandbox WebSocket shell transport.</CardDescription>
+            <CardDescription>Real terminal emulation over the WebSocket shell transport.</CardDescription>
           </div>
           {connected ? (
             <Button variant="outline" onClick={disconnect}>

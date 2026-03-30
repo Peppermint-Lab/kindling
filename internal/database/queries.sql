@@ -1585,10 +1585,10 @@ WHERE deployment_kind = 'preview'
 ORDER BY deployments.preview_last_request_at ASC
 LIMIT 100;
 
--- Sandboxes --
+-- Remote VMs (org-scoped interactive VMs; distinct from deployment `vms` table) --
 
--- name: SandboxCreate :one
-INSERT INTO sandboxes (
+-- name: RemoteVMCreate :one
+INSERT INTO remote_vms (
   id, org_id, name, host_group, backend, arch, desired_state, observed_state,
   server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb,
   env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at,
@@ -1602,27 +1602,27 @@ VALUES (
 )
 RETURNING *;
 
--- name: SandboxFirstByID :one
-SELECT * FROM sandboxes WHERE id = $1;
+-- name: RemoteVMFirstByID :one
+SELECT * FROM remote_vms WHERE id = $1;
 
--- name: SandboxFirstByIDAndOrg :one
-SELECT * FROM sandboxes
+-- name: RemoteVMFirstByIDAndOrg :one
+SELECT * FROM remote_vms
 WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL;
 
--- name: SandboxListByOrg :many
-SELECT * FROM sandboxes
+-- name: RemoteVMListByOrg :many
+SELECT * FROM remote_vms
 WHERE org_id = $1 AND deleted_at IS NULL
 ORDER BY updated_at DESC;
 
--- name: SandboxUpdateDesiredState :one
-UPDATE sandboxes
+-- name: RemoteVMUpdateDesiredState :one
+UPDATE remote_vms
 SET desired_state = $2,
     updated_at = NOW()
 WHERE id = $1
 RETURNING *;
 
--- name: SandboxUpdateSettings :one
-UPDATE sandboxes
+-- name: RemoteVMUpdateSettings :one
+UPDATE remote_vms
 SET base_image_ref = $2,
     vcpu = $3,
     memory_mb = $4,
@@ -1633,8 +1633,8 @@ SET base_image_ref = $2,
 WHERE id = $1
 RETURNING *;
 
--- name: SandboxUpdatePlacement :one
-UPDATE sandboxes
+-- name: RemoteVMUpdatePlacement :one
+UPDATE remote_vms
 SET host_group = $2,
     backend = $3,
     arch = $4,
@@ -1643,8 +1643,8 @@ SET host_group = $2,
 WHERE id = $1
 RETURNING *;
 
--- name: SandboxAttachVM :one
-UPDATE sandboxes
+-- name: RemoteVMAttachVM :one
+UPDATE remote_vms
 SET vm_id = $2,
     observed_state = $3,
     runtime_url = $4,
@@ -1652,8 +1652,8 @@ SET vm_id = $2,
 WHERE id = $1
 RETURNING *;
 
--- name: SandboxUpdateObservedState :one
-UPDATE sandboxes
+-- name: RemoteVMUpdateObservedState :one
+UPDATE remote_vms
 SET observed_state = $2,
     runtime_url = $3,
     failure_message = $4,
@@ -1661,37 +1661,37 @@ SET observed_state = $2,
 WHERE id = $1
 RETURNING *;
 
--- name: SandboxUpdateLastUsedAt :exec
-UPDATE sandboxes
+-- name: RemoteVMUpdateLastUsedAt :exec
+UPDATE remote_vms
 SET last_used_at = NOW(),
     updated_at = NOW()
 WHERE id = $1
   AND deleted_at IS NULL;
 
--- name: SandboxUpdatePublishPort :one
-UPDATE sandboxes
+-- name: RemoteVMUpdatePublishPort :one
+UPDATE remote_vms
 SET published_http_port = $2,
     updated_at = NOW()
 WHERE id = $1
 RETURNING *;
 
--- name: SandboxUpdateSSHHostPublicKey :one
-UPDATE sandboxes
+-- name: RemoteVMUpdateSSHHostPublicKey :one
+UPDATE remote_vms
 SET ssh_host_public_key = $2,
     updated_at = NOW()
 WHERE id = $1
 RETURNING *;
 
--- name: SandboxClearVM :one
-UPDATE sandboxes
+-- name: RemoteVMClearVM :one
+UPDATE remote_vms
 SET vm_id = NULL,
     runtime_url = '',
     updated_at = NOW()
 WHERE id = $1
 RETURNING *;
 
--- name: SandboxMarkDeleted :one
-UPDATE sandboxes
+-- name: RemoteVMMarkDeleted :one
+UPDATE remote_vms
 SET observed_state = 'deleted',
     deleted_at = NOW(),
     runtime_url = '',
@@ -1699,14 +1699,14 @@ SET observed_state = 'deleted',
 WHERE id = $1
 RETURNING *;
 
--- name: SandboxesDueForExpiry :many
-SELECT * FROM sandboxes
+-- name: RemoteVMsDueForExpiry :many
+SELECT * FROM remote_vms
 WHERE deleted_at IS NULL
   AND expires_at IS NOT NULL
   AND expires_at <= NOW();
 
--- name: SandboxesDueForIdleSuspend :many
-SELECT * FROM sandboxes
+-- name: RemoteVMsDueForIdleSuspend :many
+SELECT * FROM remote_vms
 WHERE deleted_at IS NULL
   AND desired_state = 'running'
   AND observed_state = 'running'
@@ -1714,15 +1714,15 @@ WHERE deleted_at IS NULL
   AND last_used_at IS NOT NULL
   AND last_used_at < NOW() - (auto_suspend_seconds * INTERVAL '1 second');
 
--- name: SandboxFindByServerID :many
-SELECT * FROM sandboxes
+-- name: RemoteVMFindByServerID :many
+SELECT * FROM remote_vms
 WHERE server_id = $1
   AND deleted_at IS NULL
 ORDER BY updated_at DESC;
 
--- name: SandboxTemplateCreate :one
-INSERT INTO sandbox_templates (
-  id, org_id, name, host_group, backend, arch, source_sandbox_id, server_id,
+-- name: RemoteVMTemplateCreate :one
+INSERT INTO remote_vm_templates (
+  id, org_id, name, host_group, backend, arch, source_remote_vm_id, server_id,
   base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id
 )
 VALUES (
@@ -1731,20 +1731,20 @@ VALUES (
 )
 RETURNING *;
 
--- name: SandboxTemplateFirstByID :one
-SELECT * FROM sandbox_templates WHERE id = $1;
+-- name: RemoteVMTemplateFirstByID :one
+SELECT * FROM remote_vm_templates WHERE id = $1;
 
--- name: SandboxTemplateFirstByIDAndOrg :one
-SELECT * FROM sandbox_templates
+-- name: RemoteVMTemplateFirstByIDAndOrg :one
+SELECT * FROM remote_vm_templates
 WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL;
 
--- name: SandboxTemplateListByOrg :many
-SELECT * FROM sandbox_templates
+-- name: RemoteVMTemplateListByOrg :many
+SELECT * FROM remote_vm_templates
 WHERE org_id = $1 AND deleted_at IS NULL
 ORDER BY updated_at DESC;
 
--- name: SandboxTemplateMarkReady :one
-UPDATE sandbox_templates
+-- name: RemoteVMTemplateMarkReady :one
+UPDATE remote_vm_templates
 SET status = 'ready',
     server_id = $2,
     snapshot_ref = $3,
@@ -1753,66 +1753,66 @@ SET status = 'ready',
 WHERE id = $1
 RETURNING *;
 
--- name: SandboxTemplateMarkFailed :one
-UPDATE sandbox_templates
+-- name: RemoteVMTemplateMarkFailed :one
+UPDATE remote_vm_templates
 SET status = 'failed',
     failure_message = $2,
     updated_at = NOW()
 WHERE id = $1
 RETURNING *;
 
--- name: SandboxTemplateMarkDeleted :one
-UPDATE sandbox_templates
+-- name: RemoteVMTemplateMarkDeleted :one
+UPDATE remote_vm_templates
 SET status = 'deleted',
     deleted_at = NOW(),
     updated_at = NOW()
 WHERE id = $1
 RETURNING *;
 
--- name: SandboxPublishedPortUpsert :one
-INSERT INTO sandbox_published_ports (
-  id, sandbox_id, target_port, protocol, visibility, public_hostname
+-- name: RemoteVMPublishedPortUpsert :one
+INSERT INTO remote_vm_published_ports (
+  id, remote_vm_id, target_port, protocol, visibility, public_hostname
 )
 VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (sandbox_id, target_port) DO UPDATE SET
+ON CONFLICT (remote_vm_id, target_port) DO UPDATE SET
   protocol = EXCLUDED.protocol,
   visibility = EXCLUDED.visibility,
   public_hostname = EXCLUDED.public_hostname,
   updated_at = NOW()
 RETURNING *;
 
--- name: SandboxPublishedPortsBySandboxID :many
-SELECT * FROM sandbox_published_ports
-WHERE sandbox_id = $1
+-- name: RemoteVMPublishedPortsByRemoteVMID :many
+SELECT * FROM remote_vm_published_ports
+WHERE remote_vm_id = $1
 ORDER BY created_at ASC;
 
--- name: SandboxPublishedPortDeleteBySandboxAndPort :exec
-DELETE FROM sandbox_published_ports
-WHERE sandbox_id = $1 AND target_port = $2;
+-- name: RemoteVMPublishedPortDeleteByRemoteVMAndPort :exec
+DELETE FROM remote_vm_published_ports
+WHERE remote_vm_id = $1 AND target_port = $2;
 
--- name: SandboxPublishedPortLookupByHostname :one
+-- name: RemoteVMPublishedPortLookupByHostname :one
 SELECT
   sp.id,
-  sp.sandbox_id,
+  sp.remote_vm_id,
   sp.target_port,
   sp.protocol,
   sp.visibility,
   sp.public_hostname,
   sp.created_at,
   sp.updated_at,
-  sb.org_id,
-  sb.name AS sandbox_name,
-  sb.runtime_url,
-  sb.observed_state,
-  sb.server_id
-FROM sandbox_published_ports sp
-INNER JOIN sandboxes sb ON sb.id = sp.sandbox_id
+  rv.org_id,
+  rv.name AS remote_vm_name,
+  rv.runtime_url,
+  rv.observed_state,
+  rv.server_id
+FROM remote_vm_published_ports sp
+INNER JOIN remote_vms rv ON rv.id = sp.remote_vm_id
 WHERE LOWER(sp.public_hostname) = LOWER($1)
-  AND sb.deleted_at IS NULL
+  AND rv.deleted_at IS NULL
 LIMIT 1;
 
--- name: SandboxTouchRunningByOrg :exec
-UPDATE sandboxes
+-- name: RemoteVMTouchRunningByOrg :exec
+UPDATE remote_vms
 SET updated_at = NOW()
 WHERE org_id = $1
   AND deleted_at IS NULL
@@ -2161,17 +2161,17 @@ WHERE m.organization_id = $1
   AND k.deleted_at IS NULL
 ORDER BY k.user_id ASC, k.created_at ASC;
 
--- name: SandboxAccessEventCreate :one
-INSERT INTO sandbox_access_events (
-  id, sandbox_id, user_id, access_method, event_type, exit_code, error_summary
+-- name: RemoteVMAccessEventCreate :one
+INSERT INTO remote_vm_access_events (
+  id, remote_vm_id, user_id, access_method, event_type, exit_code, error_summary
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
--- name: SandboxAccessEventsBySandboxIDAndOrg :many
+-- name: RemoteVMAccessEventsByRemoteVMIDAndOrg :many
 SELECT
   e.id,
-  e.sandbox_id,
+  e.remote_vm_id,
   e.user_id,
   e.access_method,
   e.event_type,
@@ -2180,11 +2180,11 @@ SELECT
   e.created_at,
   u.email,
   u.display_name
-FROM sandbox_access_events e
-INNER JOIN sandboxes sb ON sb.id = e.sandbox_id
+FROM remote_vm_access_events e
+INNER JOIN remote_vms rv ON rv.id = e.remote_vm_id
 LEFT JOIN users u ON u.id = e.user_id
-WHERE e.sandbox_id = $1
-  AND sb.org_id = $2
+WHERE e.remote_vm_id = $1
+  AND rv.org_id = $2
 ORDER BY e.created_at DESC;
 
 -- name: UserIdentityListByUser :many

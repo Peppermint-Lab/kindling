@@ -154,12 +154,12 @@ func newWALListener(databaseURL string, deps walDeps) *listener.Listener {
 				deps.dashboardEvents.Publish(rpc.TopicServers)
 			}
 		},
-		OnSandbox: func(ctx context.Context, id uuid.UUID) {
+		OnRemoteVM: func(ctx context.Context, id uuid.UUID) {
 			if deps.sandboxReconciler != nil {
 				deps.sandboxReconciler.ScheduleNow(id)
 			}
 		},
-		OnSandboxTemplate: func(ctx context.Context, id uuid.UUID) {
+		OnRemoteVMTemplate: func(ctx context.Context, id uuid.UUID) {
 			if deps.sandboxTplReconciler != nil {
 				deps.sandboxTplReconciler.ScheduleNow(id)
 			}
