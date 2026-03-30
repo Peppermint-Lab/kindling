@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
   humanizeShellConnectionError,
+  sshAccessStatus,
   terminalShellAccessStatus,
   type AccessSurfaceStatus,
 } from "@/lib/remote-vm-access"
@@ -39,6 +40,8 @@ type SessionPhase = "idle" | "connecting" | "connected"
 
 export function SandboxTerminal({ sandbox }: { sandbox: Sandbox }) {
   const shellAccess = terminalShellAccessStatus(sandbox)
+  const sshAccess = sshAccessStatus(sandbox)
+  const sshOffered = sshAccess.status !== "unsupported"
   const canConnect = shellAccess.status === "ready"
 
   const [phase, setPhase] = useState<SessionPhase>("idle")
@@ -144,6 +147,7 @@ export function SandboxTerminal({ sandbox }: { sandbox: Sandbox }) {
         socketRef.current?.readyState === WebSocket.OPEN || socketRef.current?.readyState === WebSocket.CONNECTING
       closeActiveSocket()
       setPhase("idle")
+      setBannerError(null)
       if (hadLiveSession) {
         const t = terminalRef.current
         if (t) {
@@ -163,6 +167,7 @@ export function SandboxTerminal({ sandbox }: { sandbox: Sandbox }) {
   const disconnect = () => {
     closeActiveSocket()
     setPhase("idle")
+    setBannerError(null)
   }
 
   const connect = () => {
@@ -297,10 +302,30 @@ export function SandboxTerminal({ sandbox }: { sandbox: Sandbox }) {
         {!canConnect ? (
           <p className="text-sm text-muted-foreground">
             {shellAccess.status === "unsupported" ? (
-              <>Use <Link to="/settings/ssh-keys" className="underline underline-offset-4">SSH</Link> or the CLI if your backend does not expose dashboard shell.</>
+              sshOffered ? (
+                <>
+                  This worker does not expose an in-dashboard shell. Use your local SSH client after adding a key under{" "}
+                  <Link to="/settings/ssh-keys" className="underline underline-offset-4">
+                    SSH keys
+                  </Link>
+                  , or use <strong>Connect</strong> above for the CLI command.
+                </>
+              ) : (
+                <>
+                  This worker does not expose an in-dashboard shell, and SSH may not be available on this backend either.
+                  Use <strong>Connect</strong> above for browser app access and other CLI options.
+                </>
+              )
+            ) : sshOffered ? (
+              <>
+                Start the VM to enable shell. For SSH from your machine, see <strong>Connect</strong> above or{" "}
+                <Link to="/settings/ssh-keys" className="underline underline-offset-4">
+                  SSH keys
+                </Link>
+                .
+              </>
             ) : (
-              <>Start the VM to enable shell. For SSH from your machine, see <strong>Connect</strong> above or{" "}
-                <Link to="/settings/ssh-keys" className="underline underline-offset-4">SSH keys</Link>.</>
+              <>Start the VM to enable shell. See <strong>Connect</strong> above for other ways to reach this VM.</>
             )}
           </p>
         ) : null}
