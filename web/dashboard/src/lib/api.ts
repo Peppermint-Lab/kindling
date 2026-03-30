@@ -35,9 +35,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       const j = JSON.parse(bodyText) as { error?: string; code?: string }
       if (j.error) message = j.error
       code = j.code
-    } catch {
-      /* plain text */
-    }
+    } catch {}
     throw new APIError(message, res.status, code, bodyText)
   }
   if (res.status === 204) return undefined as T
@@ -1184,9 +1182,7 @@ export function subscribeDashboardEvents(options: {
     try {
       const d = JSON.parse((e as MessageEvent).data) as DashboardInvalidatePayload
       if (d.topic) options.onInvalidate?.(d.topic)
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   })
 
   es.onerror = (err) => {
@@ -1216,17 +1212,13 @@ export function subscribeDeploymentStream(
   es.addEventListener("deployment", (e) => {
     try {
       handlers.onDeployment(JSON.parse((e as MessageEvent).data) as Deployment)
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   })
 
   es.addEventListener("logs", (e) => {
     try {
       handlers.onLogs(JSON.parse((e as MessageEvent).data) as BuildLog[])
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   })
 
   es.addEventListener("done", () => {
