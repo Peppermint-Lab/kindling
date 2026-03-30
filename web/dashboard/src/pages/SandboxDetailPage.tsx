@@ -153,7 +153,9 @@ export function SandboxDetailPage() {
             <h1 className="text-2xl font-semibold tracking-tight">{sandbox.name}</h1>
             <Badge variant={sandbox.observed_state === "running" ? "default" : "secondary"}>{sandbox.observed_state}</Badge>
           </div>
-          <p className="text-sm text-muted-foreground">{sandbox.host_group} · {sandbox.backend || "pending"} · {sandbox.arch || "pending"}</p>
+          <p className="text-sm text-muted-foreground">
+            {sandbox.host_group} · policy {sandbox.isolation_policy ?? "best_available"} · {sandbox.backend || "pending"} · {sandbox.arch || "pending"}
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           {(["start", "stop", "suspend", "resume"] as const).map((action) => (
@@ -198,6 +200,7 @@ export function SandboxDetailPage() {
           </CardHeader>
           <CardContent className="grid gap-2 text-sm">
             <p><span className="font-medium">Runtime URL:</span> {sandbox.runtime_url || "—"}</p>
+            <p><span className="font-medium">Isolation policy:</span> {sandbox.isolation_policy ?? "best_available"}</p>
             <p><span className="font-medium">Resources:</span> {sandbox.vcpu} vCPU / {sandbox.memory_mb} MB / {sandbox.disk_gb} GB</p>
             <p><span className="font-medium">Git:</span> {sandbox.git_repo || "—"} {sandbox.git_ref ? `(${sandbox.git_ref})` : ""}</p>
             <p><span className="font-medium">Last used:</span> {sandbox.last_used_at ? new Date(sandbox.last_used_at).toLocaleString() : "—"}</p>

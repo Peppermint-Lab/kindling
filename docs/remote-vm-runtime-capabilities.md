@@ -1,6 +1,6 @@
-# Remote VM runtime detection and capabilities (Milestone 2)
+# Remote VM runtime detection and capabilities (through Milestone 3)
 
-This document describes the **in-repo** contract for Kindling **remote VMs** after Milestone 2 of the “Remote VM Experience” track.
+This document describes the **in-repo** contract for Kindling **remote VMs** after Milestone 3 of the “Remote VM Experience” track (runtime detection and capabilities from M2, plus Linux `crun` placement fallback).
 
 Canonical product notes may still live in the Obsidian vault; this file is the engineer-oriented summary tied to the code.
 
@@ -44,9 +44,11 @@ Workers emit (among other keys):
 - `remote_vm_capabilities`: map of capability name → `true`/`false` (**supported** on this worker)
 - `remote_vm_enabled`: `true` when either placement eligibility flag is true (schedulable for remote VM workloads under current rules)
 
-**Milestone 2 vs 3 boundary:** Linux **`crun`** workers may report capabilities for operators, but **`remote_vm_linux_placement_eligible` stays false** until Milestone 3 allows placement onto `crun`.
+**Milestone 3 placement:** Linux **`crun`** workers set **`remote_vm_linux_placement_eligible: true`** in heartbeat metadata so the scheduler can place `linux-remote-vm` workloads onto them when `isolation_policy` is **`best_available`** and no Cloud Hypervisor worker is available. With **`require_microvm`**, Linux placement only considers **`cloud-hypervisor`** workers.
 
-Placement selection in `internal/sandbox.Service.pickServer` uses explicit eligibility JSON when present, and falls back to legacy behavior (`remote_vm_backend == cloud-hypervisor` / `apple-vz`) when older workers have not upgraded.
+Remote VM rows store **`isolation_policy`** (requested intent) separately from **`backend`** / **`arch`** (resolved placement). See `internal/sandbox.Service.assignSandbox` / `pickServer`.
+
+Placement selection in `internal/sandbox.Service.pickServer` uses explicit eligibility JSON when present, and falls back to legacy behavior (`remote_vm_backend == cloud-hypervisor` / `apple-vz`) when older workers have not upgraded. For **`best_available`** on Linux with no pinned backend, eligible workers are ordered so **`cloud-hypervisor` precedes `crun`**.
 
 ## API and consumers
 

@@ -512,8 +512,10 @@ CREATE TABLE IF NOT EXISTS remote_vms (
     org_id               UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     name                 TEXT NOT NULL,
     host_group           TEXT NOT NULL DEFAULT 'linux-remote-vm',
+    isolation_policy     TEXT NOT NULL DEFAULT 'best_available'
+        CHECK (isolation_policy IN ('best_available', 'require_microvm')),
     backend              TEXT NOT NULL DEFAULT ''
-        CHECK (backend IN ('', 'cloud-hypervisor', 'apple-vz')),
+        CHECK (backend IN ('', 'cloud-hypervisor', 'apple-vz', 'crun')),
     arch                 TEXT NOT NULL DEFAULT ''
         CHECK (arch IN ('', 'amd64', 'arm64')),
     desired_state        TEXT NOT NULL DEFAULT 'running'
@@ -566,8 +568,10 @@ CREATE TABLE IF NOT EXISTS remote_vm_templates (
     org_id             UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     name               TEXT NOT NULL,
     host_group         TEXT NOT NULL DEFAULT 'linux-remote-vm',
+    isolation_policy   TEXT NOT NULL DEFAULT 'best_available'
+        CHECK (isolation_policy IN ('best_available', 'require_microvm')),
     backend            TEXT NOT NULL DEFAULT ''
-        CHECK (backend IN ('', 'cloud-hypervisor', 'apple-vz')),
+        CHECK (backend IN ('', 'cloud-hypervisor', 'apple-vz', 'crun')),
     arch               TEXT NOT NULL DEFAULT ''
         CHECK (arch IN ('', 'amd64', 'arm64')),
     source_remote_vm_id UUID REFERENCES remote_vms(id) ON DELETE SET NULL,
@@ -605,6 +609,57 @@ DO $$ BEGIN
         WHERE table_schema = 'public' AND table_name = 'remote_vms' AND column_name = 'ssh_host_public_key'
     ) THEN
         ALTER TABLE remote_vms ADD COLUMN ssh_host_public_key TEXT NOT NULL DEFAULT '';
+    END IF;
+END $$;
+
+-- Milestone 3: isolation policy + crun as persisted backend
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'remote_vms' AND column_name = 'isolation_policy'
+    ) THEN
+        ALTER TABLE remote_vms ADD COLUMN isolation_policy TEXT NOT NULL DEFAULT 'best_available';
+        ALTER TABLE remote_vms ADD CONSTRAINT remote_vms_isolation_policy_check
+            CHECK (isolation_policy IN ('best_available', 'require_microvm'));
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'remote_vm_templates' AND column_name = 'isolation_policy'
+    ) THEN
+        ALTER TABLE remote_vm_templates ADD COLUMN isolation_policy TEXT NOT NULL DEFAULT 'best_available';
+        ALTER TABLE remote_vm_templates ADD CONSTRAINT remote_vm_templates_isolation_policy_check
+            CHECK (isolation_policy IN ('best_available', 'require_microvm'));
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE remote_vms DROP CONSTRAINT IF EXISTS remote_vms_backend_check;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'remote_vms_backend_check'
+    ) THEN
+        ALTER TABLE remote_vms ADD CONSTRAINT remote_vms_backend_check
+            CHECK (backend IN ('', 'cloud-hypervisor', 'apple-vz', 'crun'));
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE remote_vm_templates DROP CONSTRAINT IF EXISTS remote_vm_templates_backend_check;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'remote_vm_templates_backend_check'
+    ) THEN
+        ALTER TABLE remote_vm_templates ADD CONSTRAINT remote_vm_templates_backend_check
+            CHECK (backend IN ('', 'cloud-hypervisor', 'apple-vz', 'crun'));
     END IF;
 END $$;
 

@@ -8161,7 +8161,7 @@ SET vm_id = $2,
     runtime_url = $4,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, isolation_policy, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 type RemoteVMAttachVMParams struct {
@@ -8184,6 +8184,7 @@ func (q *Queries) RemoteVMAttachVM(ctx context.Context, arg RemoteVMAttachVMPara
 		&i.OrgID,
 		&i.Name,
 		&i.HostGroup,
+		&i.IsolationPolicy,
 		&i.Backend,
 		&i.Arch,
 		&i.DesiredState,
@@ -8219,7 +8220,7 @@ SET vm_id = NULL,
     runtime_url = '',
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, isolation_policy, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 func (q *Queries) RemoteVMClearVM(ctx context.Context, id pgtype.UUID) (RemoteVm, error) {
@@ -8230,6 +8231,7 @@ func (q *Queries) RemoteVMClearVM(ctx context.Context, id pgtype.UUID) (RemoteVm
 		&i.OrgID,
 		&i.Name,
 		&i.HostGroup,
+		&i.IsolationPolicy,
 		&i.Backend,
 		&i.Arch,
 		&i.DesiredState,
@@ -8262,18 +8264,18 @@ func (q *Queries) RemoteVMClearVM(ctx context.Context, id pgtype.UUID) (RemoteVm
 const remoteVMCreate = `-- name: RemoteVMCreate :one
 
 INSERT INTO remote_vms (
-  id, org_id, name, host_group, backend, arch, desired_state, observed_state,
+  id, org_id, name, host_group, isolation_policy, backend, arch, desired_state, observed_state,
   server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb,
   env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at,
   published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id
 )
 VALUES (
-  $1, $2, $3, $4, $5, $6, $7, $8,
-  $9, $10, $11, $12, $13, $14, $15,
-  $16, $17, $18, $19, $20, $21,
-  $22, $23, $24, $25, $26
+  $1, $2, $3, $4, $5, $6, $7, $8, $9,
+  $10, $11, $12, $13, $14, $15, $16,
+  $17, $18, $19, $20, $21, $22,
+  $23, $24, $25, $26, $27
 )
-RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, isolation_policy, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 type RemoteVMCreateParams struct {
@@ -8281,6 +8283,7 @@ type RemoteVMCreateParams struct {
 	OrgID              pgtype.UUID        `json:"org_id"`
 	Name               string             `json:"name"`
 	HostGroup          string             `json:"host_group"`
+	IsolationPolicy    string             `json:"isolation_policy"`
 	Backend            string             `json:"backend"`
 	Arch               string             `json:"arch"`
 	DesiredState       string             `json:"desired_state"`
@@ -8312,6 +8315,7 @@ func (q *Queries) RemoteVMCreate(ctx context.Context, arg RemoteVMCreateParams) 
 		arg.OrgID,
 		arg.Name,
 		arg.HostGroup,
+		arg.IsolationPolicy,
 		arg.Backend,
 		arg.Arch,
 		arg.DesiredState,
@@ -8341,6 +8345,7 @@ func (q *Queries) RemoteVMCreate(ctx context.Context, arg RemoteVMCreateParams) 
 		&i.OrgID,
 		&i.Name,
 		&i.HostGroup,
+		&i.IsolationPolicy,
 		&i.Backend,
 		&i.Arch,
 		&i.DesiredState,
@@ -8371,7 +8376,7 @@ func (q *Queries) RemoteVMCreate(ctx context.Context, arg RemoteVMCreateParams) 
 }
 
 const remoteVMFindByServerID = `-- name: RemoteVMFindByServerID :many
-SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM remote_vms
+SELECT id, org_id, name, host_group, isolation_policy, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM remote_vms
 WHERE server_id = $1
   AND deleted_at IS NULL
 ORDER BY updated_at DESC
@@ -8391,6 +8396,7 @@ func (q *Queries) RemoteVMFindByServerID(ctx context.Context, serverID pgtype.UU
 			&i.OrgID,
 			&i.Name,
 			&i.HostGroup,
+			&i.IsolationPolicy,
 			&i.Backend,
 			&i.Arch,
 			&i.DesiredState,
@@ -8428,7 +8434,7 @@ func (q *Queries) RemoteVMFindByServerID(ctx context.Context, serverID pgtype.UU
 }
 
 const remoteVMFirstByID = `-- name: RemoteVMFirstByID :one
-SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM remote_vms WHERE id = $1
+SELECT id, org_id, name, host_group, isolation_policy, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM remote_vms WHERE id = $1
 `
 
 func (q *Queries) RemoteVMFirstByID(ctx context.Context, id pgtype.UUID) (RemoteVm, error) {
@@ -8439,6 +8445,7 @@ func (q *Queries) RemoteVMFirstByID(ctx context.Context, id pgtype.UUID) (Remote
 		&i.OrgID,
 		&i.Name,
 		&i.HostGroup,
+		&i.IsolationPolicy,
 		&i.Backend,
 		&i.Arch,
 		&i.DesiredState,
@@ -8469,7 +8476,7 @@ func (q *Queries) RemoteVMFirstByID(ctx context.Context, id pgtype.UUID) (Remote
 }
 
 const remoteVMFirstByIDAndOrg = `-- name: RemoteVMFirstByIDAndOrg :one
-SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM remote_vms
+SELECT id, org_id, name, host_group, isolation_policy, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM remote_vms
 WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL
 `
 
@@ -8486,6 +8493,7 @@ func (q *Queries) RemoteVMFirstByIDAndOrg(ctx context.Context, arg RemoteVMFirst
 		&i.OrgID,
 		&i.Name,
 		&i.HostGroup,
+		&i.IsolationPolicy,
 		&i.Backend,
 		&i.Arch,
 		&i.DesiredState,
@@ -8516,7 +8524,7 @@ func (q *Queries) RemoteVMFirstByIDAndOrg(ctx context.Context, arg RemoteVMFirst
 }
 
 const remoteVMListByOrg = `-- name: RemoteVMListByOrg :many
-SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM remote_vms
+SELECT id, org_id, name, host_group, isolation_policy, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM remote_vms
 WHERE org_id = $1 AND deleted_at IS NULL
 ORDER BY updated_at DESC
 `
@@ -8535,6 +8543,7 @@ func (q *Queries) RemoteVMListByOrg(ctx context.Context, orgID pgtype.UUID) ([]R
 			&i.OrgID,
 			&i.Name,
 			&i.HostGroup,
+			&i.IsolationPolicy,
 			&i.Backend,
 			&i.Arch,
 			&i.DesiredState,
@@ -8578,7 +8587,7 @@ SET observed_state = 'deleted',
     runtime_url = '',
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, isolation_policy, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 func (q *Queries) RemoteVMMarkDeleted(ctx context.Context, id pgtype.UUID) (RemoteVm, error) {
@@ -8589,6 +8598,7 @@ func (q *Queries) RemoteVMMarkDeleted(ctx context.Context, id pgtype.UUID) (Remo
 		&i.OrgID,
 		&i.Name,
 		&i.HostGroup,
+		&i.IsolationPolicy,
 		&i.Backend,
 		&i.Arch,
 		&i.DesiredState,
@@ -8774,14 +8784,14 @@ func (q *Queries) RemoteVMPublishedPortsByRemoteVMID(ctx context.Context, remote
 
 const remoteVMTemplateCreate = `-- name: RemoteVMTemplateCreate :one
 INSERT INTO remote_vm_templates (
-  id, org_id, name, host_group, backend, arch, source_remote_vm_id, server_id,
+  id, org_id, name, host_group, isolation_policy, backend, arch, source_remote_vm_id, server_id,
   base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id
 )
 VALUES (
-  $1, $2, $3, $4, $5, $6, $7, $8,
-  $9, $10, $11, $12, $13, $14, $15, $16
+  $1, $2, $3, $4, $5, $6, $7, $8, $9,
+  $10, $11, $12, $13, $14, $15, $16, $17
 )
-RETURNING id, org_id, name, host_group, backend, arch, source_remote_vm_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, isolation_policy, backend, arch, source_remote_vm_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 type RemoteVMTemplateCreateParams struct {
@@ -8789,6 +8799,7 @@ type RemoteVMTemplateCreateParams struct {
 	OrgID            pgtype.UUID `json:"org_id"`
 	Name             string      `json:"name"`
 	HostGroup        string      `json:"host_group"`
+	IsolationPolicy  string      `json:"isolation_policy"`
 	Backend          string      `json:"backend"`
 	Arch             string      `json:"arch"`
 	SourceRemoteVmID pgtype.UUID `json:"source_remote_vm_id"`
@@ -8809,6 +8820,7 @@ func (q *Queries) RemoteVMTemplateCreate(ctx context.Context, arg RemoteVMTempla
 		arg.OrgID,
 		arg.Name,
 		arg.HostGroup,
+		arg.IsolationPolicy,
 		arg.Backend,
 		arg.Arch,
 		arg.SourceRemoteVmID,
@@ -8828,6 +8840,7 @@ func (q *Queries) RemoteVMTemplateCreate(ctx context.Context, arg RemoteVMTempla
 		&i.OrgID,
 		&i.Name,
 		&i.HostGroup,
+		&i.IsolationPolicy,
 		&i.Backend,
 		&i.Arch,
 		&i.SourceRemoteVmID,
@@ -8848,7 +8861,7 @@ func (q *Queries) RemoteVMTemplateCreate(ctx context.Context, arg RemoteVMTempla
 }
 
 const remoteVMTemplateFirstByID = `-- name: RemoteVMTemplateFirstByID :one
-SELECT id, org_id, name, host_group, backend, arch, source_remote_vm_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM remote_vm_templates WHERE id = $1
+SELECT id, org_id, name, host_group, isolation_policy, backend, arch, source_remote_vm_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM remote_vm_templates WHERE id = $1
 `
 
 func (q *Queries) RemoteVMTemplateFirstByID(ctx context.Context, id pgtype.UUID) (RemoteVmTemplate, error) {
@@ -8859,6 +8872,7 @@ func (q *Queries) RemoteVMTemplateFirstByID(ctx context.Context, id pgtype.UUID)
 		&i.OrgID,
 		&i.Name,
 		&i.HostGroup,
+		&i.IsolationPolicy,
 		&i.Backend,
 		&i.Arch,
 		&i.SourceRemoteVmID,
@@ -8879,7 +8893,7 @@ func (q *Queries) RemoteVMTemplateFirstByID(ctx context.Context, id pgtype.UUID)
 }
 
 const remoteVMTemplateFirstByIDAndOrg = `-- name: RemoteVMTemplateFirstByIDAndOrg :one
-SELECT id, org_id, name, host_group, backend, arch, source_remote_vm_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM remote_vm_templates
+SELECT id, org_id, name, host_group, isolation_policy, backend, arch, source_remote_vm_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM remote_vm_templates
 WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL
 `
 
@@ -8896,6 +8910,7 @@ func (q *Queries) RemoteVMTemplateFirstByIDAndOrg(ctx context.Context, arg Remot
 		&i.OrgID,
 		&i.Name,
 		&i.HostGroup,
+		&i.IsolationPolicy,
 		&i.Backend,
 		&i.Arch,
 		&i.SourceRemoteVmID,
@@ -8916,7 +8931,7 @@ func (q *Queries) RemoteVMTemplateFirstByIDAndOrg(ctx context.Context, arg Remot
 }
 
 const remoteVMTemplateListByOrg = `-- name: RemoteVMTemplateListByOrg :many
-SELECT id, org_id, name, host_group, backend, arch, source_remote_vm_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM remote_vm_templates
+SELECT id, org_id, name, host_group, isolation_policy, backend, arch, source_remote_vm_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM remote_vm_templates
 WHERE org_id = $1 AND deleted_at IS NULL
 ORDER BY updated_at DESC
 `
@@ -8935,6 +8950,7 @@ func (q *Queries) RemoteVMTemplateListByOrg(ctx context.Context, orgID pgtype.UU
 			&i.OrgID,
 			&i.Name,
 			&i.HostGroup,
+			&i.IsolationPolicy,
 			&i.Backend,
 			&i.Arch,
 			&i.SourceRemoteVmID,
@@ -8967,7 +8983,7 @@ SET status = 'deleted',
     deleted_at = NOW(),
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, source_remote_vm_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, isolation_policy, backend, arch, source_remote_vm_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 func (q *Queries) RemoteVMTemplateMarkDeleted(ctx context.Context, id pgtype.UUID) (RemoteVmTemplate, error) {
@@ -8978,6 +8994,7 @@ func (q *Queries) RemoteVMTemplateMarkDeleted(ctx context.Context, id pgtype.UUI
 		&i.OrgID,
 		&i.Name,
 		&i.HostGroup,
+		&i.IsolationPolicy,
 		&i.Backend,
 		&i.Arch,
 		&i.SourceRemoteVmID,
@@ -9003,7 +9020,7 @@ SET status = 'failed',
     failure_message = $2,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, source_remote_vm_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, isolation_policy, backend, arch, source_remote_vm_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 type RemoteVMTemplateMarkFailedParams struct {
@@ -9019,6 +9036,7 @@ func (q *Queries) RemoteVMTemplateMarkFailed(ctx context.Context, arg RemoteVMTe
 		&i.OrgID,
 		&i.Name,
 		&i.HostGroup,
+		&i.IsolationPolicy,
 		&i.Backend,
 		&i.Arch,
 		&i.SourceRemoteVmID,
@@ -9046,7 +9064,7 @@ SET status = 'ready',
     failure_message = '',
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, source_remote_vm_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, isolation_policy, backend, arch, source_remote_vm_id, server_id, base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 type RemoteVMTemplateMarkReadyParams struct {
@@ -9063,6 +9081,7 @@ func (q *Queries) RemoteVMTemplateMarkReady(ctx context.Context, arg RemoteVMTem
 		&i.OrgID,
 		&i.Name,
 		&i.HostGroup,
+		&i.IsolationPolicy,
 		&i.Backend,
 		&i.Arch,
 		&i.SourceRemoteVmID,
@@ -9100,7 +9119,7 @@ UPDATE remote_vms
 SET desired_state = $2,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, isolation_policy, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 type RemoteVMUpdateDesiredStateParams struct {
@@ -9116,6 +9135,7 @@ func (q *Queries) RemoteVMUpdateDesiredState(ctx context.Context, arg RemoteVMUp
 		&i.OrgID,
 		&i.Name,
 		&i.HostGroup,
+		&i.IsolationPolicy,
 		&i.Backend,
 		&i.Arch,
 		&i.DesiredState,
@@ -9165,7 +9185,7 @@ SET observed_state = $2,
     failure_message = $4,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, isolation_policy, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 type RemoteVMUpdateObservedStateParams struct {
@@ -9188,6 +9208,7 @@ func (q *Queries) RemoteVMUpdateObservedState(ctx context.Context, arg RemoteVMU
 		&i.OrgID,
 		&i.Name,
 		&i.HostGroup,
+		&i.IsolationPolicy,
 		&i.Backend,
 		&i.Arch,
 		&i.DesiredState,
@@ -9225,7 +9246,7 @@ SET host_group = $2,
     server_id = $5,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, isolation_policy, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 type RemoteVMUpdatePlacementParams struct {
@@ -9250,6 +9271,7 @@ func (q *Queries) RemoteVMUpdatePlacement(ctx context.Context, arg RemoteVMUpdat
 		&i.OrgID,
 		&i.Name,
 		&i.HostGroup,
+		&i.IsolationPolicy,
 		&i.Backend,
 		&i.Arch,
 		&i.DesiredState,
@@ -9284,7 +9306,7 @@ UPDATE remote_vms
 SET published_http_port = $2,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, isolation_policy, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 type RemoteVMUpdatePublishPortParams struct {
@@ -9300,6 +9322,7 @@ func (q *Queries) RemoteVMUpdatePublishPort(ctx context.Context, arg RemoteVMUpd
 		&i.OrgID,
 		&i.Name,
 		&i.HostGroup,
+		&i.IsolationPolicy,
 		&i.Backend,
 		&i.Arch,
 		&i.DesiredState,
@@ -9334,7 +9357,7 @@ UPDATE remote_vms
 SET ssh_host_public_key = $2,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, isolation_policy, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 type RemoteVMUpdateSSHHostPublicKeyParams struct {
@@ -9350,6 +9373,7 @@ func (q *Queries) RemoteVMUpdateSSHHostPublicKey(ctx context.Context, arg Remote
 		&i.OrgID,
 		&i.Name,
 		&i.HostGroup,
+		&i.IsolationPolicy,
 		&i.Backend,
 		&i.Arch,
 		&i.DesiredState,
@@ -9389,7 +9413,7 @@ SET base_image_ref = $2,
     expires_at = $7,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
+RETURNING id, org_id, name, host_group, isolation_policy, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at
 `
 
 type RemoteVMUpdateSettingsParams struct {
@@ -9418,6 +9442,7 @@ func (q *Queries) RemoteVMUpdateSettings(ctx context.Context, arg RemoteVMUpdate
 		&i.OrgID,
 		&i.Name,
 		&i.HostGroup,
+		&i.IsolationPolicy,
 		&i.Backend,
 		&i.Arch,
 		&i.DesiredState,
@@ -9448,7 +9473,7 @@ func (q *Queries) RemoteVMUpdateSettings(ctx context.Context, arg RemoteVMUpdate
 }
 
 const remoteVMsDueForExpiry = `-- name: RemoteVMsDueForExpiry :many
-SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM remote_vms
+SELECT id, org_id, name, host_group, isolation_policy, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM remote_vms
 WHERE deleted_at IS NULL
   AND expires_at IS NOT NULL
   AND expires_at <= NOW()
@@ -9468,6 +9493,7 @@ func (q *Queries) RemoteVMsDueForExpiry(ctx context.Context) ([]RemoteVm, error)
 			&i.OrgID,
 			&i.Name,
 			&i.HostGroup,
+			&i.IsolationPolicy,
 			&i.Backend,
 			&i.Arch,
 			&i.DesiredState,
@@ -9505,7 +9531,7 @@ func (q *Queries) RemoteVMsDueForExpiry(ctx context.Context) ([]RemoteVm, error)
 }
 
 const remoteVMsDueForIdleSuspend = `-- name: RemoteVMsDueForIdleSuspend :many
-SELECT id, org_id, name, host_group, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM remote_vms
+SELECT id, org_id, name, host_group, isolation_policy, backend, arch, desired_state, observed_state, server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb, env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at, published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id, deleted_at, created_at, updated_at FROM remote_vms
 WHERE deleted_at IS NULL
   AND desired_state = 'running'
   AND observed_state = 'running'
@@ -9528,6 +9554,7 @@ func (q *Queries) RemoteVMsDueForIdleSuspend(ctx context.Context) ([]RemoteVm, e
 			&i.OrgID,
 			&i.Name,
 			&i.HostGroup,
+			&i.IsolationPolicy,
 			&i.Backend,
 			&i.Arch,
 			&i.DesiredState,

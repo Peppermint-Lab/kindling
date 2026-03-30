@@ -43,6 +43,7 @@ function remoteVmCapabilitiesSummary(caps: Record<string, RemoteVMCapabilityEntr
 type SandboxDraft = {
   name: string
   host_group: "linux-remote-vm" | "mac-remote-vm"
+  isolation_policy: "best_available" | "require_microvm"
   base_image_ref: string
   vcpu: string
   memory_mb: string
@@ -57,6 +58,7 @@ function draftFromPreset(presetID: string): SandboxDraft {
   return {
     name: suggestedSandboxName(preset.id),
     host_group: preset.host_group,
+    isolation_policy: "best_available",
     base_image_ref: preset.base_image_ref,
     vcpu: String(preset.vcpu),
     memory_mb: String(preset.memory_mb),
@@ -186,6 +188,7 @@ export function SandboxesPage() {
       const created = await api.createSandbox({
         name: draft.name.trim(),
         host_group: draft.host_group,
+        isolation_policy: draft.isolation_policy,
         base_image_ref: draft.base_image_ref.trim(),
         vcpu: nextVcpu,
         memory_mb: nextMemory,
@@ -309,7 +312,7 @@ export function SandboxesPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-2 text-sm text-muted-foreground">
-                <p>{sandbox.backend || "pending backend"} / {sandbox.arch || "pending arch"}</p>
+                <p>{sandbox.isolation_policy ?? "best_available"} · {sandbox.backend || "pending backend"} / {sandbox.arch || "pending arch"}</p>
                 {(() => {
                   const capSummary = remoteVmCapabilitiesSummary(sandbox.capabilities)
                   return capSummary ? <p className="text-xs text-muted-foreground">{capSummary}</p> : null
@@ -564,7 +567,7 @@ export function SandboxesPage() {
                     <div className="rounded-lg border bg-muted/20 p-3 text-sm">
                       <p className="font-medium">{selectedTemplate.name}</p>
                       <p className="mt-1 text-muted-foreground">
-                        {hostGroupLabel(selectedTemplate.host_group)} · {selectedTemplate.vcpu} vCPU · {selectedTemplate.memory_mb} MB · {selectedTemplate.disk_gb} GB
+                        {hostGroupLabel(selectedTemplate.host_group)} · policy {selectedTemplate.isolation_policy ?? "best_available"} · {selectedTemplate.vcpu} vCPU · {selectedTemplate.memory_mb} MB · {selectedTemplate.disk_gb} GB
                       </p>
                       <p className="mt-2 font-mono text-xs text-muted-foreground break-all">{selectedTemplate.base_image_ref}</p>
                     </div>
@@ -587,6 +590,26 @@ export function SandboxesPage() {
               ? "Template clones start with the captured image and resources. They default to always-on, then you can adjust lifecycle later."
               : "New remote VMs default to always-on. Turn on auto-suspend only when you explicitly want idle cost control."}
           </div>
+
+          {createMode !== "template" ? (
+            <div className="space-y-2">
+              <Label htmlFor="sandbox-isolation">Isolation policy</Label>
+              <select
+                id="sandbox-isolation"
+                className="w-full max-w-xl rounded-md border bg-background px-3 py-2 text-sm"
+                value={draft.isolation_policy}
+                onChange={(e) =>
+                  setDraft((current) => ({
+                    ...current,
+                    isolation_policy: e.target.value as SandboxDraft["isolation_policy"],
+                  }))
+                }
+              >
+                <option value="best_available">Best available (prefer microVM; Linux may fall back to crun)</option>
+                <option value="require_microvm">Require microVM (Linux: Cloud Hypervisor workers only)</option>
+              </select>
+            </div>
+          ) : null}
 
           {createMode !== "template" ? (
             <div className="grid gap-4 sm:grid-cols-[auto_140px] sm:items-end">

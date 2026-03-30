@@ -9,6 +9,16 @@ import (
 	kruntime "github.com/kindlingvm/kindling/internal/runtime"
 )
 
+func TestLinuxRemoteVmBackendRank(t *testing.T) {
+	t.Parallel()
+	if linuxRemoteVmBackendRank(kruntime.BackendCloudHypervisor) >= linuxRemoteVmBackendRank(kruntime.BackendCrun) {
+		t.Fatal("cloud-hypervisor should rank before crun for best_available ordering")
+	}
+	if linuxRemoteVmBackendRank(kruntime.BackendCrun) >= linuxRemoteVmBackendRank("") {
+		t.Fatal("crun should rank before unknown backend label")
+	}
+}
+
 func TestEffectiveLinuxRemoteVmPlacementLegacyBackendOnly(t *testing.T) {
 	t.Parallel()
 	meta := workerMetadata{RemoteVmBackend: kruntime.BackendCloudHypervisor}

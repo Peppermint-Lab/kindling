@@ -116,10 +116,11 @@ func cliSandboxListCmd() *cobra.Command {
 			out := envelope.Items
 			if !remoteJSON {
 				for _, row := range out {
-					fmt.Printf("%s  %-20s  %-8s  %-20s  %-24s  %s\n",
+					fmt.Printf("%s  %-20s  %-8s  %-18s  %-12s  %-20s  %s\n",
 						jsonFieldString(row, "id"),
 						jsonFieldString(row, "name"),
 						jsonFieldString(row, "observed_state"),
+						jsonFieldString(row, "isolation_policy"),
 						jsonFieldString(row, "backend"),
 						remoteVMCapabilitiesAbbrev(row),
 						jsonFieldString(row, "runtime_url"),
@@ -163,6 +164,7 @@ func cliSandboxGetCmd() *cobra.Command {
 func cliSandboxCreateCmd() *cobra.Command {
 	var (
 		name, hostGroup, imageRef, templateID, gitRepo, gitRef, expiresAt string
+		isolationPolicy                                                    string
 		vcpu, memoryMB, diskGB                                            int32
 		autoSuspend                                                       int64
 		port                                                              int32
@@ -196,6 +198,9 @@ func cliSandboxCreateCmd() *cobra.Command {
 			if startStopped {
 				body["desired_state"] = "stopped"
 			}
+			if strings.TrimSpace(isolationPolicy) != "" {
+				body["isolation_policy"] = strings.TrimSpace(isolationPolicy)
+			}
 			c, err := mustRemoteClient()
 			if err != nil {
 				return fmt.Errorf("create client: %w", err)
@@ -209,6 +214,7 @@ func cliSandboxCreateCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&name, "name", "", "Sandbox name")
 	cmd.Flags().StringVar(&hostGroup, "host-group", "", "Host group (linux-remote-vm or mac-remote-vm)")
+	cmd.Flags().StringVar(&isolationPolicy, "isolation-policy", "", "Isolation policy: best_available (default) or require_microvm")
 	cmd.Flags().StringVar(&imageRef, "image", "", "Base OCI image reference")
 	cmd.Flags().StringVar(&templateID, "template", "", "Sandbox template UUID")
 	cmd.Flags().StringVar(&gitRepo, "git-repo", "", "Optional repo URL")

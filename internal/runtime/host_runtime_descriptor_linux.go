@@ -17,7 +17,7 @@ func hostRuntimeDescriptorForPlatform(cfg HostRuntimeConfig) HostRuntimeDescript
 		return HostRuntimeDescriptor{
 			Backend:                        BackendCrun,
 			Arch:                           arch,
-			LinuxRemoteVmPlacementEligible: false,
+			LinuxRemoteVmPlacementEligible: true,
 			MacRemoteVmPlacementEligible:   false,
 		}
 	case BackendCloudHypervisor, "ch":
@@ -44,7 +44,7 @@ func hostRuntimeDescriptorForPlatform(cfg HostRuntimeConfig) HostRuntimeDescript
 	return HostRuntimeDescriptor{
 		Backend:                        BackendCrun,
 		Arch:                           arch,
-		LinuxRemoteVmPlacementEligible: false,
+		LinuxRemoteVmPlacementEligible: true,
 		MacRemoteVmPlacementEligible:   false,
 	}
 }

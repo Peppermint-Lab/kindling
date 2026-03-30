@@ -1589,16 +1589,16 @@ LIMIT 100;
 
 -- name: RemoteVMCreate :one
 INSERT INTO remote_vms (
-  id, org_id, name, host_group, backend, arch, desired_state, observed_state,
+  id, org_id, name, host_group, isolation_policy, backend, arch, desired_state, observed_state,
   server_id, vm_id, template_id, base_image_ref, vcpu, memory_mb, disk_gb,
   env_json, git_repo, git_ref, auto_suspend_seconds, last_used_at, expires_at,
   published_http_port, runtime_url, ssh_host_public_key, failure_message, created_by_user_id
 )
 VALUES (
-  $1, $2, $3, $4, $5, $6, $7, $8,
-  $9, $10, $11, $12, $13, $14, $15,
-  $16, $17, $18, $19, $20, $21,
-  $22, $23, $24, $25, $26
+  $1, $2, $3, $4, $5, $6, $7, $8, $9,
+  $10, $11, $12, $13, $14, $15, $16,
+  $17, $18, $19, $20, $21, $22,
+  $23, $24, $25, $26, $27
 )
 RETURNING *;
 
@@ -1722,12 +1722,12 @@ ORDER BY updated_at DESC;
 
 -- name: RemoteVMTemplateCreate :one
 INSERT INTO remote_vm_templates (
-  id, org_id, name, host_group, backend, arch, source_remote_vm_id, server_id,
+  id, org_id, name, host_group, isolation_policy, backend, arch, source_remote_vm_id, server_id,
   base_image_ref, snapshot_ref, vcpu, memory_mb, disk_gb, status, failure_message, created_by_user_id
 )
 VALUES (
-  $1, $2, $3, $4, $5, $6, $7, $8,
-  $9, $10, $11, $12, $13, $14, $15, $16
+  $1, $2, $3, $4, $5, $6, $7, $8, $9,
+  $10, $11, $12, $13, $14, $15, $16, $17
 )
 RETURNING *;
 

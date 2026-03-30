@@ -10,8 +10,8 @@ func TestDescribeHostRuntimeForceCrun(t *testing.T) {
 	if d.Backend != BackendCrun {
 		t.Fatalf("backend=%q", d.Backend)
 	}
-	if d.LinuxRemoteVmPlacementEligible {
-		t.Fatal("linux remote vm placement should be false for crun")
+	if !d.LinuxRemoteVmPlacementEligible {
+		t.Fatal("linux remote vm placement should be true for crun (Milestone 3 fallback workers)")
 	}
 }
 

@@ -18,8 +18,8 @@ type HostRuntimeDescriptor struct {
 	// Arch is the worker host architecture (GOARCH).
 	Arch string
 	// LinuxRemoteVmPlacementEligible is true when this worker may accept new
-	// linux-remote-vm placements under current product rules. Milestone 3 will
-	// extend this for crun; until then only microVM Linux workers are eligible.
+	// linux-remote-vm placements under current product rules (Cloud Hypervisor
+	// microVMs and, on Milestone 3, crun fallback workers).
 	LinuxRemoteVmPlacementEligible bool
 	// MacRemoteVmPlacementEligible is true when this worker may accept mac-remote-vm placements.
 	MacRemoteVmPlacementEligible bool

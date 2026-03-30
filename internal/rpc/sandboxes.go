@@ -22,6 +22,7 @@ type sandboxOut struct {
 	ID                 string                         `json:"id"`
 	Name               string                         `json:"name"`
 	HostGroup          string                         `json:"host_group"`
+	IsolationPolicy    string                         `json:"isolation_policy"`
 	Backend            string                         `json:"backend,omitempty"`
 	Arch               string                         `json:"arch,omitempty"`
 	DesiredState       string                         `json:"desired_state"`
@@ -60,6 +61,7 @@ type sandboxTemplateOut struct {
 	ID               string                         `json:"id"`
 	Name             string                         `json:"name"`
 	HostGroup        string                         `json:"host_group"`
+	IsolationPolicy  string                         `json:"isolation_policy"`
 	Backend          string                         `json:"backend,omitempty"`
 	Arch             string                         `json:"arch,omitempty"`
 	SourceRemoteVmID *string                        `json:"source_remote_vm_id,omitempty"`
@@ -81,6 +83,7 @@ func sandboxToOut(sb queries.RemoteVm, ports []queries.RemoteVmPublishedPort) sa
 		ID:                 pguuid.ToString(sb.ID),
 		Name:               sb.Name,
 		HostGroup:          sb.HostGroup,
+		IsolationPolicy:    kruntime.NormalizeRemoteVMIsolationPolicy(sb.IsolationPolicy),
 		Backend:            sb.Backend,
 		Arch:               sb.Arch,
 		DesiredState:       sb.DesiredState,
@@ -163,12 +166,23 @@ func resolveSandboxHostGroup(requested string, template *queries.RemoteVmTemplat
 	return sandbox.HostGroupLinux
 }
 
+func resolveRemoteVMIsolationPolicyForCreate(requested string, template *queries.RemoteVmTemplate) (string, error) {
+	if strings.TrimSpace(requested) != "" {
+		return kruntime.ParseRemoteVMIsolationPolicy(requested)
+	}
+	if template != nil {
+		return kruntime.NormalizeRemoteVMIsolationPolicy(template.IsolationPolicy), nil
+	}
+	return kruntime.RemoteVMIsolationBestAvailable, nil
+}
+
 func sandboxTemplateToOut(tpl queries.RemoteVmTemplate) sandboxTemplateOut {
 	backend := strings.TrimSpace(tpl.Backend)
 	return sandboxTemplateOut{
 		ID:               pguuid.ToString(tpl.ID),
 		Name:             tpl.Name,
 		HostGroup:        tpl.HostGroup,
+		IsolationPolicy:  kruntime.NormalizeRemoteVMIsolationPolicy(tpl.IsolationPolicy),
 		Backend:          tpl.Backend,
 		Arch:             tpl.Arch,
 		SourceRemoteVmID: optionalUUIDString(tpl.SourceRemoteVmID),
@@ -241,6 +255,7 @@ func (a *API) createSandbox(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name               string            `json:"name"`
 		HostGroup          string            `json:"host_group"`
+		IsolationPolicy    string            `json:"isolation_policy"`
 		BaseImageRef       string            `json:"base_image_ref"`
 		TemplateID         string            `json:"template_id"`
 		Vcpu               int32             `json:"vcpu"`
@@ -329,11 +344,18 @@ func (a *API) createSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	isoPolicy, err := resolveRemoteVMIsolationPolicyForCreate(req.IsolationPolicy, template)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+
 	row, err := a.q.RemoteVMCreate(r.Context(), queries.RemoteVMCreateParams{
 		ID:                 pgtype.UUID{Bytes: uuid.New(), Valid: true},
 		OrgID:              p.OrganizationID,
 		Name:               name,
 		HostGroup:          hostGroup,
+		IsolationPolicy:    isoPolicy,
 		Backend:            "",
 		Arch:               "",
 		DesiredState:       desiredState,
@@ -587,6 +609,7 @@ func (a *API) createSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 		OrgID:            p.OrganizationID,
 		Name:             name,
 		HostGroup:        sb.HostGroup,
+		IsolationPolicy:  kruntime.NormalizeRemoteVMIsolationPolicy(sb.IsolationPolicy),
 		Backend:          sb.Backend,
 		Arch:             sb.Arch,
 		SourceRemoteVmID: sb.ID,
@@ -714,6 +737,7 @@ func (a *API) cloneSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 		OrgID:              p.OrganizationID,
 		Name:               name,
 		HostGroup:          tpl.HostGroup,
+		IsolationPolicy:    kruntime.NormalizeRemoteVMIsolationPolicy(tpl.IsolationPolicy),
 		Backend:            tpl.Backend,
 		Arch:               tpl.Arch,
 		DesiredState:       "running",

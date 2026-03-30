@@ -108,6 +108,7 @@ export type Sandbox = {
   id: string
   name: string
   host_group: string
+  isolation_policy?: string
   backend?: string
   arch?: string
   desired_state: string
@@ -139,6 +140,7 @@ export type SandboxTemplate = {
   id: string
   name: string
   host_group: string
+  isolation_policy?: string
   backend?: string
   arch?: string
   source_remote_vm_id?: string | null
@@ -711,6 +713,7 @@ export const api = {
   createSandbox: (data: {
     name: string
     host_group?: string
+    isolation_policy?: string
     base_image_ref?: string
     template_id?: string
     vcpu?: number

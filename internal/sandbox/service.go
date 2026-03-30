@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"net/url"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -143,6 +144,7 @@ func (s *Service) assignSandbox(ctx context.Context, sb queries.RemoteVm) error 
 	}
 	backend := strings.TrimSpace(sb.Backend)
 	arch := strings.TrimSpace(sb.Arch)
+	policy := kruntime.NormalizeRemoteVMIsolationPolicy(sb.IsolationPolicy)
 
 	var tpl *queries.RemoteVmTemplate
 	if sb.TemplateID.Valid {
@@ -152,13 +154,23 @@ func (s *Service) assignSandbox(ctx context.Context, sb queries.RemoteVm) error 
 			hostGroup = firstNonEmpty(tpl.HostGroup, hostGroup)
 			backend = firstNonEmpty(tpl.Backend, backend)
 			arch = firstNonEmpty(tpl.Arch, arch)
+			if strings.TrimSpace(sb.IsolationPolicy) == "" {
+				policy = kruntime.NormalizeRemoteVMIsolationPolicy(tpl.IsolationPolicy)
+			}
 		}
 	}
-	if backend == "" {
-		backend = backendForHostGroup(hostGroup)
+
+	backendFilter := backend
+	if hostGroup == HostGroupLinux {
+		if policy == kruntime.RemoteVMIsolationRequireMicrovm &&
+			(backendFilter == "" || backendFilter == kruntime.BackendCrun) {
+			backendFilter = kruntime.BackendCloudHypervisor
+		}
+	} else if hostGroup == HostGroupMac && backendFilter == "" {
+		backendFilter = kruntime.BackendAppleVZ
 	}
 
-	serverID, resolvedBackend, resolvedArch, err := s.pickServer(ctx, hostGroup, backend, arch, tpl)
+	serverID, resolvedBackend, resolvedArch, err := s.pickServer(ctx, hostGroup, policy, backendFilter, arch, tpl)
 	if err != nil {
 		return err
 	}
@@ -175,9 +187,27 @@ func (s *Service) assignSandbox(ctx context.Context, sb queries.RemoteVm) error 
 	return nil
 }
 
-func (s *Service) pickServer(ctx context.Context, hostGroup, backend, arch string, tpl *queries.RemoteVmTemplate) (uuid.UUID, string, string, error) {
+type remoteVmPickCandidate struct {
+	serverID uuid.UUID
+	backend  string
+	arch     string
+}
+
+// linuxRemoteVmBackendRank lower is preferred when isolation_policy is best_available.
+func linuxRemoteVmBackendRank(backend string) int {
+	switch strings.TrimSpace(backend) {
+	case kruntime.BackendCloudHypervisor:
+		return 0
+	case kruntime.BackendCrun:
+		return 1
+	default:
+		return 2
+	}
+}
+
+func (s *Service) pickServer(ctx context.Context, hostGroup, isolationPolicy, backendFilter, arch string, tpl *queries.RemoteVmTemplate) (uuid.UUID, string, string, error) {
 	if tpl != nil && tpl.ServerID.Valid {
-		return uuid.UUID(tpl.ServerID.Bytes), firstNonEmpty(tpl.Backend, backend), firstNonEmpty(tpl.Arch, arch), nil
+		return uuid.UUID(tpl.ServerID.Bytes), firstNonEmpty(tpl.Backend, backendFilter), firstNonEmpty(tpl.Arch, arch), nil
 	}
 
 	servers, err := s.Q.ServerFindAll(ctx)
@@ -195,8 +225,7 @@ func (s *Service) pickServer(ctx context.Context, hostGroup, backend, arch strin
 		}
 		metaByServer[st.ServerID.Bytes] = decodeWorkerMetadata(st.Metadata)
 	}
-	var chosen uuid.UUID
-	var chosenBackend, chosenArch string
+	var candidates []remoteVmPickCandidate
 	for _, srv := range servers {
 		if !srv.ID.Valid || srv.Status != "active" {
 			continue
@@ -205,10 +234,12 @@ func (s *Service) pickServer(ctx context.Context, hostGroup, backend, arch strin
 		if !meta.RemoteVmEnabled {
 			continue
 		}
-		if backend != "" && meta.RemoteVmBackend != "" && meta.RemoteVmBackend != backend {
+		wBackend := strings.TrimSpace(meta.RemoteVmBackend)
+		if backendFilter != "" && wBackend != "" && wBackend != backendFilter {
 			continue
 		}
-		if arch != "" && meta.RemoteVmArch != "" && meta.RemoteVmArch != arch {
+		wArch := strings.TrimSpace(meta.RemoteVmArch)
+		if arch != "" && wArch != "" && wArch != arch {
 			continue
 		}
 		if hostGroup == HostGroupMac && !meta.effectiveMacRemoteVmPlacement() {
@@ -217,15 +248,22 @@ func (s *Service) pickServer(ctx context.Context, hostGroup, backend, arch strin
 		if hostGroup == HostGroupLinux && !meta.effectiveLinuxRemoteVmPlacement() {
 			continue
 		}
-		chosen = uuid.UUID(srv.ID.Bytes)
-		chosenBackend = firstNonEmpty(meta.RemoteVmBackend, backend)
-		chosenArch = firstNonEmpty(meta.RemoteVmArch, arch, runtime.GOARCH)
-		break
+		candidates = append(candidates, remoteVmPickCandidate{
+			serverID: uuid.UUID(srv.ID.Bytes),
+			backend:  firstNonEmpty(wBackend, backendFilter),
+			arch:     firstNonEmpty(wArch, arch, runtime.GOARCH),
+		})
 	}
-	if chosen == uuid.Nil {
+	if len(candidates) == 0 {
 		return uuid.Nil, "", "", fmt.Errorf("no active sandbox worker is available for host group %q", hostGroup)
 	}
-	return chosen, chosenBackend, chosenArch, nil
+	if hostGroup == HostGroupLinux && isolationPolicy == kruntime.RemoteVMIsolationBestAvailable && backendFilter == "" {
+		sort.SliceStable(candidates, func(i, j int) bool {
+			return linuxRemoteVmBackendRank(candidates[i].backend) < linuxRemoteVmBackendRank(candidates[j].backend)
+		})
+	}
+	chosen := candidates[0]
+	return chosen.serverID, chosen.backend, chosen.arch, nil
 }
 
 func (s *Service) reconcileStopped(ctx context.Context, sb queries.RemoteVm) error {
@@ -555,15 +593,6 @@ func defaultHostGroup() string {
 		return HostGroupMac
 	}
 	return HostGroupLinux
-}
-
-func backendForHostGroup(hostGroup string) string {
-	switch strings.TrimSpace(hostGroup) {
-	case HostGroupMac:
-		return "apple-vz"
-	default:
-		return "cloud-hypervisor"
-	}
 }
 
 func splitImageRef(ref string) (registry, repository, tag string) {

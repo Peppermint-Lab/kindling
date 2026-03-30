@@ -372,6 +372,7 @@ type RemoteVm struct {
 	OrgID              pgtype.UUID        `json:"org_id"`
 	Name               string             `json:"name"`
 	HostGroup          string             `json:"host_group"`
+	IsolationPolicy    string             `json:"isolation_policy"`
 	Backend            string             `json:"backend"`
 	Arch               string             `json:"arch"`
 	DesiredState       string             `json:"desired_state"`
@@ -426,6 +427,7 @@ type RemoteVmTemplate struct {
 	OrgID            pgtype.UUID        `json:"org_id"`
 	Name             string             `json:"name"`
 	HostGroup        string             `json:"host_group"`
+	IsolationPolicy  string             `json:"isolation_policy"`
 	Backend          string             `json:"backend"`
 	Arch             string             `json:"arch"`
 	SourceRemoteVmID pgtype.UUID        `json:"source_remote_vm_id"`
