@@ -55,6 +55,8 @@ See the Obsidian vault at `~/Desktop/vault/Kindling/` for all documentation. Key
 
 The `docs/` directory in this repo contains only thin pointers to the vault.
 
+Remote VM **runtime selection and capability reporting** (worker metadata, `/api/vms` summaries, CLI) is documented in [`docs/remote-vm-runtime-capabilities.md`](docs/remote-vm-runtime-capabilities.md).
+
 ## CLI Overview
 
 The `kindling` CLI currently exposes these main command groups:

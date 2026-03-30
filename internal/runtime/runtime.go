@@ -6,8 +6,6 @@ package runtime
 import (
 	"context"
 	"io"
-	"log/slog"
-	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -190,12 +188,7 @@ type GuestTCPAccess interface {
 	ConnectGuestTCP(ctx context.Context, id uuid.UUID, port int) (io.ReadWriteCloser, error)
 }
 
-// Detect returns the best available runtime for this host.
+// Detect returns the best available backend name for this host with default config.
 func Detect() string {
-	if _, err := os.Stat("/dev/kvm"); err == nil {
-		slog.Info("KVM detected, using cloud-hypervisor runtime")
-		return "cloud-hypervisor"
-	}
-	slog.Info("no KVM detected, using crun runtime")
-	return "crun"
+	return DescribeHostRuntime(HostRuntimeConfig{}).Backend
 }

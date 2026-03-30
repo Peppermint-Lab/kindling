@@ -42,11 +42,12 @@ type reconcilers struct {
 
 // workerSetupResult bundles the outputs from setupWorker.
 type workerSetupResult struct {
-	rt         crunrt.Runtime
-	deployer   *deploy.Deployer
-	ciSvc      *ciworker.JobService
-	sandboxSvc *sandbox.Service
-	recs       reconcilers
+	rt          crunrt.Runtime
+	hostRuntime crunrt.HostRuntimeConfig
+	deployer    *deploy.Deployer
+	ciSvc       *ciworker.JobService
+	sandboxSvc  *sandbox.Service
+	recs        reconcilers
 }
 
 // setupWorker initialises the runtime, builder, deployer, and all reconciler
@@ -61,7 +62,7 @@ func setupWorker(
 	notifyRouteChange func(),
 ) (workerSetupResult, error) {
 	pullAuth := registryAuthFromSnapshot(snap)
-	rt := crunrt.NewDetectedRuntime(crunrt.HostRuntimeConfig{
+	hostCfg := crunrt.HostRuntimeConfig{
 		ForceRuntime:  snap.ServerRuntimeOverride,
 		AdvertiseHost: snap.ServerAdvertiseHost,
 		PullAuth:      pullAuth,
@@ -73,7 +74,8 @@ func setupWorker(
 		},
 		AppleKernelPath:    "",
 		AppleInitramfsPath: "",
-	})
+	}
+	rt := crunrt.NewDetectedRuntime(hostCfg)
 	slog.Info("runtime detected", "runtime", rt.Name())
 
 	var buildRunner builder.BuildRunner = builder.NewLocalBuildRunner()
@@ -176,10 +178,11 @@ func setupWorker(
 	})
 
 	return workerSetupResult{
-		rt:         rt,
-		deployer:   deployer,
-		ciSvc:      ciSvc,
-		sandboxSvc: sandboxSvc,
+		rt:          rt,
+		hostRuntime: hostCfg,
+		deployer:    deployer,
+		ciSvc:       ciSvc,
+		sandboxSvc:  sandboxSvc,
 		recs: reconcilers{
 			deployment: deploymentReconciler,
 			build:      buildReconciler,
@@ -237,24 +240,12 @@ func startReconcilers(ctx context.Context, q *queries.Queries, serverID uuid.UUI
 
 // startWorkerHeartbeats launches background heartbeats and resource polling for
 // the worker component.
-func startWorkerHeartbeats(ctx context.Context, q *queries.Queries, serverID uuid.UUID, rt crunrt.Runtime) {
+func startWorkerHeartbeats(ctx context.Context, q *queries.Queries, serverID uuid.UUID, rt crunrt.Runtime, hostCfg crunrt.HostRuntimeConfig) {
 	go runServerComponentHeartbeat(ctx, q, serverID, "worker", componentHeartbeatInterval, func() map[string]any {
-		meta := map[string]any{"runtime": rt.Name()}
-		meta["remote_vm_enabled"] = rt.Name() == "cloud-hypervisor" || rt.Name() == "apple-vz"
-		meta["remote_vm_backend"] = rt.Name()
-		meta["remote_vm_arch"] = runtime.GOARCH
-		meta["remote_vm_rosetta"] = false
-		meta["remote_vm_capacity"] = 1
+		meta := crunrt.BuildWorkerRemoteVMMetadata(rt, hostCfg)
 		if rt.Name() == "cloud-hypervisor" {
-			meta["live_migration_enabled"] = rt.Supports(crunrt.CapabilityLiveMigration)
 			if v := cloudHypervisorVersion(); v != "" {
 				meta["cloud_hypervisor_version"] = v
-			}
-			if chrt, ok := rt.(crunrt.DurableRetainedStateRuntime); ok {
-				if v := strings.TrimSpace(chrt.StateDir()); v != "" {
-					meta["state_dir"] = v
-				}
-				meta["durable_fast_wake_enabled"] = chrt.DurableFastWakeEnabled()
 			}
 			if v := strings.TrimSpace(os.Getenv("KINDLING_CH_SHARED_ROOTFS_DIR")); v != "" {
 				meta["shared_rootfs_dir"] = v

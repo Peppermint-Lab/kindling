@@ -30,6 +30,46 @@ import (
 	"golang.org/x/term"
 )
 
+// remoteVMCapabilitiesAbbrev returns a compact list of supported capability short codes for CLI tables.
+func remoteVMCapabilitiesAbbrev(row map[string]any) string {
+	caps, _ := row["capabilities"].(map[string]any)
+	if len(caps) == 0 {
+		return "-"
+	}
+	order := []struct {
+		key   string
+		short string
+	}{
+		{"browser_app", "web"},
+		{"terminal_shell", "shell"},
+		{"ssh_tcp", "ssh"},
+		{"exec_copy", "exec"},
+		{"suspend_resume", "susp"},
+		{"template_clone", "tpl"},
+		{"live_migration", "migr"},
+	}
+	var parts []string
+	for _, o := range order {
+		raw, ok := caps[o.key]
+		if !ok {
+			continue
+		}
+		ent, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		supported, _ := ent["supported"].(bool)
+		if !supported {
+			continue
+		}
+		parts = append(parts, o.short)
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, ",")
+}
+
 func cliVMRemoteCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vm",
@@ -67,13 +107,23 @@ func cliSandboxListCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("create client: %w", err)
 			}
-			var out []map[string]any
-			if err := c.DoJSON(cmd.Context(), http.MethodGet, "/api/vms", nil, &out); err != nil {
+			var envelope struct {
+				Items []map[string]any `json:"items"`
+			}
+			if err := c.DoJSON(cmd.Context(), http.MethodGet, "/api/vms", nil, &envelope); err != nil {
 				return fmt.Errorf("list remote VMs: %w", err)
 			}
+			out := envelope.Items
 			if !remoteJSON {
 				for _, row := range out {
-					fmt.Printf("%s  %-20s  %-8s  %s\n", jsonFieldString(row, "id"), jsonFieldString(row, "name"), jsonFieldString(row, "observed_state"), jsonFieldString(row, "runtime_url"))
+					fmt.Printf("%s  %-20s  %-8s  %-20s  %-24s  %s\n",
+						jsonFieldString(row, "id"),
+						jsonFieldString(row, "name"),
+						jsonFieldString(row, "observed_state"),
+						jsonFieldString(row, "backend"),
+						remoteVMCapabilitiesAbbrev(row),
+						jsonFieldString(row, "runtime_url"),
+					)
 				}
 				return nil
 			}

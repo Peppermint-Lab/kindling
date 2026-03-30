@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { CopyPlusIcon, Layers3Icon, SparklesIcon } from "lucide-react"
-import { api, type Sandbox, type SandboxTemplate } from "@/lib/api"
+import { api, type RemoteVMCapabilityEntry, type Sandbox, type SandboxTemplate } from "@/lib/api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -19,6 +19,26 @@ import {
 } from "@/lib/sandbox-catalog"
 
 type CreateMode = "preset" | "custom" | "template"
+
+const REMOTE_VM_CAP_ORDER = [
+  "browser_app",
+  "terminal_shell",
+  "ssh_tcp",
+  "exec_copy",
+  "suspend_resume",
+  "template_clone",
+  "live_migration",
+] as const
+
+function remoteVmCapabilitiesSummary(caps: Record<string, RemoteVMCapabilityEntry> | undefined): string {
+  if (!caps) return ""
+  const parts: string[] = []
+  for (const key of REMOTE_VM_CAP_ORDER) {
+    const v = caps[key]
+    if (v?.supported) parts.push(key.replace(/_/g, " "))
+  }
+  return parts.length ? parts.join(" · ") : ""
+}
 
 type SandboxDraft = {
   name: string
@@ -290,6 +310,10 @@ export function SandboxesPage() {
               </CardHeader>
               <CardContent className="space-y-2 text-sm text-muted-foreground">
                 <p>{sandbox.backend || "pending backend"} / {sandbox.arch || "pending arch"}</p>
+                {(() => {
+                  const capSummary = remoteVmCapabilitiesSummary(sandbox.capabilities)
+                  return capSummary ? <p className="text-xs text-muted-foreground">{capSummary}</p> : null
+                })()}
                 <p>{sandbox.vcpu} vCPU, {sandbox.memory_mb} MB RAM, {sandbox.disk_gb} GB disk</p>
                 <p>{formatAutoSuspend(sandbox.auto_suspend_seconds)}</p>
                 <p className="truncate">{sandbox.runtime_url || "No runtime URL yet"}</p>

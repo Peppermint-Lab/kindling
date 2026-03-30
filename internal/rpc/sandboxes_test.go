@@ -64,6 +64,22 @@ func TestSandboxDeleteCanBypassReconciler(t *testing.T) {
 	}
 }
 
+func TestSandboxToOutIncludesCapabilities(t *testing.T) {
+	t.Parallel()
+	sb := queries.RemoteVm{
+		Backend:       "cloud-hypervisor",
+		ObservedState: "running",
+	}
+	out := sandboxToOut(sb, nil)
+	if out.Capabilities == nil {
+		t.Fatal("expected capabilities")
+	}
+	ent := out.Capabilities["ssh_tcp"]
+	if !ent.Supported || !ent.Available {
+		t.Fatalf("ssh_tcp = %#v", ent)
+	}
+}
+
 func TestSandboxRuntimeObservabilityReady(t *testing.T) {
 	t.Parallel()
 

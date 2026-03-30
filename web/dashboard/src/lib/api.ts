@@ -98,6 +98,12 @@ export type SandboxPublishedPort = {
   public_hostname?: string
 }
 
+/** Remote VM product capabilities (Milestone 2 API contract). Keys are stable (e.g. terminal_shell). */
+export type RemoteVMCapabilityEntry = {
+  supported: boolean
+  available: boolean
+}
+
 export type Sandbox = {
   id: string
   name: string
@@ -126,6 +132,7 @@ export type Sandbox = {
   created_at?: string | null
   updated_at?: string | null
   published_ports?: SandboxPublishedPort[]
+  capabilities?: Record<string, RemoteVMCapabilityEntry>
 }
 
 export type SandboxTemplate = {
@@ -145,6 +152,7 @@ export type SandboxTemplate = {
   failure_message?: string
   created_at?: string | null
   updated_at?: string | null
+  capabilities?: Record<string, RemoteVMCapabilityEntry>
 }
 
 export type SandboxAccessEvent = {

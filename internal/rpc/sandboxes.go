@@ -19,33 +19,34 @@ import (
 )
 
 type sandboxOut struct {
-	ID                 string            `json:"id"`
-	Name               string            `json:"name"`
-	HostGroup          string            `json:"host_group"`
-	Backend            string            `json:"backend,omitempty"`
-	Arch               string            `json:"arch,omitempty"`
-	DesiredState       string            `json:"desired_state"`
-	ObservedState      string            `json:"observed_state"`
-	ServerID           *string           `json:"server_id,omitempty"`
-	VmID               *string           `json:"vm_id,omitempty"`
-	TemplateID         *string           `json:"template_id,omitempty"`
-	BaseImageRef       string            `json:"base_image_ref"`
-	Vcpu               int32             `json:"vcpu"`
-	MemoryMb           int32             `json:"memory_mb"`
-	DiskGb             int32             `json:"disk_gb"`
-	Env                map[string]string `json:"env,omitempty"`
-	GitRepo            string            `json:"git_repo,omitempty"`
-	GitRef             string            `json:"git_ref,omitempty"`
-	AutoSuspendSeconds int64             `json:"auto_suspend_seconds"`
-	LastUsedAt         *string           `json:"last_used_at,omitempty"`
-	ExpiresAt          *string           `json:"expires_at,omitempty"`
-	PublishedHTTPPort  *int32            `json:"published_http_port,omitempty"`
-	RuntimeURL         string            `json:"runtime_url,omitempty"`
-	SSHHostPublicKey   string            `json:"ssh_host_public_key,omitempty"`
-	FailureMessage     string            `json:"failure_message,omitempty"`
-	CreatedAt          *string           `json:"created_at,omitempty"`
-	UpdatedAt          *string           `json:"updated_at,omitempty"`
-	PublishedPorts     []sandboxPortOut  `json:"published_ports,omitempty"`
+	ID                 string                         `json:"id"`
+	Name               string                         `json:"name"`
+	HostGroup          string                         `json:"host_group"`
+	Backend            string                         `json:"backend,omitempty"`
+	Arch               string                         `json:"arch,omitempty"`
+	DesiredState       string                         `json:"desired_state"`
+	ObservedState      string                         `json:"observed_state"`
+	ServerID           *string                        `json:"server_id,omitempty"`
+	VmID               *string                        `json:"vm_id,omitempty"`
+	TemplateID         *string                        `json:"template_id,omitempty"`
+	BaseImageRef       string                         `json:"base_image_ref"`
+	Vcpu               int32                          `json:"vcpu"`
+	MemoryMb           int32                          `json:"memory_mb"`
+	DiskGb             int32                          `json:"disk_gb"`
+	Env                map[string]string              `json:"env,omitempty"`
+	GitRepo            string                         `json:"git_repo,omitempty"`
+	GitRef             string                         `json:"git_ref,omitempty"`
+	AutoSuspendSeconds int64                          `json:"auto_suspend_seconds"`
+	LastUsedAt         *string                        `json:"last_used_at,omitempty"`
+	ExpiresAt          *string                        `json:"expires_at,omitempty"`
+	PublishedHTTPPort  *int32                         `json:"published_http_port,omitempty"`
+	RuntimeURL         string                         `json:"runtime_url,omitempty"`
+	SSHHostPublicKey   string                         `json:"ssh_host_public_key,omitempty"`
+	FailureMessage     string                         `json:"failure_message,omitempty"`
+	CreatedAt          *string                        `json:"created_at,omitempty"`
+	UpdatedAt          *string                        `json:"updated_at,omitempty"`
+	PublishedPorts     []sandboxPortOut               `json:"published_ports,omitempty"`
+	Capabilities       kruntime.RemoteVMCapabilityMap `json:"capabilities,omitempty"`
 }
 
 type sandboxPortOut struct {
@@ -56,22 +57,23 @@ type sandboxPortOut struct {
 }
 
 type sandboxTemplateOut struct {
-	ID              string  `json:"id"`
-	Name            string  `json:"name"`
-	HostGroup       string  `json:"host_group"`
-	Backend         string  `json:"backend,omitempty"`
-	Arch            string  `json:"arch,omitempty"`
-	SourceRemoteVmID *string `json:"source_remote_vm_id,omitempty"`
-	ServerID        *string `json:"server_id,omitempty"`
-	BaseImageRef    string  `json:"base_image_ref"`
-	SnapshotRef     string  `json:"snapshot_ref,omitempty"`
-	Vcpu            int32   `json:"vcpu"`
-	MemoryMb        int32   `json:"memory_mb"`
-	DiskGb          int32   `json:"disk_gb"`
-	Status          string  `json:"status"`
-	FailureMessage  string  `json:"failure_message,omitempty"`
-	CreatedAt       *string `json:"created_at,omitempty"`
-	UpdatedAt       *string `json:"updated_at,omitempty"`
+	ID               string                         `json:"id"`
+	Name             string                         `json:"name"`
+	HostGroup        string                         `json:"host_group"`
+	Backend          string                         `json:"backend,omitempty"`
+	Arch             string                         `json:"arch,omitempty"`
+	SourceRemoteVmID *string                        `json:"source_remote_vm_id,omitempty"`
+	ServerID         *string                        `json:"server_id,omitempty"`
+	BaseImageRef     string                         `json:"base_image_ref"`
+	SnapshotRef      string                         `json:"snapshot_ref,omitempty"`
+	Vcpu             int32                          `json:"vcpu"`
+	MemoryMb         int32                          `json:"memory_mb"`
+	DiskGb           int32                          `json:"disk_gb"`
+	Status           string                         `json:"status"`
+	FailureMessage   string                         `json:"failure_message,omitempty"`
+	CreatedAt        *string                        `json:"created_at,omitempty"`
+	UpdatedAt        *string                        `json:"updated_at,omitempty"`
+	Capabilities     kruntime.RemoteVMCapabilityMap `json:"capabilities,omitempty"`
 }
 
 func sandboxToOut(sb queries.RemoteVm, ports []queries.RemoteVmPublishedPort) sandboxOut {
@@ -122,6 +124,7 @@ func sandboxToOut(sb queries.RemoteVm, ports []queries.RemoteVmPublishedPort) sa
 			})
 		}
 	}
+	out.Capabilities = kruntime.RemoteVMCapabilitiesForVM(sb.Backend, sb.ObservedState)
 	return out
 }
 
@@ -161,23 +164,25 @@ func resolveSandboxHostGroup(requested string, template *queries.RemoteVmTemplat
 }
 
 func sandboxTemplateToOut(tpl queries.RemoteVmTemplate) sandboxTemplateOut {
+	backend := strings.TrimSpace(tpl.Backend)
 	return sandboxTemplateOut{
-		ID:              pguuid.ToString(tpl.ID),
-		Name:            tpl.Name,
-		HostGroup:       tpl.HostGroup,
-		Backend:         tpl.Backend,
-		Arch:            tpl.Arch,
+		ID:               pguuid.ToString(tpl.ID),
+		Name:             tpl.Name,
+		HostGroup:        tpl.HostGroup,
+		Backend:          tpl.Backend,
+		Arch:             tpl.Arch,
 		SourceRemoteVmID: optionalUUIDString(tpl.SourceRemoteVmID),
-		ServerID:        optionalUUIDString(tpl.ServerID),
-		BaseImageRef:    tpl.BaseImageRef,
-		SnapshotRef:     tpl.SnapshotRef,
-		Vcpu:            tpl.Vcpu,
-		MemoryMb:        tpl.MemoryMb,
-		DiskGb:          tpl.DiskGb,
-		Status:          tpl.Status,
-		FailureMessage:  strings.TrimSpace(tpl.FailureMessage),
-		CreatedAt:       formatTS(tpl.CreatedAt),
-		UpdatedAt:       formatTS(tpl.UpdatedAt),
+		ServerID:         optionalUUIDString(tpl.ServerID),
+		BaseImageRef:     tpl.BaseImageRef,
+		SnapshotRef:      tpl.SnapshotRef,
+		Vcpu:             tpl.Vcpu,
+		MemoryMb:         tpl.MemoryMb,
+		DiskGb:           tpl.DiskGb,
+		Status:           tpl.Status,
+		FailureMessage:   strings.TrimSpace(tpl.FailureMessage),
+		CreatedAt:        formatTS(tpl.CreatedAt),
+		UpdatedAt:        formatTS(tpl.UpdatedAt),
+		Capabilities:     kruntime.RemoteVMCapabilitiesForTemplate(backend),
 	}
 }
 
@@ -578,22 +583,22 @@ func (a *API) createSandboxTemplate(w http.ResponseWriter, r *http.Request) {
 		name = sb.Name + "-template"
 	}
 	tpl, err := a.q.RemoteVMTemplateCreate(r.Context(), queries.RemoteVMTemplateCreateParams{
-		ID:              pgtype.UUID{Bytes: uuid.New(), Valid: true},
-		OrgID:           p.OrganizationID,
-		Name:            name,
-		HostGroup:       sb.HostGroup,
-		Backend:         sb.Backend,
-		Arch:            sb.Arch,
+		ID:               pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		OrgID:            p.OrganizationID,
+		Name:             name,
+		HostGroup:        sb.HostGroup,
+		Backend:          sb.Backend,
+		Arch:             sb.Arch,
 		SourceRemoteVmID: sb.ID,
-		ServerID:        sb.ServerID,
-		BaseImageRef:    sb.BaseImageRef,
-		SnapshotRef:     "",
-		Vcpu:            sb.Vcpu,
-		MemoryMb:        sb.MemoryMb,
-		DiskGb:          sb.DiskGb,
-		Status:          "pending",
-		FailureMessage:  "",
-		CreatedByUserID: pgtype.UUID{Bytes: p.UserID, Valid: p.UserID != uuid.Nil},
+		ServerID:         sb.ServerID,
+		BaseImageRef:     sb.BaseImageRef,
+		SnapshotRef:      "",
+		Vcpu:             sb.Vcpu,
+		MemoryMb:         sb.MemoryMb,
+		DiskGb:           sb.DiskGb,
+		Status:           "pending",
+		FailureMessage:   "",
+		CreatedByUserID:  pgtype.UUID{Bytes: p.UserID, Valid: p.UserID != uuid.Nil},
 	})
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "create_sandbox_template", err)
@@ -780,7 +785,7 @@ func (a *API) publishSandboxHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := a.q.RemoteVMPublishedPortUpsert(r.Context(), queries.RemoteVMPublishedPortUpsertParams{
 		ID:             pgtype.UUID{Bytes: uuid.New(), Valid: true},
-		RemoteVmID:      sb.ID,
+		RemoteVmID:     sb.ID,
 		TargetPort:     req.TargetPort,
 		Protocol:       "http",
 		Visibility:     "public",
@@ -1022,7 +1027,7 @@ func (a *API) unpublishSandboxHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if sb.PublishedHttpPort.Valid {
 		_ = a.q.RemoteVMPublishedPortDeleteByRemoteVMAndPort(r.Context(), queries.RemoteVMPublishedPortDeleteByRemoteVMAndPortParams{
-			RemoteVmID:  sb.ID,
+			RemoteVmID: sb.ID,
 			TargetPort: sb.PublishedHttpPort.Int32,
 		})
 	}

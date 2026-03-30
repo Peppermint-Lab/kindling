@@ -10,6 +10,37 @@ import { Label } from "@/components/ui/label"
 import { SandboxTerminal } from "@/components/sandbox-terminal"
 import { sandboxImageContract } from "@/lib/sandbox-catalog"
 
+const REMOTE_VM_CAP_ORDER = [
+  "browser_app",
+  "terminal_shell",
+  "ssh_tcp",
+  "exec_copy",
+  "suspend_resume",
+  "template_clone",
+  "live_migration",
+] as const
+
+function RemoteVMCapabilityBadges({ caps }: { caps: Sandbox["capabilities"] }) {
+  if (!caps || Object.keys(caps).length === 0) return null
+  return (
+    <div className="space-y-2 pt-2">
+      <p className="font-medium">Capabilities</p>
+      <p className="text-xs text-muted-foreground">Solid badges are available now; muted badges are supported on this backend when the VM is running.</p>
+      <div className="flex flex-wrap gap-2">
+        {REMOTE_VM_CAP_ORDER.map((key) => {
+          const v = caps[key]
+          if (!v?.supported) return null
+          return (
+            <Badge key={key} variant={v.available ? "default" : "secondary"}>
+              {key.replace(/_/g, " ")}
+            </Badge>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 async function copyText(label: string, text: string) {
   try {
     await navigator.clipboard.writeText(text)
@@ -171,6 +202,7 @@ export function SandboxDetailPage() {
             <p><span className="font-medium">Git:</span> {sandbox.git_repo || "—"} {sandbox.git_ref ? `(${sandbox.git_ref})` : ""}</p>
             <p><span className="font-medium">Last used:</span> {sandbox.last_used_at ? new Date(sandbox.last_used_at).toLocaleString() : "—"}</p>
             <p><span className="font-medium">Auto-suspend:</span> {sandbox.auto_suspend_seconds > 0 ? `${sandbox.auto_suspend_seconds}s` : "Always on"}</p>
+            <RemoteVMCapabilityBadges caps={sandbox.capabilities} />
           </CardContent>
         </Card>
 

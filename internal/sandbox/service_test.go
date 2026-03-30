@@ -6,7 +6,26 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	kruntime "github.com/kindlingvm/kindling/internal/runtime"
 )
+
+func TestEffectiveLinuxRemoteVmPlacementLegacyBackendOnly(t *testing.T) {
+	t.Parallel()
+	meta := workerMetadata{RemoteVmBackend: kruntime.BackendCloudHypervisor}
+	if !meta.effectiveLinuxRemoteVmPlacement() {
+		t.Fatal("legacy CH backend should imply linux placement")
+	}
+	f := false
+	meta2 := workerMetadata{RemoteVmBackend: kruntime.BackendCrun, LinuxPlacementEligible: &f}
+	if meta2.effectiveLinuxRemoteVmPlacement() {
+		t.Fatal("explicit false placement should win")
+	}
+	tr := true
+	meta3 := workerMetadata{RemoteVmBackend: kruntime.BackendCrun, LinuxPlacementEligible: &tr}
+	if !meta3.effectiveLinuxRemoteVmPlacement() {
+		t.Fatal("explicit true placement for crun worker (future M3) should be honored")
+	}
+}
 
 func TestDecodeWorkerMetadataFallsBackToRuntime(t *testing.T) {
 	t.Parallel()

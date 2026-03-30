@@ -211,10 +211,10 @@ func (s *Service) pickServer(ctx context.Context, hostGroup, backend, arch strin
 		if arch != "" && meta.RemoteVmArch != "" && meta.RemoteVmArch != arch {
 			continue
 		}
-		if hostGroup == HostGroupMac && meta.RemoteVmBackend != "apple-vz" {
+		if hostGroup == HostGroupMac && !meta.effectiveMacRemoteVmPlacement() {
 			continue
 		}
-		if hostGroup == HostGroupLinux && meta.RemoteVmBackend != "cloud-hypervisor" {
+		if hostGroup == HostGroupLinux && !meta.effectiveLinuxRemoteVmPlacement() {
 			continue
 		}
 		chosen = uuid.UUID(srv.ID.Bytes)
@@ -493,6 +493,9 @@ type workerMetadata struct {
 	RemoteVmArch     string `json:"remote_vm_arch"`
 	RemoteVmRosetta  bool   `json:"remote_vm_rosetta"`
 	RemoteVmCapacity int    `json:"remote_vm_capacity"`
+	// LinuxPlacementEligible is nil for heartbeats predating Milestone 2; see effectiveLinuxRemoteVmPlacement.
+	LinuxPlacementEligible *bool `json:"remote_vm_linux_placement_eligible,omitempty"`
+	MacPlacementEligible   *bool `json:"remote_vm_mac_placement_eligible,omitempty"`
 }
 
 func decodeWorkerMetadata(raw []byte) workerMetadata {
@@ -502,6 +505,20 @@ func decodeWorkerMetadata(raw []byte) workerMetadata {
 		out.RemoteVmBackend = strings.TrimSpace(out.Runtime)
 	}
 	return out
+}
+
+func (m workerMetadata) effectiveLinuxRemoteVmPlacement() bool {
+	if m.LinuxPlacementEligible != nil {
+		return *m.LinuxPlacementEligible
+	}
+	return strings.TrimSpace(m.RemoteVmBackend) == kruntime.BackendCloudHypervisor
+}
+
+func (m workerMetadata) effectiveMacRemoteVmPlacement() bool {
+	if m.MacPlacementEligible != nil {
+		return *m.MacPlacementEligible
+	}
+	return strings.TrimSpace(m.RemoteVmBackend) == kruntime.BackendAppleVZ
 }
 
 func sandboxEnv(sb queries.RemoteVm) []string {

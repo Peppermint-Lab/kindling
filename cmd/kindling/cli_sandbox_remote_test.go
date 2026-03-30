@@ -33,6 +33,22 @@ func TestWriteSandboxKnownHosts(t *testing.T) {
 	}
 }
 
+func TestRemoteVMCapabilitiesAbbrev(t *testing.T) {
+	t.Parallel()
+	row := map[string]any{
+		"capabilities": map[string]any{
+			"terminal_shell": map[string]any{"supported": true, "available": true},
+			"ssh_tcp":        map[string]any{"supported": true, "available": false},
+			"live_migration": map[string]any{"supported": false},
+		},
+	}
+	got := remoteVMCapabilitiesAbbrev(row)
+	want := "shell,ssh"
+	if got != want {
+		t.Fatalf("remoteVMCapabilitiesAbbrev = %q, want %q", got, want)
+	}
+}
+
 func TestWriteSandboxKnownHostsRequiresManagedKey(t *testing.T) {
 	t.Parallel()
 
