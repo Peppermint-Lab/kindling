@@ -4,23 +4,29 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	crunrt "github.com/kindlingvm/kindling/internal/runtime"
 	"github.com/kindlingvm/kindling/internal/workerdns"
 )
 
-func startWorkerInternalDNS(ctx context.Context, q *queries.Queries, rt crunrt.Runtime) error {
+type internalDNSServerStore interface {
+	FindServerByID(ctx context.Context, serverID uuid.UUID) (queries.Server, bool, error)
+}
+
+func startWorkerInternalDNS(ctx context.Context, q *queries.Queries, serverID uuid.UUID, rt crunrt.Runtime) error {
 	if rt == nil || !internalDNSEnabledForRuntime(rt.Name()) {
 		return nil
 	}
 
 	addr := strings.TrimSpace(os.Getenv("KINDLING_INTERNAL_DNS_ADDR"))
-	allowedPrefix, err := parseServerIPRange()
+	allowedPrefix, err := resolveInternalDNSAllowedPrefix(ctx, pgServerRegistrationStore{q: q}, serverID)
 	if err != nil {
-		return fmt.Errorf("parse internal dns client range: %w", err)
+		return fmt.Errorf("resolve internal dns client range: %w", err)
 	}
 
 	upstreams := splitCSV(os.Getenv("KINDLING_INTERNAL_DNS_UPSTREAMS"))
@@ -35,6 +41,17 @@ func startWorkerInternalDNS(ctx context.Context, q *queries.Queries, rt crunrt.R
 
 	slog.Info("internal dns started", "addr", effectiveInternalDNSAddr(addr), "allowed_prefix", allowedPrefix.String())
 	return nil
+}
+
+func resolveInternalDNSAllowedPrefix(ctx context.Context, store internalDNSServerStore, serverID uuid.UUID) (netip.Prefix, error) {
+	server, found, err := store.FindServerByID(ctx, serverID)
+	if err != nil {
+		return netip.Prefix{}, fmt.Errorf("find server: %w", err)
+	}
+	if !found {
+		return netip.Prefix{}, fmt.Errorf("server %s not registered", serverID)
+	}
+	return server.IpRange, nil
 }
 
 func internalDNSEnabledForRuntime(runtimeName string) bool {

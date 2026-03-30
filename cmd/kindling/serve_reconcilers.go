@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/kindlingvm/kindling/internal/builder"
 	ciworker "github.com/kindlingvm/kindling/internal/ci"
 	"github.com/kindlingvm/kindling/internal/config"
@@ -50,17 +50,7 @@ type workerSetupResult struct {
 	recs        reconcilers
 }
 
-// setupWorker initialises the runtime, builder, deployer, and all reconciler
-// schedulers needed by the worker component. It does not start any goroutines.
-func setupWorker(
-	ctx context.Context,
-	q *queries.Queries,
-	db *database.DB,
-	serverID uuid.UUID,
-	cfgMgr *config.Manager,
-	snap *config.Snapshot,
-	notifyRouteChange func(),
-) (workerSetupResult, error) {
+func detectHostRuntime(snap *config.Snapshot) (crunrt.Runtime, crunrt.HostRuntimeConfig) {
 	pullAuth := registryAuthFromSnapshot(snap)
 	hostCfg := crunrt.HostRuntimeConfig{
 		ForceRuntime:  snap.ServerRuntimeOverride,
@@ -76,6 +66,21 @@ func setupWorker(
 		AppleInitramfsPath: "",
 	}
 	rt := crunrt.NewDetectedRuntime(hostCfg)
+	return rt, hostCfg
+}
+
+// setupWorker initialises the runtime, builder, deployer, and all reconciler
+// schedulers needed by the worker component. It does not start any goroutines.
+func setupWorker(
+	ctx context.Context,
+	q *queries.Queries,
+	db *database.DB,
+	serverID uuid.UUID,
+	cfgMgr *config.Manager,
+	snap *config.Snapshot,
+	notifyRouteChange func(),
+) (workerSetupResult, error) {
+	rt, hostCfg := detectHostRuntime(snap)
 	slog.Info("runtime detected", "runtime", rt.Name())
 
 	var buildRunner builder.BuildRunner = builder.NewLocalBuildRunner()
@@ -273,26 +278,16 @@ func startWorkerHeartbeats(ctx context.Context, q *queries.Queries, serverID uui
 
 // registerServerAndHeartbeat registers the server in the database and starts the
 // periodic heartbeat loop. Call when the worker or edge component is enabled.
-func registerServerAndHeartbeat(ctx context.Context, q *queries.Queries, serverID uuid.UUID) error {
-	ipRange, err := parseServerIPRange()
+func registerServerAndHeartbeat(ctx context.Context, pool *pgxpool.Pool, q *queries.Queries, serverID uuid.UUID) error {
+	server, err := registerServer(ctx, pgServerRegistrationStore{
+		pool: pool,
+		q:    q,
+	}, serverID, hostname(), detectInternalIP())
 	if err != nil {
 		return err
 	}
-	_, err = q.ServerRegister(ctx, queries.ServerRegisterParams{
-		ID:         pgtype.UUID{Bytes: serverID, Valid: true},
-		Hostname:   hostname(),
-		InternalIp: detectInternalIP(),
-		IpRange:    ipRange,
-	})
-	if err != nil {
-		return fmt.Errorf("register server: %w", err)
-	}
-	slog.Info("server registered", "server_id", serverID)
+	slog.Info("server registered", "server_id", serverID, "ip_range", server.IpRange.String())
 
 	go runServerHeartbeat(ctx, q, serverID)
-
-	if err := q.ServerSettingEnsure(ctx, pgtype.UUID{Bytes: serverID, Valid: true}); err != nil {
-		return fmt.Errorf("ensure server settings: %w", err)
-	}
 	return nil
 }

@@ -14,6 +14,15 @@ The common public shape for Kindling is a Linux host running the control plane w
 - public DNS records for API, dashboard, and any workload hostnames
 - firewall and host permissions aligned with the chosen runtime
 
+## Recommended Production Shape
+
+Start with one of these supported shapes:
+
+- **All-in-one single server**: one Linux host runs API, edge, worker, WAL listener, reconcilers, and PostgreSQL.
+- **Single control plane + remote workers**: one Linux host runs API, edge, PostgreSQL, WAL listener, and reconcilers; additional Linux hosts run worker-only `kindling serve` processes against the same database cluster.
+
+For topology boundaries and unsupported layouts, see [Topology and Hostnames](/operate/topology-and-hostnames) and the repo HA guide (`docs/high-availability.md`).
+
 ## Important First-Boot Inputs
 
 - `public_base_url`
@@ -31,6 +40,118 @@ Production self-hosting is not only "the server starts." It also means:
 - the dashboard build points at the correct API origin
 - the host can actually expose runtime URLs or edge-routed traffic
 - the runtime and networking permissions on the machine match the chosen deploy path
+
+## Multi-Server Bootstrap
+
+This is the recommended sequence for a control-plane-plus-workers cluster.
+
+### 1. Prepare the database tier
+
+- Create or identify the PostgreSQL cluster that will hold Kindling state.
+- Put **PgBouncer** or another **private SQL entry point** in front of PostgreSQL on your private network.
+- Make sure every Kindling host can reach that same private host:port.
+- Write the same DSN to `/etc/kindling/postgres.dsn` on every host.
+- If `/etc/kindling/postgres.dsn` points at PgBouncer, also write the same direct-primary DSN to `/etc/kindling/postgres.replication.dsn` on every host for the WAL listener.
+
+Example DSN shape:
+
+```bash
+postgres://kindling:secret@10.50.0.5:6432/kindling?sslmode=require
+```
+
+Do not point multi-server production nodes at `localhost`, `127.0.0.1`, or a public PostgreSQL listener.
+
+Example direct replication DSN shape when pooling:
+
+```bash
+postgres://kindling:secret@10.50.0.6:5432/kindling?sslmode=require
+```
+
+### 2. Prepare the control-plane host
+
+- Install host dependencies (`make install-deps` or `contrib/install-host-deps.sh --all` as appropriate).
+- Build or deploy the `kindling` binary.
+- Run `sudo bash contrib/setup-kindling-prod.sh`.
+- Edit `/etc/kindling/kindling.env` with:
+  - `KINDLING_HOME`
+  - `KINDLING_ADVERTISE_HOST`
+  - `KINDLING_PUBLIC_URL`
+  - optional `KINDLING_DASHBOARD_HOST`
+  - `KINDLING_ACME_EMAIL`
+- Keep `/etc/kindling/postgres.dsn` present before first start.
+- If you use PgBouncer, keep `/etc/kindling/postgres.replication.dsn` present before first start too.
+
+### 3. Start the first node
+
+Bring up the control-plane services:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now kindling@edge kindling@api kindling@worker
+```
+
+On first boot, this node will:
+
+- run migrations
+- create or load `~/.kindling/server-id`
+- register itself in the `servers` table
+- seed initial cluster/server settings from the serve flags and env-backed wrapper
+
+### 4. Validate the first node
+
+Verify:
+
+- the API is reachable at `public_base_url`
+- the dashboard can load against the intended API origin
+- `GET /api/meta` returns successfully
+- the first server appears in `GET /api/servers`
+- `server-id` exists on disk and remains stable across restarts
+
+### 5. Join a worker node
+
+For each additional worker host:
+
+- install dependencies and deploy the same `kindling` binary
+- provision the same `/etc/kindling/postgres.dsn`
+- if pooling, provision the same `/etc/kindling/postgres.replication.dsn`
+- run `sudo bash contrib/setup-kindling-prod.sh`
+- edit `/etc/kindling/kindling.env`
+  - set `KINDLING_ADVERTISE_HOST` to that host’s reachable address
+  - keep `KINDLING_PUBLIC_URL` pointed at the shared control-plane API origin
+- start the worker component:
+
+```bash
+sudo systemctl enable --now kindling@worker
+```
+
+The worker must not join with:
+
+- loopback `internal_ip`
+- a loopback / localhost PostgreSQL DSN
+
+Kindling now rejects those unsafe multi-server join cases at startup.
+
+### 6. Validate the joined worker
+
+After joining, verify:
+
+- the new server appears in `GET /api/servers`
+- the worker reports healthy component metadata
+- deployments can place workloads onto the joined worker
+- the control plane can still reach workloads running there
+- if using Cloud Hypervisor across multiple workers, `KINDLING_CH_SHARED_ROOTFS_DIR` is consistent with your shared-storage design
+
+## Operator Checklist
+
+Before calling the cluster healthy:
+
+- every host uses the same `/etc/kindling/postgres.dsn`
+- the DSN points at a **shared private** database entry point
+- if pooling, every host uses the same `/etc/kindling/postgres.replication.dsn` and it points at a replication-capable PostgreSQL host
+- every host has a stable `server-id`
+- no multi-server worker advertises `127.0.0.1`, `0.0.0.0`, or `localhost` as its internal address
+- the control plane can proxy to workloads on joined workers
+- DNS, TLS, and dashboard API origin all match the public hostnames you configured
 
 ## Read Next
 

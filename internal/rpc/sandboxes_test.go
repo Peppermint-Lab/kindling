@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/google/uuid"
@@ -93,6 +94,63 @@ func TestSandboxRuntimeObservabilityReady(t *testing.T) {
 
 	if sandboxRuntimeObservabilityReady(queries.RemoteVm{ObservedState: "stopped"}) {
 		t.Fatal("expected stopped sandbox to skip logs and stats")
+	}
+}
+
+func TestValidateSandboxProxyHost(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		host    string
+		want    string
+		wantErr bool
+	}{
+		{name: "private ipv4", host: "10.50.0.5", want: "10.50.0.5"},
+		{name: "ipv6", host: "fd00::1", want: "fd00::1"},
+		{name: "empty", host: "", wantErr: true},
+		{name: "loopback", host: "127.0.0.1", wantErr: true},
+		{name: "ipv6 loopback with brackets", host: "[::1]", wantErr: true},
+		{name: "unspecified", host: "0.0.0.0", wantErr: true},
+		{name: "localhost", host: "localhost", wantErr: true},
+		{name: "localhost trailing dot", host: "localhost.", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := validateSandboxProxyHost(tt.host)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("validateSandboxProxyHost(%q) expected error", tt.host)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validateSandboxProxyHost(%q): %v", tt.host, err)
+			}
+			if got != tt.want {
+				t.Fatalf("validateSandboxProxyHost(%q) = %q, want %q", tt.host, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeSandboxLogLines(t *testing.T) {
+	t.Parallel()
+
+	got := normalizeSandboxLogLines(nil)
+	if got == nil {
+		t.Fatal("expected empty slice, got nil")
+	}
+	if len(got) != 0 {
+		t.Fatalf("len(normalizeSandboxLogLines(nil)) = %d, want 0", len(got))
+	}
+
+	want := []string{"line one", "line two"}
+	got = normalizeSandboxLogLines(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalizeSandboxLogLines(non-nil) = %#v, want %#v", got, want)
 	}
 }
 

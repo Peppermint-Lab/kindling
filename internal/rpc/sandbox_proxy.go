@@ -1,12 +1,14 @@
 package rpc
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -95,7 +97,7 @@ func (a *API) sandboxIsLocalOwner(sb queries.RemoteVm) bool {
 	if !sb.ServerID.Valid {
 		return true
 	}
-	return a.sandboxSvc != nil && a.sandboxSvc.ServerID != uuid.Nil && uuid.UUID(sb.ServerID.Bytes) == a.sandboxSvc.ServerID
+	return a.sandboxSvc != nil && a.sandboxSvc.Runtime != nil && a.sandboxSvc.ServerID != uuid.Nil && uuid.UUID(sb.ServerID.Bytes) == a.sandboxSvc.ServerID
 }
 
 func (a *API) sandboxOwnerOrigin(ctx context.Context, sb queries.RemoteVm) (*url.URL, error) {
@@ -110,9 +112,9 @@ func (a *API) sandboxOwnerOrigin(ctx context.Context, sb queries.RemoteVm) (*url
 	if err != nil {
 		return nil, fmt.Errorf("find worker settings for remote VM: %w", err)
 	}
-	host := strings.TrimSpace(server.InternalIp)
-	if host == "" {
-		return nil, fmt.Errorf("worker internal IP is not configured for this remote VM")
+	host, err := validateSandboxProxyHost(server.InternalIp)
+	if err != nil {
+		return nil, err
 	}
 	port := settings.InternalApiPort
 	if port <= 0 {
@@ -122,6 +124,28 @@ func (a *API) sandboxOwnerOrigin(ctx context.Context, sb queries.RemoteVm) (*url
 		Scheme: "http",
 		Host:   netJoinHostPort(host, int(port)),
 	}, nil
+}
+
+func validateSandboxProxyHost(raw string) (string, error) {
+	host := normalizeSandboxProxyHost(raw)
+	if host == "" {
+		return "", fmt.Errorf("worker internal IP is not configured for this remote VM")
+	}
+	switch strings.ToLower(host) {
+	case "localhost":
+		return "", fmt.Errorf("worker internal IP %q is not usable for remote proxying", raw)
+	}
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+		return "", fmt.Errorf("worker internal IP %q is not usable for remote proxying", raw)
+	}
+	return host, nil
+}
+
+func normalizeSandboxProxyHost(raw string) string {
+	host := strings.TrimSpace(raw)
+	host = strings.Trim(host, "[]")
+	host = strings.TrimSuffix(host, ".")
+	return host
 }
 
 func netJoinHostPort(host string, port int) string {
@@ -145,7 +169,8 @@ func (a *API) addSandboxProxyHeaders(req *http.Request) {
 func copySandboxProxyableHeaders(dst, src http.Header) {
 	for k, values := range src {
 		switch strings.ToLower(k) {
-		case "connection", "upgrade", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding":
+		case "connection", "upgrade", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding",
+			"sec-websocket-key", "sec-websocket-version", "sec-websocket-protocol", "sec-websocket-extensions":
 			continue
 		default:
 			for _, v := range values {
@@ -186,7 +211,7 @@ func (a *API) proxySandboxHTTPRequest(w http.ResponseWriter, r *http.Request, sb
 	targetURL := *origin
 	targetURL.Path = r.URL.Path
 	targetURL.RawQuery = r.URL.RawQuery
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL.String(), strings.NewReader(string(body)))
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL.String(), bytes.NewReader(body))
 	if err != nil {
 		writeAPIError(w, http.StatusServiceUnavailable, "sandbox_proxy", "build proxy request")
 		return true

@@ -6,9 +6,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// ToPgtype converts a uuid.UUID to a pgtype.UUID with Valid=true.
+// ToPgtype converts a uuid.UUID to a pgtype.UUID.
 func ToPgtype(id uuid.UUID) pgtype.UUID {
-	return pgtype.UUID{Bytes: id, Valid: true}
+	return pgtype.UUID{Bytes: id, Valid: id != uuid.Nil}
 }
 
 // FromPgtype converts a pgtype.UUID back to a uuid.UUID.

@@ -619,7 +619,7 @@ func (m workerMetadata) effectiveMacRemoteVmPlacement() bool {
 }
 
 func sandboxEnv(sb queries.RemoteVm) []string {
-	out := []string{}
+	out := []string{"KINDLING_REMOTE_VM=1"}
 	var envMap map[string]string
 	if len(sb.EnvJson) > 0 {
 		_ = json.Unmarshal(sb.EnvJson, &envMap)
@@ -627,6 +627,10 @@ func sandboxEnv(sb queries.RemoteVm) []string {
 	for k, v := range envMap {
 		key := strings.TrimSpace(k)
 		if key == "" {
+			continue
+		}
+		if key == "KINDLING_REMOTE_VM" {
+			out[0] = key + "=" + v
 			continue
 		}
 		out = append(out, key+"="+v)

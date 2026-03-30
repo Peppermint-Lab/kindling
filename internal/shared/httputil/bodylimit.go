@@ -1,8 +1,10 @@
 package httputil
 
 import (
+	"bufio"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"sync"
@@ -115,6 +117,21 @@ func (bw *bodyLimitResponseWriter) Write(b []byte) (int, error) {
 		return len(b), nil
 	}
 	return bw.ResponseWriter.Write(b)
+}
+
+// Hijack preserves websocket and other upgraded connections when the
+// underlying response writer supports connection hijacking.
+func (bw *bodyLimitResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := bw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	conn, rw, err := hj.Hijack()
+	if err != nil {
+		return nil, nil, err
+	}
+	bw.hijacked = true
+	return conn, rw, nil
 }
 
 // Unwrap supports http.ResponseController and middleware that unwrap

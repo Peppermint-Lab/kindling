@@ -3,11 +3,17 @@
 package runtime
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -268,6 +274,98 @@ func TestRecoverRetainedStatePrunesOrphans(t *testing.T) {
 	}
 	if _, err := os.Stat(rt.templateStateDir(pruneTemplate)); !os.IsNotExist(err) {
 		t.Fatalf("expected pruned template dir to be removed, stat err=%v", err)
+	}
+}
+
+func TestCloudHypervisorExecGuestAttachesToExistingSocket(t *testing.T) {
+	t.Parallel()
+
+	rt := &CloudHypervisorRuntime{
+		instances: make(map[uuid.UUID]*cloudHypervisorInstance),
+	}
+	id := uuid.New()
+	socketPath := cloudHypervisorSocketBase(id)
+	_ = os.Remove(socketPath)
+	t.Cleanup(func() {
+		_ = os.Remove(socketPath)
+	})
+
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen unix socket: %v", err)
+	}
+	defer ln.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			done <- err
+			return
+		}
+		defer conn.Close()
+
+		br := bufio.NewReader(conn)
+		line, err := br.ReadString('\n')
+		if err != nil {
+			done <- err
+			return
+		}
+		if line != fmt.Sprintf("CONNECT %d\n", GuestControlVsockPort) {
+			done <- fmt.Errorf("unexpected vsock connect line %q", line)
+			return
+		}
+		if _, err := fmt.Fprint(conn, "OK 0\n"); err != nil {
+			done <- err
+			return
+		}
+
+		req, err := http.ReadRequest(br)
+		if err != nil {
+			done <- err
+			return
+		}
+		defer req.Body.Close()
+		if req.Method != http.MethodPost || req.URL.Path != "/exec" {
+			done <- fmt.Errorf("unexpected request %s %s", req.Method, req.URL.Path)
+			return
+		}
+
+		var body guestExecRequest
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			done <- err
+			return
+		}
+		if len(body.Argv) != 2 || body.Argv[0] != "/bin/sh" || body.Argv[1] != "-lc" {
+			done <- fmt.Errorf("unexpected argv %#v", body.Argv)
+			return
+		}
+
+		resp := guestExecJSON{ExitCode: 0, Output: "attached ok"}
+		payload, err := json.Marshal(resp)
+		if err != nil {
+			done <- err
+			return
+		}
+		if _, err := fmt.Fprintf(conn, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", len(payload), payload); err != nil {
+			done <- err
+			return
+		}
+		done <- nil
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	got, err := rt.ExecGuest(ctx, id, []string{"/bin/sh", "-lc"}, "/", nil)
+	if err != nil {
+		t.Fatalf("ExecGuest: %v", err)
+	}
+	if got.ExitCode != 0 || got.Output != "attached ok" {
+		t.Fatalf("exec result = %+v", got)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("socket server: %v", err)
 	}
 }
 

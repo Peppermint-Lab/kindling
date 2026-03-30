@@ -62,3 +62,25 @@ func TestRenderResolvConfPrefersConfiguredDNSServers(t *testing.T) {
 		t.Fatalf("unexpected resolv.conf contents:\nwant: %q\ngot:  %q", want, got)
 	}
 }
+
+func TestIsRemoteVMGuestDetectsEnabledMarker(t *testing.T) {
+	if !isRemoteVMGuest([]string{"FOO=bar", "KINDLING_REMOTE_VM=1"}) {
+		t.Fatal("expected KINDLING_REMOTE_VM=1 to enable remote VM behavior")
+	}
+	if !isRemoteVMGuest([]string{"KINDLING_REMOTE_VM=true"}) {
+		t.Fatal("expected KINDLING_REMOTE_VM=true to enable remote VM behavior")
+	}
+	if isRemoteVMGuest([]string{"KINDLING_REMOTE_VM=0"}) {
+		t.Fatal("expected KINDLING_REMOTE_VM=0 to disable remote VM behavior")
+	}
+}
+
+func TestShouldKeepGuestReadyWithoutAppForRemoteVM(t *testing.T) {
+	cfg := &ConfigResponse{Env: []string{"KINDLING_REMOTE_VM=1"}}
+	if !shouldKeepGuestReadyWithoutApp(cfg) {
+		t.Fatal("expected remote VM guest to become ready without an app")
+	}
+	if !shouldStartHostBridgeWithoutApp(cfg) {
+		t.Fatal("expected remote VM guest to start the TCP bridge without an app")
+	}
+}

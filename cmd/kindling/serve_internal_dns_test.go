@@ -1,9 +1,15 @@
 package main
 
 import (
+	"context"
+	"net/netip"
 	"os"
 	"reflect"
 	"testing"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/kindlingvm/kindling/internal/database/queries"
 )
 
 func TestInternalDNSEnabledForRuntime(t *testing.T) {
@@ -46,6 +52,36 @@ func TestSplitCSV(t *testing.T) {
 func TestEffectiveInternalDNSAddrDefaultsToPort53(t *testing.T) {
 	if got := effectiveInternalDNSAddr(""); got != ":53" {
 		t.Fatalf("effective address = %q, want :53", got)
+	}
+}
+
+type fakeInternalDNSServerStore struct {
+	server queries.Server
+	found  bool
+	err    error
+}
+
+func (f fakeInternalDNSServerStore) FindServerByID(ctx context.Context, serverID uuid.UUID) (queries.Server, bool, error) {
+	return f.server, f.found, f.err
+}
+
+func TestResolveInternalDNSAllowedPrefixUsesRegisteredServerRange(t *testing.T) {
+	t.Parallel()
+
+	serverID := uuid.New()
+	want := netip.MustParsePrefix("10.0.16.0/20")
+	got, err := resolveInternalDNSAllowedPrefix(context.Background(), fakeInternalDNSServerStore{
+		found: true,
+		server: queries.Server{
+			ID:      pgtype.UUID{Bytes: serverID, Valid: true},
+			IpRange: want,
+		},
+	}, serverID)
+	if err != nil {
+		t.Fatalf("resolveInternalDNSAllowedPrefix: %v", err)
+	}
+	if got != want {
+		t.Fatalf("allowed prefix = %s, want %s", got, want)
 	}
 }
 

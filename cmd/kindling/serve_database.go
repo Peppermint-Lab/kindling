@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -38,7 +39,13 @@ func seedAllSettings(ctx context.Context, q *queries.Queries, serverID uuid.UUID
 		if err := seedAdvertiseHostIfUnset(ctx, q, serverID, opts); err != nil {
 			return fmt.Errorf("seed advertise host: %w", err)
 		}
-		if err := seedInternalAPIPort(ctx, q, serverID, opts.listenAddr); err != nil {
+	}
+	if components.worker {
+		internalListenAddr, err := internalAPIListenAddr(opts.listenAddr, components)
+		if err != nil {
+			return fmt.Errorf("resolve internal api listen addr: %w", err)
+		}
+		if err := seedInternalAPIPort(ctx, q, serverID, internalListenAddr); err != nil {
 			return fmt.Errorf("seed internal api port: %w", err)
 		}
 	}
@@ -124,6 +131,24 @@ func seedInternalAPIPort(ctx context.Context, q *queries.Queries, serverID uuid.
 		ServerID:        pgtype.UUID{Bytes: serverID, Valid: true},
 		InternalApiPort: int32(port),
 	})
+}
+
+func internalAPIListenAddr(listenAddr string, components serveComponents) (string, error) {
+	listenAddr = strings.TrimSpace(listenAddr)
+	if listenAddr == "" {
+		listenAddr = ":8080"
+	}
+	if !components.worker || components.api {
+		return listenAddr, nil
+	}
+	port, err := parseListenPort(listenAddr)
+	if err != nil {
+		return "", err
+	}
+	if port >= 65535 {
+		return "", fmt.Errorf("worker internal api port overflow for %q", listenAddr)
+	}
+	return ":" + strconv.Itoa(port+1), nil
 }
 
 func parseListenPort(listenAddr string) (int, error) {
