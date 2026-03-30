@@ -209,6 +209,18 @@ func TestSandboxEnvIncludesUserAndGitMetadata(t *testing.T) {
 	}
 }
 
+func TestSandboxEnvMarksGuestAsRemoteVM(t *testing.T) {
+	t.Parallel()
+
+	env := sandboxEnv(queries.RemoteVm{})
+	for _, item := range env {
+		if item == "KINDLING_REMOTE_VM=1" {
+			return
+		}
+	}
+	t.Fatalf("expected KINDLING_REMOTE_VM=1 in %#v", env)
+}
+
 func TestSplitImageRef(t *testing.T) {
 	t.Parallel()
 

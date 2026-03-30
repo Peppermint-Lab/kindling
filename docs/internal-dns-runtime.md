@@ -24,4 +24,4 @@ Operational notes:
 
 - The worker heartbeat metadata now includes `internal_dns_enabled` and, when enabled, `internal_dns_addr`.
 - The current runtime implementation resolves internal names to active backend VM IPv4 addresses.
-- This delivers policy enforcement and same-runtime connectivity now; cross-server private routing is still the next networking milestone.
+- This delivers policy enforcement and same-runtime connectivity now; cross-server private routing is still the next networking milestone. See [private-networking.md](./private-networking.md) for the multi-server overlay decision and interim operator requirements.

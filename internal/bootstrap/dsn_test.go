@@ -53,3 +53,42 @@ func TestResolvePostgresDSN_Default(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestResolvePostgresReplicationDSN_HomeFile(t *testing.T) {
+	if _, err := os.Stat(SystemReplicationDSNPath); err == nil {
+		t.Skip("system replication DSN file exists; home file would be ignored")
+	}
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	p := filepath.Join(dir, LocalReplicationDSNRelPath)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := "postgres://replica/direct"
+	if err := os.WriteFile(p, []byte(want+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ResolvePostgresReplicationDSN("postgres://pooled/db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestResolvePostgresReplicationDSN_FallsBackToPrimary(t *testing.T) {
+	if _, err := os.Stat(SystemReplicationDSNPath); err == nil {
+		t.Skip("system replication DSN file exists")
+	}
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	primary := "postgres://pooled/db"
+	got, err := ResolvePostgresReplicationDSN(primary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != primary {
+		t.Fatalf("got %q want %q", got, primary)
+	}
+}

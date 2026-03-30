@@ -156,10 +156,32 @@ func (r *CloudHypervisorRuntime) Healthy(ctx context.Context, id uuid.UUID) bool
 	return ok && ai.cmd != nil && ai.cmd.ProcessState == nil
 }
 
-func (r *CloudHypervisorRuntime) Logs(ctx context.Context, id uuid.UUID) ([]string, error) {
+func (r *CloudHypervisorRuntime) guestAccessInstance(id uuid.UUID) (*cloudHypervisorInstance, bool) {
 	r.mu.Lock()
 	ai, ok := r.instances[id]
 	r.mu.Unlock()
+	if ok && ai.socketBase != "" {
+		return ai, true
+	}
+	socketBase := cloudHypervisorSocketBase(id)
+	if _, err := os.Stat(socketBase); err != nil {
+		return nil, false
+	}
+	runtimeDir := r.instanceRuntimeDir(id)
+	ready := make(chan struct{})
+	close(ready)
+	return &cloudHypervisorInstance{
+		workDir:    r.instanceStateDir(id),
+		runtimeDir: runtimeDir,
+		socketBase: socketBase,
+		apiSocket:  cloudHypervisorAPISocketPath(runtimeDir),
+		ready:      ready,
+		stopped:    make(chan struct{}),
+	}, true
+}
+
+func (r *CloudHypervisorRuntime) Logs(ctx context.Context, id uuid.UUID) ([]string, error) {
+	ai, ok := r.guestAccessInstance(id)
 	if !ok {
 		return nil, nil
 	}
@@ -172,9 +194,7 @@ func (r *CloudHypervisorRuntime) Logs(ctx context.Context, id uuid.UUID) ([]stri
 
 // ResourceStats pulls guest-agent /stats over the vsock bridge.
 func (r *CloudHypervisorRuntime) ResourceStats(ctx context.Context, id uuid.UUID) (ResourceStats, error) {
-	r.mu.Lock()
-	ai, ok := r.instances[id]
-	r.mu.Unlock()
+	ai, ok := r.guestAccessInstance(id)
 	if !ok || ai.socketBase == "" {
 		return ResourceStats{}, ErrInstanceNotRunning
 	}
@@ -187,9 +207,7 @@ func (r *CloudHypervisorRuntime) ResourceStats(ctx context.Context, id uuid.UUID
 }
 
 func (r *CloudHypervisorRuntime) ExecGuest(ctx context.Context, id uuid.UUID, argv []string, cwd string, env []string) (GuestExecResult, error) {
-	r.mu.Lock()
-	ai, ok := r.instances[id]
-	r.mu.Unlock()
+	ai, ok := r.guestAccessInstance(id)
 	if !ok || ai.socketBase == "" {
 		return GuestExecResult{}, ErrInstanceNotRunning
 	}
@@ -202,9 +220,7 @@ func (r *CloudHypervisorRuntime) ExecGuest(ctx context.Context, id uuid.UUID, ar
 }
 
 func (r *CloudHypervisorRuntime) StreamGuest(ctx context.Context, id uuid.UUID, argv []string, cwd string, env []string) (io.ReadWriteCloser, error) {
-	r.mu.Lock()
-	ai, ok := r.instances[id]
-	r.mu.Unlock()
+	ai, ok := r.guestAccessInstance(id)
 	if !ok || ai.socketBase == "" {
 		return nil, ErrInstanceNotRunning
 	}
@@ -221,9 +237,7 @@ func (r *CloudHypervisorRuntime) StreamGuest(ctx context.Context, id uuid.UUID, 
 }
 
 func (r *CloudHypervisorRuntime) ConnectGuestTCP(ctx context.Context, id uuid.UUID, port int) (io.ReadWriteCloser, error) {
-	r.mu.Lock()
-	ai, ok := r.instances[id]
-	r.mu.Unlock()
+	ai, ok := r.guestAccessInstance(id)
 	if !ok || ai.socketBase == "" {
 		return nil, ErrInstanceNotRunning
 	}
@@ -240,9 +254,7 @@ func (r *CloudHypervisorRuntime) ConnectGuestTCP(ctx context.Context, id uuid.UU
 }
 
 func (r *CloudHypervisorRuntime) ReadGuestFile(ctx context.Context, id uuid.UUID, filePath string) ([]byte, error) {
-	r.mu.Lock()
-	ai, ok := r.instances[id]
-	r.mu.Unlock()
+	ai, ok := r.guestAccessInstance(id)
 	if !ok || ai.socketBase == "" {
 		return nil, ErrInstanceNotRunning
 	}
@@ -255,9 +267,7 @@ func (r *CloudHypervisorRuntime) ReadGuestFile(ctx context.Context, id uuid.UUID
 }
 
 func (r *CloudHypervisorRuntime) WriteGuestFile(ctx context.Context, id uuid.UUID, filePath string, data []byte) error {
-	r.mu.Lock()
-	ai, ok := r.instances[id]
-	r.mu.Unlock()
+	ai, ok := r.guestAccessInstance(id)
 	if !ok || ai.socketBase == "" {
 		return ErrInstanceNotRunning
 	}

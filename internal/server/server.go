@@ -1,7 +1,7 @@
 // Package server manages the server lifecycle: registration, heartbeats,
 // leader election via PG advisory locks, and dead server detection.
 //
-// Each server persists a stable UUID to /data/server-id on first boot.
+// Each server persists a stable UUID on first boot using the shared bootstrap helper.
 // On startup it registers with PostgreSQL, allocating an IP range for
 // its VMs. The leader runs cluster-wide duties (dead server detection,
 // VM failover).
@@ -12,19 +12,17 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/google/uuid"
+	"github.com/kindlingvm/kindling/internal/bootstrap"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 const (
-	serverIDPath = "/data/server-id"
-
 	heartbeatInterval     = 10 * time.Second
 	deadDetectionInterval = 30 * time.Second
 	leaderRetryInterval   = 5 * time.Second
@@ -258,29 +256,5 @@ func (s *Server) detectDeadServers(ctx context.Context) error {
 
 // loadOrCreateServerID reads the server ID from disk, or generates and persists a new one.
 func loadOrCreateServerID() (uuid.UUID, error) {
-	data, err := os.ReadFile(serverIDPath)
-	if err == nil {
-		id, err := uuid.Parse(strings.TrimSpace(string(data)))
-		if err != nil {
-			return uuid.Nil, fmt.Errorf("corrupt server-id at %s: %w", serverIDPath, err)
-		}
-		slog.Info("loaded server ID", "server_id", id)
-		return id, nil
-	}
-
-	if !os.IsNotExist(err) {
-		return uuid.Nil, fmt.Errorf("read server-id: %w", err)
-	}
-
-	// First boot — generate new ID.
-	id := uuid.New()
-	if err := os.MkdirAll("/data", 0o755); err != nil {
-		return uuid.Nil, fmt.Errorf("create /data: %w", err)
-	}
-	if err := os.WriteFile(serverIDPath, []byte(id.String()), 0o644); err != nil {
-		return uuid.Nil, fmt.Errorf("write server-id: %w", err)
-	}
-
-	slog.Info("generated new server ID", "server_id", id)
-	return id, nil
+	return bootstrap.LoadOrCreateServerID()
 }

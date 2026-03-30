@@ -52,7 +52,11 @@ func serveCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("resolve postgres DSN: %w", err)
 			}
-			return runServe(cmd.Context(), databaseURL, serveOptions{
+			replicationDSN, err := bootstrap.ResolvePostgresReplicationDSN(databaseURL)
+			if err != nil {
+				return fmt.Errorf("resolve postgres replication DSN: %w", err)
+			}
+			return runServe(cmd.Context(), databaseURL, replicationDSN, serveOptions{
 				listenAddr:    listenAddr,
 				publicBaseURL: publicBaseURL,
 				dashboardHost: dashboardHost,
@@ -91,7 +95,7 @@ type serveOptions struct {
 	componentsRaw string
 }
 
-func runServe(ctx context.Context, databaseURL string, opts serveOptions) error {
+func runServe(ctx context.Context, databaseURL, replicationDSN string, opts serveOptions) error {
 	listenAddr := opts.listenAddr
 	components, err := resolveServeComponents(opts.componentsRaw)
 	if err != nil {
@@ -115,12 +119,22 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	}
 	slog.Info("schema migrated")
 
-	serverID := loadServerID()
+	serverID, err := bootstrap.LoadOrCreateServerID()
+	if err != nil {
+		return fmt.Errorf("server id: %w", err)
+	}
 	q := queries.New(db.Pool)
+	regStore := pgServerRegistrationStore{
+		pool: db.Pool,
+		q:    q,
+	}
 
 	// Register server and seed cluster/server settings.
 	if components.worker || components.edge {
-		if err := registerServerAndHeartbeat(ctx, q, serverID); err != nil {
+		if err := validateSharedDatabaseEntryPoint(ctx, regStore, serverID, databaseURL); err != nil {
+			return err
+		}
+		if err := registerServerAndHeartbeat(ctx, db.Pool, q, serverID); err != nil {
 			return err
 		}
 	}
@@ -180,7 +194,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 			return werr
 		}
 		rt, deployer, ciSvc, sandboxSvc, recs = w.rt, w.deployer, w.ciSvc, w.sandboxSvc, w.recs
-		if err := startWorkerInternalDNS(ctx, q, rt); err != nil {
+		if err := startWorkerInternalDNS(ctx, q, serverID, rt); err != nil {
 			return err
 		}
 		if shouldStopWorkloadsOnShutdown() {
@@ -198,6 +212,15 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	// the actual provisioning/reconciliation work.
 	if components.api && ciSvc == nil {
 		ciSvc = ci.NewJobService(q, cfgMgr, serverID)
+	}
+	if components.api && sandboxSvc == nil {
+		accessRT, _ := detectHostRuntime(snap)
+		slog.Info("api sandbox access runtime detected", "runtime", accessRT.Name())
+		sandboxSvc = &sandbox.Service{
+			Q:        q,
+			Runtime:  accessRT,
+			ServerID: serverID,
+		}
 	}
 
 	// Component heartbeats for tracked servers.
@@ -256,7 +279,7 @@ func runServe(ctx context.Context, databaseURL string, opts serveOptions) error 
 	}
 
 	// WAL listener.
-	wal := newWALListener(databaseURL, walDeps{
+	wal := newWALListener(replicationDSN, walDeps{
 		q:                    q,
 		deploymentReconciler: recs.deployment,
 		buildReconciler:      recs.build,

@@ -64,28 +64,6 @@ func cloudHypervisorVersion() string {
 	return strings.TrimSpace(string(out))
 }
 
-func loadServerID() uuid.UUID {
-	home, _ := os.UserHomeDir()
-	data, err := os.ReadFile(home + "/.kindling/server-id")
-	if err == nil {
-		id, err := uuid.Parse(strings.TrimSpace(string(data)))
-		if err == nil {
-			slog.Info("loaded server ID", "server_id", id)
-			return id
-		}
-	}
-
-	// First boot — generate and try to persist.
-	id := uuid.New()
-	dataDir := home + "/.kindling"
-	os.MkdirAll(dataDir, 0o755)
-	if err := os.WriteFile(dataDir+"/server-id", []byte(id.String()), 0o644); err != nil {
-		slog.Warn("could not persist server ID", "error", err)
-	}
-	slog.Info("generated server ID", "server_id", id)
-	return id
-}
-
 type serverComponentStatusUpdate struct {
 	Component        string
 	Status           string

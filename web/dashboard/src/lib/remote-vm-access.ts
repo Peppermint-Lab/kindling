@@ -1,8 +1,17 @@
 import type { Sandbox } from "@/lib/api"
 
+function normalizeDirectBrowserUrl(raw: string): string {
+  const direct = raw.trim()
+  if (!direct) return ""
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(direct)) {
+    return direct
+  }
+  return `http://${direct}`
+}
+
 export function publicBrowserAppUrl(sandbox: Sandbox): string | null {
   const direct = sandbox.runtime_url?.trim()
-  if (direct) return direct
+  if (direct) return normalizeDirectBrowserUrl(direct)
   const host = sandbox.published_ports?.find((p) => p.public_hostname?.trim())?.public_hostname?.trim()
   if (host) {
     return `https://${host}`

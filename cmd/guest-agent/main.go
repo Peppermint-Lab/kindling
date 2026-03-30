@@ -102,12 +102,22 @@ func main() {
 	startStatsServer(appRef)
 	startControlServer(appRef)
 
+	readyPort := cfg.Port
+	if readyPort == 0 {
+		readyPort = 3000
+	}
+
 	// Find and start the user's app.
 	appCmd := startApp(cfg.Env, logWriter)
 	appRef.set(appCmd)
 	if appCmd == nil {
-		if isLocalShellMode(cfg.Mode) {
-			log.Printf("no application found in %s mode, enabling shell-only guest", cfg.Mode)
+		if shouldKeepGuestReadyWithoutApp(cfg) {
+			log.Printf("no application found, enabling shell-only guest")
+			if shouldStartHostBridgeWithoutApp(cfg) {
+				if err := startHostTCPBridge(readyPort); err != nil {
+					log.Fatalf("host tcp vsock bridge: %v", err)
+				}
+			}
 			if err := notifyReady(); err != nil {
 				log.Printf("warning: ready notification failed: %v", err)
 			} else {
@@ -119,10 +129,6 @@ func main() {
 		select {} // block forever
 	}
 
-	readyPort := cfg.Port
-	if readyPort == 0 {
-		readyPort = 3000
-	}
 	// Cold starts can exceed 30s; the host still runs HTTP health checks after /ready.
 	// Always bring up the vsock bridge and notify — do not skip notify when the TCP
 	// probe is slow (previous if/else chain never called notifyReady on timeout).
@@ -267,6 +273,26 @@ func isLocalShellMode(mode string) bool {
 	default:
 		return false
 	}
+}
+
+func isRemoteVMGuest(env []string) bool {
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok || strings.TrimSpace(key) != "KINDLING_REMOTE_VM" {
+			continue
+		}
+		value = strings.TrimSpace(strings.ToLower(value))
+		return value != "" && value != "0" && value != "false"
+	}
+	return false
+}
+
+func shouldKeepGuestReadyWithoutApp(cfg *ConfigResponse) bool {
+	return isLocalShellMode(cfg.Mode) || isRemoteVMGuest(cfg.Env)
+}
+
+func shouldStartHostBridgeWithoutApp(cfg *ConfigResponse) bool {
+	return isRemoteVMGuest(cfg.Env)
 }
 
 func localRootFSAvailable() bool {

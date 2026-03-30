@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -110,9 +111,9 @@ func (a *API) sandboxOwnerOrigin(ctx context.Context, sb queries.RemoteVm) (*url
 	if err != nil {
 		return nil, fmt.Errorf("find worker settings for remote VM: %w", err)
 	}
-	host := strings.TrimSpace(server.InternalIp)
-	if host == "" {
-		return nil, fmt.Errorf("worker internal IP is not configured for this remote VM")
+	host, err := validateSandboxProxyHost(server.InternalIp)
+	if err != nil {
+		return nil, err
 	}
 	port := settings.InternalApiPort
 	if port <= 0 {
@@ -122,6 +123,28 @@ func (a *API) sandboxOwnerOrigin(ctx context.Context, sb queries.RemoteVm) (*url
 		Scheme: "http",
 		Host:   netJoinHostPort(host, int(port)),
 	}, nil
+}
+
+func validateSandboxProxyHost(raw string) (string, error) {
+	host := normalizeSandboxProxyHost(raw)
+	if host == "" {
+		return "", fmt.Errorf("worker internal IP is not configured for this remote VM")
+	}
+	switch strings.ToLower(host) {
+	case "localhost":
+		return "", fmt.Errorf("worker internal IP %q is not usable for remote proxying", raw)
+	}
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsUnspecified()) {
+		return "", fmt.Errorf("worker internal IP %q is not usable for remote proxying", raw)
+	}
+	return host, nil
+}
+
+func normalizeSandboxProxyHost(raw string) string {
+	host := strings.TrimSpace(raw)
+	host = strings.Trim(host, "[]")
+	host = strings.TrimSuffix(host, ".")
+	return host
 }
 
 func netJoinHostPort(host string, port int) string {

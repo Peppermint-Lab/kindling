@@ -1,11 +1,21 @@
 ---
 title: Topology and Hostnames
-description: How to think about API, dashboard, and workload hostnames in production.
+description: Supported production topology shapes and public hostnames for Kindling.
 ---
 
 # Topology and Hostnames
 
 Kindling can serve multiple public surfaces from the same process, but they should be modeled as different hostnames.
+
+## Supported production topologies
+
+Kindling officially supports two self-hosted shapes. Other layouts are untested.
+
+**Primary — all-in-one:** API, edge, WAL listener, reconcilers, worker runtime, and PostgreSQL on a single host. Best default for most teams.
+
+**Secondary — control plane + remote workers:** One host runs the full control plane and PostgreSQL; additional hosts are worker-only (local runtime + deployment VMs). All processes share one PostgreSQL cluster. VM backend IPs for the edge are host-local unless you provide operator-managed routing between hosts.
+
+For ports, storage, DNS, and an explicit unsupported list, see the repo guide [High Availability and Supported Topologies](https://github.com/kindlingvm/kindling/blob/main/docs/high-availability.md) (`docs/high-availability.md`).
 
 ## Recommended Host Layout
 
