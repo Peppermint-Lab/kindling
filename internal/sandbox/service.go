@@ -205,11 +205,39 @@ func linuxRemoteVmBackendRank(backend string) int {
 	}
 }
 
-func (s *Service) pickServer(ctx context.Context, hostGroup, isolationPolicy, backendFilter, arch string, tpl *queries.RemoteVmTemplate) (uuid.UUID, string, string, error) {
-	if tpl != nil && tpl.ServerID.Valid {
-		return uuid.UUID(tpl.ServerID.Bytes), firstNonEmpty(tpl.Backend, backendFilter), firstNonEmpty(tpl.Arch, arch), nil
+func resolvePinnedTemplateCandidate(hostGroup, backendFilter, arch string, tpl queries.RemoteVmTemplate, meta workerMetadata) (remoteVmPickCandidate, error) {
+	resolvedBackend := strings.TrimSpace(firstNonEmpty(meta.RemoteVmBackend, tpl.Backend))
+	if resolvedBackend == "" {
+		return remoteVmPickCandidate{}, fmt.Errorf("template worker backend is unknown")
+	}
+	if backendFilter != "" && resolvedBackend != backendFilter {
+		return remoteVmPickCandidate{}, fmt.Errorf("template worker backend %q does not satisfy requested backend %q", resolvedBackend, backendFilter)
 	}
 
+	switch hostGroup {
+	case HostGroupMac:
+		if !meta.effectiveMacRemoteVmPlacement() {
+			return remoteVmPickCandidate{}, fmt.Errorf("template worker is not eligible for host group %q", hostGroup)
+		}
+	case HostGroupLinux:
+		if !meta.effectiveLinuxRemoteVmPlacement() {
+			return remoteVmPickCandidate{}, fmt.Errorf("template worker is not eligible for host group %q", hostGroup)
+		}
+	}
+
+	resolvedArch := strings.TrimSpace(firstNonEmpty(meta.RemoteVmArch, tpl.Arch, arch, runtime.GOARCH))
+	if arch != "" && resolvedArch != arch {
+		return remoteVmPickCandidate{}, fmt.Errorf("template worker arch %q does not satisfy requested arch %q", resolvedArch, arch)
+	}
+
+	return remoteVmPickCandidate{
+		serverID: uuid.UUID(tpl.ServerID.Bytes),
+		backend:  resolvedBackend,
+		arch:     resolvedArch,
+	}, nil
+}
+
+func (s *Service) pickServer(ctx context.Context, hostGroup, isolationPolicy, backendFilter, arch string, tpl *queries.RemoteVmTemplate) (uuid.UUID, string, string, error) {
 	servers, err := s.Q.ServerFindAll(ctx)
 	if err != nil {
 		return uuid.Nil, "", "", fmt.Errorf("list servers: %w", err)
@@ -224,6 +252,26 @@ func (s *Service) pickServer(ctx context.Context, hostGroup, isolationPolicy, ba
 			continue
 		}
 		metaByServer[st.ServerID.Bytes] = decodeWorkerMetadata(st.Metadata)
+	}
+	activeServers := make(map[[16]byte]struct{}, len(servers))
+	for _, srv := range servers {
+		if srv.ID.Valid && srv.Status == "active" {
+			activeServers[srv.ID.Bytes] = struct{}{}
+		}
+	}
+	if tpl != nil && tpl.ServerID.Valid {
+		if _, active := activeServers[tpl.ServerID.Bytes]; !active {
+			return uuid.Nil, "", "", fmt.Errorf("template worker is not active")
+		}
+		meta, ok := metaByServer[tpl.ServerID.Bytes]
+		if !ok {
+			return uuid.Nil, "", "", fmt.Errorf("template worker metadata is unavailable")
+		}
+		candidate, err := resolvePinnedTemplateCandidate(hostGroup, backendFilter, arch, *tpl, meta)
+		if err != nil {
+			return uuid.Nil, "", "", err
+		}
+		return candidate.serverID, candidate.backend, candidate.arch, nil
 	}
 	var candidates []remoteVmPickCandidate
 	for _, srv := range servers {

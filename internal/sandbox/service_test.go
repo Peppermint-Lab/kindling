@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	kruntime "github.com/kindlingvm/kindling/internal/runtime"
@@ -46,6 +47,63 @@ func TestDecodeWorkerMetadataFallsBackToRuntime(t *testing.T) {
 	}
 	if !meta.RemoteVmEnabled {
 		t.Fatal("remote_vm_enabled = false, want true")
+	}
+}
+
+func TestResolvePinnedTemplateCandidateRejectsRequireMicrovmOnCrun(t *testing.T) {
+	t.Parallel()
+
+	tr := true
+	tpl := queries.RemoteVmTemplate{
+		ServerID: pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		Backend:  kruntime.BackendCrun,
+	}
+	_, err := resolvePinnedTemplateCandidate(
+		HostGroupLinux,
+		kruntime.BackendCloudHypervisor,
+		"",
+		tpl,
+		workerMetadata{
+			RemoteVmBackend:        kruntime.BackendCrun,
+			LinuxPlacementEligible: &tr,
+		},
+	)
+	if err == nil {
+		t.Fatal("expected require_microvm template pin on crun to fail")
+	}
+}
+
+func TestResolvePinnedTemplateCandidateUsesWorkerMetadata(t *testing.T) {
+	t.Parallel()
+
+	tr := true
+	serverID := uuid.New()
+	got, err := resolvePinnedTemplateCandidate(
+		HostGroupLinux,
+		"",
+		"arm64",
+		queries.RemoteVmTemplate{
+			ServerID: pgtype.UUID{Bytes: serverID, Valid: true},
+			Backend:  "",
+			Arch:     "",
+		},
+		workerMetadata{
+			RemoteVmBackend:        kruntime.BackendCloudHypervisor,
+			RemoteVmArch:           "arm64",
+			LinuxPlacementEligible: &tr,
+		},
+	)
+	if err != nil {
+		t.Fatalf("resolvePinnedTemplateCandidate: %v", err)
+	}
+	if got.serverID != serverID {
+		t.Fatalf("serverID = %s, want %s", got.serverID, serverID)
+	}
+	if got.backend != kruntime.BackendCloudHypervisor {
+		t.Fatalf("backend = %q, want %q", got.backend, kruntime.BackendCloudHypervisor)
+	}
+	if got.arch != "arm64" {
+		t.Fatalf("arch = %q, want arm64", got.arch)
 	}
 }
 

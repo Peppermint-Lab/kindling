@@ -1,11 +1,80 @@
 ---
 title: Topology and Hostnames
-description: How to think about API, dashboard, and workload hostnames in production.
+description: Supported production topology shapes, public hostnames, and network assumptions for Kindling.
 ---
 
 # Topology and Hostnames
 
 Kindling can serve multiple public surfaces from the same process, but they should be modeled as different hostnames.
+
+## Supported Production Topologies
+
+Kindling officially supports two topology shapes. Running in other configurations is out of scope for this milestone.
+
+### Primary: All-in-One Single Server
+
+All Kindling components — API, edge proxy, WAL listener, reconcilers, worker runtime, and PostgreSQL — run on a single host. This is the recommended topology for most production deployments.
+
+**Components on this host:**
+- API server (REST + Connect)
+- Edge proxy (CertMagic TLS, hostname routing)
+- WAL listener (PostgreSQL logical replication)
+- All reconcilers (deployment, build, ci_job, remote_vm, server, volume, domain, instance_migration)
+- Worker runtime (Cloud Hypervisor, Apple VZ, or crun — auto-detected)
+- PostgreSQL (with Patroni for HA recommended)
+
+**Public ingress:** `api.kindling.systems`, `app.kindling.systems`, `docs.kindling.systems` all resolve to this server.
+
+**Scaling path:** Scale vertically first. To add capacity, migrate to the secondary topology below.
+
+### Secondary: Control Plane + Remote Workers
+
+One server runs the full control plane + PostgreSQL. Additional servers register as **worker-only** nodes that run deployment VMs using their local runtime.
+
+**Control plane server:** API, edge, WAL listener, all reconcilers (including `build` and `ci_job`), PostgreSQL.
+
+**Worker servers:** Local runtime and deployment VMs only. No WAL listener, no build reconciler, no CI job execution.
+
+**Builds and CI always run on the control plane server** — worker servers handle deployment VMs only.
+
+This topology requires:
+- All servers share the same `DATABASE_URL` (same PostgreSQL cluster)
+- Each server has a unique `KINDLING_SERVER_ID` (auto-generated, persisted to `~/.kindling/server-id`)
+- All servers have TCP access to PostgreSQL on port 5432
+- A shared filesystem (NFS) for OCI image layer cache (`KINDLING_CH_SHARED_ROOTFS_DIR`) when using Cloud Hypervisor across multiple workers
+
+### DNS Requirements
+
+Operator-managed DNS records required for all topologies:
+
+| Hostname | Purpose |
+|----------|---------|
+| `api.kindling.systems` | REST/Connect API and webhooks |
+| `app.kindling.systems` | Dashboard SPA |
+| `docs.kindling.systems` | Documentation |
+| `*.kindling.systems` | Service-generated hostnames (`<service>-<project>.<service_base_domain>`) |
+| `*.preview.kindling.systems` | Preview environment hostnames |
+
+All records should point to the control plane server (or a load balancer in front of multiple control plane servers in the secondary topology).
+
+### Port Summary
+
+| Port | Direction | Purpose |
+|------|-----------|---------|
+| 443 | Inbound (public) | TLS for all public hostnames |
+| 80 | Inbound (public) | HTTP-01 ACME challenge |
+| 5432 | Outbound (server to DB) | PostgreSQL connections |
+
+PostgreSQL should bind to loopback or be protected by a firewall allowing only Kindling server IPs.
+
+### What Is Not Supported
+
+| Pattern | Reason |
+|---------|--------|
+| PostgreSQL on a host without the Kindling binary | WAL listener requires the Kindling process on the same host as PostgreSQL |
+| Worker-only cluster with no control plane | Workers depend on the control plane for WAL updates and leader-elected duties |
+| Cross-server VM-to-VM routing | VM IPs are host-local TAP addresses; cross-server routing requires operator-managed networking (WireGuard/VLAN) |
+| Separate CI runner hosts | CI jobs run on the control plane server |
 
 ## Recommended Host Layout
 

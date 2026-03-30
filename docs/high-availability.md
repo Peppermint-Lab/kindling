@@ -1,6 +1,127 @@
-# High Availability
+# High Availability and Supported Topologies
 
-Kindling's control plane depends on PostgreSQL as its state store. This guide covers making the PostgreSQL layer resilient and configuring Kindling for HA deployments.
+Kindling's control plane depends on PostgreSQL as its state store. This guide covers making the PostgreSQL layer resilient, configuring Kindling for HA deployments, and the explicitly supported production topologies.
+
+## Supported Production Topologies
+
+Kindling supports two production topology shapes. Running in configurations not listed here is out of scope for this milestone (PEP-278).
+
+### Primary: All-in-One Single Server
+
+All Kindling components and PostgreSQL run on a single host:
+
+- **API + Edge + WAL Listener + Reconcilers + Worker + PostgreSQL**: everything on one machine
+- **Recommended for**: small teams, single-node production clusters, development clusters
+- **PostgreSQL HA**: Patroni or pg_auto_failover may coexist on this host for DB-level failover
+- **Public ingress**: `api.kindling.systems`, `app.kindling.systems`, `docs.kindling.systems` all resolve to this host
+- **Scaling**: scale the single host vertically; multi-server clustering is available via the secondary topology
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  api.kindling.systems / app.kindling.systems / docs.*      │
+│                           │                                 │
+│  ┌────────────────────────┴──────────────────────────────┐  │
+│  │             Edge Proxy (CertMagic TLS, port 443)     │  │
+│  └────────────────────────┬──────────────────────────────┘  │
+│                           │                                  │
+│  ┌────────────────────────┴──────────────────────────────┐  │
+│  │  API  │  Reconcilers  │  WAL Listener  │  Worker     │  │
+│  └────────────────────────┬──────────────────────────────┘  │
+│                           │                                  │
+│  ┌────────────────────────┴──────────────────────────────┐  │
+│  │              PostgreSQL (local, Patroni optional)       │  │
+│  └─────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Secondary: Single Control Plane + Remote Workers
+
+One server runs the full control plane (API, edge, WAL listener, all reconcilers) and PostgreSQL. Additional servers register as worker-only nodes:
+
+- **Control plane server**: API, edge proxy, WAL listener, all reconcilers (including build), PostgreSQL
+- **Worker servers**: local runtime (Cloud Hypervisor or crun), deployment VMs only — no WAL listener, no build reconciler
+- **Recommended for**: teams needing to spread workload VMs across multiple physical hosts while keeping operational complexity low
+- **Builds always run on the control plane server** (the leader); worker servers only run deployment VMs
+
+```
+┌─────────────────────────────┐    ┌─────────────────────────────────┐
+│   Control Plane Server       │    │   Worker Server 1               │
+│  API + Edge (TLS 443)       │    │  Local runtime (CH/crun)        │
+│  Reconcilers + WAL Listener │    │  Deployment VMs                 │
+│  PostgreSQL                  │    │  Note: no WAL listener here     │
+│  (all build execution)       │    └─────────────────────────────────┘
+└─────────────────────────────┘                │
+                                                  ┌─────────────────────────────────┐
+   All servers share the same                     │   Worker Server N               │
+   DATABASE_URL and must reach                    │  Local runtime (CH/crun)        │
+   PostgreSQL on port 5432.                        │  Deployment VMs                 │
+   Each server has a unique                        └─────────────────────────────────┘
+   KINDLING_SERVER_ID (auto-generated).
+```
+
+---
+
+## Port and Storage Summary
+
+### Ports
+
+| Port | Direction | Purpose |
+|------|-----------|---------|
+| 443 | Inbound (public) | TLS termination for all public hostnames (api, app, docs, workload domains) |
+| 80 | Inbound (public) | HTTP-01 ACME challenge for TLS cert issuance/renewal |
+| 5432 | Outbound (server to DB) | PostgreSQL client connections from Kindling to the database host |
+| 22 | Outbound | Git clone from GitHub (outbound SSH or HTTPS) |
+
+In the **secondary topology**, additional ports are used:
+
+| Port | Direction | Purpose |
+|------|-----------|---------|
+| Any | Worker to control plane | PostgreSQL connections from workers to the control plane server's DB |
+| Worker host IP + published port | Edge to workload | Edge proxies to VM backends via host-level port forwarding |
+
+PostgreSQL itself should **not** be exposed to the public internet. It should bind to loopback (`127.0.0.1`) or be protected by a firewall that allows only Kindling server IPs.
+
+### Storage
+
+| Path | Purpose | Shared across servers? |
+|------|---------|----------------------|
+| `/var/lib/kindling` (or `$HOME/.kindling`) | Server ID, runtime state, VM disks (qcow2) | No — each server has local state |
+| `KINDLING_CH_SHARED_ROOTFS_DIR` | OCI image layer cache for Cloud Hypervisor | Yes — must be shared (NFS or similar) when using Cloud Hypervisor with multiple servers |
+| PostgreSQL data directory | All Kindling state | Managed by PostgreSQL; Patroni/HA setups manage replication |
+
+### Network Assumptions
+
+- All Kindling servers must have outbound access to GitHub (TCP 443, port 22) to clone repos
+- All Kindling servers must have TCP access to PostgreSQL on the database host (port 5432)
+- The edge proxy binds to all interfaces (0.0.0.0) on port 443 and 80
+- Workers are reached by the edge via `vm_ip:port` entries in PostgreSQL — these are host-local TAP addresses and are not routable across server boundaries without operator-managed networking (WireGuard, VLAN)
+- All servers must have low-latency access to PostgreSQL (recommended <5ms RTT)
+
+### DNS Requirements
+
+Operator must provision the following DNS records pointing to the control plane server (or load balancer in front of it):
+
+| Hostname | Purpose |
+|----------|---------|
+| `api.kindling.systems` | REST/Connect API + webhooks |
+| `app.kindling.systems` | Dashboard SPA |
+| `docs.kindling.systems` | Documentation |
+| `*.kindling.systems` (wildcard) | Service-generated hostnames (`<service>-<project>.<service_base_domain>`) |
+| `*.preview.kindling.systems` (wildcard) | Preview deployment hostnames |
+
+---
+
+## Unsupported Topologies
+
+The following are explicitly out of scope for this milestone. Behavior when running in these configurations is undefined.
+
+| Pattern | Reason |
+|---------|--------|
+| PostgreSQL on a host without a Kindling binary | The WAL listener must run on the same host as PostgreSQL to consume logical replication. A separate WAL consumer host is not supported. |
+| Worker-only cluster with no control plane server | Worker nodes depend on the control plane server for WAL notifications and leader-elected reconcilers. A cluster of workers without any control plane node is not supported. |
+| Cross-server workload-to-workload routing | VM IP addresses are host-local TAP addresses. There is no built-in cross-server routing. This requires operator-managed networking outside Kindling's scope. |
+| Separate CI runner hosts | CI job execution runs on the control plane server via the `ci_job` reconciler. Independent CI-only hosts are not supported. |
+| Multi-region deployments | All servers must have low-latency access to PostgreSQL (<5ms RTT recommended). Cross-datacenter clustering is untested. |
 
 ## PostgreSQL High Availability
 
