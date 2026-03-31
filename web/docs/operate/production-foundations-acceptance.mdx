@@ -1,0 +1,34 @@
+---
+title: Production foundations acceptance
+description: Acceptance criteria for Operator Controls and Recovery before Reliability Validation.
+---
+
+# Production foundations acceptance
+
+Use this checklist to treat the **Operator Controls and Recovery** slice as complete enough to move on to broader multi-node reliability testing.
+
+## Control-plane backup and disaster recovery
+
+- [ ] **`docs/control-plane-backup-and-dr.md`** is the team’s agreed contract for what is in Postgres vs volumes vs host-local state.
+- [ ] Operators can describe **RPO/RTO** for the Postgres tier using their own backup tooling (Kindling does not ship scheduled control-plane backups).
+- [ ] A **documented restore ordering** exists: Postgres → DSN files → `kindling serve` → validation (see [Backup and restore](/operate/backup-and-restore)).
+- [ ] **Volume backup** is not mistaken for **control-plane backup** (see [Secrets and volumes](/guides/secrets-and-volumes)).
+
+## Audit logging (cluster-global admin)
+
+- [ ] **`cluster_audit_events`** exists after migrate and receives rows for:
+  - `server.drain` / `server.activate`
+  - `cluster.settings.update` (persisted keys changed listed in `details`)
+  - `auth.provider.update` (no secrets in `details`)
+- [ ] Design doc **`docs/cluster-audit-events.md`** matches the implemented action names and redaction rules.
+- [ ] Operators can **query** recent events via SQL (read API/UI deferred per design).
+
+## Runbooks
+
+- [ ] [Operations runbook](/operate/operations-runbook) links install, upgrade, backup, drain, and audit inspection.
+- [ ] [Backup and restore](/operate/backup-and-restore) distinguishes Postgres procedures from volume procedures.
+- [ ] [Production Setup](/operate/production-setup) references the new operate docs in its documentation map.
+
+## Optional drill
+
+- [ ] Restore Postgres to a **non-production** environment and confirm Kindling starts and passes the multi-server validation checklist in [`docs/high-availability.md`](https://github.com/kindlingvm/kindling/blob/main/docs/high-availability.md).

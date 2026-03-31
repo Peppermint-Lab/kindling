@@ -716,6 +716,26 @@ CREATE INDEX IF NOT EXISTS idx_remote_vm_access_events_remote_vm_id
 CREATE INDEX IF NOT EXISTS idx_remote_vm_access_events_user_id
     ON remote_vm_access_events(user_id, created_at DESC);
 
+-- Cluster-global audit trail for platform-admin actions (see docs/cluster-audit-events.md)
+CREATE TABLE IF NOT EXISTS cluster_audit_events (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id        UUID REFERENCES users(id) ON DELETE SET NULL,
+    action         TEXT NOT NULL,
+    resource_type  TEXT NOT NULL DEFAULT '',
+    resource_id    TEXT NOT NULL DEFAULT '',
+    details        JSONB NOT NULL DEFAULT '{}'::jsonb,
+    request_ip     TEXT NOT NULL DEFAULT '',
+    user_agent     TEXT NOT NULL DEFAULT '',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cluster_audit_events_created_at
+    ON cluster_audit_events (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cluster_audit_events_user_id
+    ON cluster_audit_events (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cluster_audit_events_action
+    ON cluster_audit_events (action, created_at DESC);
+
 -- Environment variables per project (values stored as encrypted envelopes)
 CREATE TABLE IF NOT EXISTS environment_variables (
     id          UUID PRIMARY KEY,

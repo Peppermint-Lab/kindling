@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/kindlingvm/kindling/internal/audit"
 	"github.com/kindlingvm/kindling/internal/auth"
 	"github.com/kindlingvm/kindling/internal/database"
 	"github.com/kindlingvm/kindling/internal/database/queries"
@@ -177,6 +178,17 @@ VALUES ($1, 'e2e-drain-a', '127.0.0.1', '10.100.0.0/20'::cidr, 'active', NOW()),
 		t.Fatalf("server A after drain: %+v err %v", srvA, err)
 	}
 
+	var drainAuditCount int
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT count(*)::int FROM cluster_audit_events WHERE action = $1 AND resource_id = $2`,
+		audit.ActionServerDrain, serverA.String(),
+	).Scan(&drainAuditCount); err != nil {
+		t.Fatalf("cluster_audit_events drain count: %v", err)
+	}
+	if drainAuditCount < 1 {
+		t.Fatalf("expected cluster_audit_events row for drain, got %d", drainAuditCount)
+	}
+
 	// --- Server reconciler schedules deployments that still have instances on A
 	var scheduled uuid.UUID
 	var seen bool
@@ -223,6 +235,17 @@ VALUES ($1, 'e2e-drain-a', '127.0.0.1', '10.100.0.0/20'::cidr, 'active', NOW()),
 	srvA2, err := q.ServerFindByID(ctx, pgtype.UUID{Bytes: serverA, Valid: true})
 	if err != nil || srvA2.Status != "active" {
 		t.Fatalf("server A after activate: %+v err %v", srvA2, err)
+	}
+
+	var actAuditCount int
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT count(*)::int FROM cluster_audit_events WHERE action = $1 AND resource_id = $2`,
+		audit.ActionServerActivate, serverA.String(),
+	).Scan(&actAuditCount); err != nil {
+		t.Fatalf("cluster_audit_events activate count: %v", err)
+	}
+	if actAuditCount < 1 {
+		t.Fatalf("expected cluster_audit_events row for activate, got %d", actAuditCount)
 	}
 }
 

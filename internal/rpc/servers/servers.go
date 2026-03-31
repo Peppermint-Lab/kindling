@@ -4,14 +4,15 @@ package servers
 import (
 	"context"
 	"encoding/json"
-	"net/netip"
 	"net/http"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/kindlingvm/kindling/internal/audit"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/rpc/rpcutil"
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
@@ -262,6 +263,9 @@ func (h *Handler) postServerDrain(w http.ResponseWriter, r *http.Request) {
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_drain", err)
 		return
 	}
+	audit.RecordClusterEvent(r.Context(), h.Q, p.UserID, r, audit.ActionServerDrain, "server", id.String(), map[string]any{
+		"hostname": strings.TrimSpace(srv.Hostname),
+	})
 	rpcutil.WriteJSON(w, http.StatusOK, map[string]string{"status": "draining"})
 }
 
@@ -295,6 +299,10 @@ func (h *Handler) postServerActivate(w http.ResponseWriter, r *http.Request) {
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_activate", err)
 		return
 	}
+	audit.RecordClusterEvent(r.Context(), h.Q, p.UserID, r, audit.ActionServerActivate, "server", id.String(), map[string]any{
+		"hostname":     strings.TrimSpace(srv.Hostname),
+		"prior_status": srv.Status,
+	})
 	rpcutil.WriteJSON(w, http.StatusOK, map[string]string{"status": "active"})
 }
 

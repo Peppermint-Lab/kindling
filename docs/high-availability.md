@@ -225,3 +225,7 @@ Key metrics to monitor for HA:
 | Server heartbeat missing | > 30s | Check worker process and network |
 | Build stuck in `building` | > 15 min | Check build worker and GitHub connectivity |
 | Deployment instance restart loop | > 3 restarts in 5 min | Check application health and resources |
+
+## Control-plane backup and disaster recovery
+
+Failover and HA for PostgreSQL are not the same as **backup and restore** of control-plane state. For what must be protected (Postgres vs volume backups vs host-local state), recovery ordering, and drill expectations, see [control-plane-backup-and-dr.md](./control-plane-backup-and-dr.md).

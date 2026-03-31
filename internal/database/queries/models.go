@@ -105,6 +105,18 @@ type CiJobLog struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type ClusterAuditEvent struct {
+	ID           pgtype.UUID        `json:"id"`
+	UserID       pgtype.UUID        `json:"user_id"`
+	Action       string             `json:"action"`
+	ResourceType string             `json:"resource_type"`
+	ResourceID   string             `json:"resource_id"`
+	Details      []byte             `json:"details"`
+	RequestIp    string             `json:"request_ip"`
+	UserAgent    string             `json:"user_agent"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
 type ClusterSecret struct {
 	Key        string             `json:"key"`
 	Ciphertext []byte             `json:"ciphertext"`

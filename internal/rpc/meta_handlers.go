@@ -3,11 +3,14 @@ package rpc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/kindlingvm/kindling/internal/audit"
 	"github.com/kindlingvm/kindling/internal/config"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
@@ -64,78 +67,136 @@ func (a *API) putMeta(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
 		return
 	}
+	ctx := r.Context()
+	changed := make([]string, 0, 8)
 	if req.PublicBaseURL != nil {
-		if err := a.clusterSettingUpsertPublicBaseURL(r.Context(), *req.PublicBaseURL); err != nil {
+		before, err := a.publicBaseURL(ctx)
+		if err != nil {
 			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
 			return
 		}
+		after := NormalizePublicBaseURL(*req.PublicBaseURL)
+		if err := a.clusterSettingUpsertPublicBaseURL(ctx, *req.PublicBaseURL); err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
+			return
+		}
+		changed = appendChangedSetting(changed, "public_base_url", before, after)
 	}
 	if req.DashboardPublicHost != nil {
-		if err := a.clusterSettingUpsertDashboardPublicHost(r.Context(), *req.DashboardPublicHost); err != nil {
+		before, err := a.dashboardPublicHost(ctx)
+		if err != nil {
 			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
 			return
 		}
+		after := NormalizeDashboardPublicHost(*req.DashboardPublicHost)
+		if err := a.clusterSettingUpsertDashboardPublicHost(ctx, *req.DashboardPublicHost); err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
+			return
+		}
+		changed = appendChangedSetting(changed, "dashboard_public_host", before, after)
 	}
 	if req.ServiceBaseDomain != nil {
-		if err := a.q.ClusterSettingUpsert(r.Context(), queries.ClusterSettingUpsertParams{
+		before, err := clusterSettingValue(ctx, a.q, config.SettingServiceBaseDomain)
+		if err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
+			return
+		}
+		after := strings.TrimSpace(*req.ServiceBaseDomain)
+		if err := a.q.ClusterSettingUpsert(ctx, queries.ClusterSettingUpsertParams{
 			Key:   config.SettingServiceBaseDomain,
-			Value: strings.TrimSpace(*req.ServiceBaseDomain),
+			Value: after,
 		}); err != nil {
 			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
 			return
 		}
+		changed = appendChangedSetting(changed, "service_base_domain", before, after)
 	}
 	if req.PreviewBaseDomain != nil {
-		if err := a.q.ClusterSettingUpsert(r.Context(), queries.ClusterSettingUpsertParams{
+		before, err := clusterSettingValue(ctx, a.q, config.SettingPreviewBaseDomain)
+		if err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
+			return
+		}
+		after := strings.TrimSpace(*req.PreviewBaseDomain)
+		if err := a.q.ClusterSettingUpsert(ctx, queries.ClusterSettingUpsertParams{
 			Key:   config.SettingPreviewBaseDomain,
-			Value: strings.TrimSpace(*req.PreviewBaseDomain),
+			Value: after,
 		}); err != nil {
 			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
 			return
 		}
+		changed = appendChangedSetting(changed, "preview_base_domain", before, after)
 	}
 	if req.PreviewRetentionAfterCloseSeconds != nil {
-		if err := a.q.ClusterSettingUpsert(r.Context(), queries.ClusterSettingUpsertParams{
+		before, err := clusterSettingValue(ctx, a.q, config.SettingPreviewRetentionAfterCloseSecs)
+		if err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
+			return
+		}
+		after := strconv.FormatInt(*req.PreviewRetentionAfterCloseSeconds, 10)
+		if err := a.q.ClusterSettingUpsert(ctx, queries.ClusterSettingUpsertParams{
 			Key:   config.SettingPreviewRetentionAfterCloseSecs,
-			Value: strconv.FormatInt(*req.PreviewRetentionAfterCloseSeconds, 10),
+			Value: after,
 		}); err != nil {
 			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
 			return
 		}
+		changed = appendChangedSetting(changed, "preview_retention_after_close_seconds", before, after)
 	}
 	if req.PreviewIdleScaleSeconds != nil {
-		if err := a.q.ClusterSettingUpsert(r.Context(), queries.ClusterSettingUpsertParams{
+		before, err := clusterSettingValue(ctx, a.q, config.SettingPreviewIdleSeconds)
+		if err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
+			return
+		}
+		after := strconv.FormatInt(*req.PreviewIdleScaleSeconds, 10)
+		if err := a.q.ClusterSettingUpsert(ctx, queries.ClusterSettingUpsertParams{
 			Key:   config.SettingPreviewIdleSeconds,
-			Value: strconv.FormatInt(*req.PreviewIdleScaleSeconds, 10),
+			Value: after,
 		}); err != nil {
 			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
 			return
 		}
+		changed = appendChangedSetting(changed, "preview_idle_scale_seconds", before, after)
 	}
 	if req.ScaleToZeroIdleSeconds != nil {
-		if err := a.q.ClusterSettingUpsert(r.Context(), queries.ClusterSettingUpsertParams{
+		before, err := clusterSettingValue(ctx, a.q, config.SettingScaleToZeroIdleSeconds)
+		if err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
+			return
+		}
+		after := strconv.FormatInt(*req.ScaleToZeroIdleSeconds, 10)
+		if err := a.q.ClusterSettingUpsert(ctx, queries.ClusterSettingUpsertParams{
 			Key:   config.SettingScaleToZeroIdleSeconds,
-			Value: strconv.FormatInt(*req.ScaleToZeroIdleSeconds, 10),
+			Value: after,
 		}); err != nil {
 			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
 			return
 		}
+		changed = appendChangedSetting(changed, "scale_to_zero_idle_seconds", before, after)
 	}
 	if req.ColdStartTimeoutSeconds != nil {
-		if err := a.q.ClusterSettingUpsert(r.Context(), queries.ClusterSettingUpsertParams{
+		before, err := clusterSettingValue(ctx, a.q, config.SettingColdStartTimeout)
+		if err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
+			return
+		}
+		after := (time.Duration(*req.ColdStartTimeoutSeconds) * time.Second).String()
+		if err := a.q.ClusterSettingUpsert(ctx, queries.ClusterSettingUpsertParams{
 			Key:   config.SettingColdStartTimeout,
-			Value: (time.Duration(*req.ColdStartTimeoutSeconds) * time.Second).String(),
+			Value: after,
 		}); err != nil {
 			writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
 			return
 		}
+		changed = appendChangedSetting(changed, "cold_start_timeout_seconds", before, after)
 	}
-	base, err := a.publicBaseURL(r.Context())
+	base, err := a.publicBaseURL(ctx)
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
 		return
 	}
-	dash, err := a.dashboardPublicHost(r.Context())
+	dash, err := a.dashboardPublicHost(ctx)
 	if err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "cluster_settings", err)
 		return
@@ -148,7 +209,13 @@ func (a *API) putMeta(w http.ResponseWriter, r *http.Request) {
 	if dash != "" {
 		out["dashboard_public_host"] = dash
 	}
-	mergePreviewMeta(r.Context(), a.q, out)
+	mergePreviewMeta(ctx, a.q, out)
+	if len(changed) > 0 {
+		audit.RecordClusterEvent(ctx, a.q, p.UserID, r, audit.ActionClusterSettingsUpdate, "cluster", "", map[string]any{
+			"changed": changed,
+		})
+	}
+
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -206,4 +273,22 @@ func mergePreviewMeta(ctx context.Context, q *queries.Queries, out map[string]an
 		}
 	}
 	out["cold_start_timeout_seconds"] = coldStartSeconds
+}
+
+func clusterSettingValue(ctx context.Context, q *queries.Queries, key string) (string, error) {
+	v, err := q.ClusterSettingGet(ctx, key)
+	if err == nil {
+		return strings.TrimSpace(v), nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return "", err
+}
+
+func appendChangedSetting(changed []string, label, before, after string) []string {
+	if before != after {
+		return append(changed, label)
+	}
+	return changed
 }

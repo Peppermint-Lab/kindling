@@ -1,0 +1,55 @@
+---
+title: Operations runbook
+description: Index of install, upgrade, backup, maintenance, and audit tasks for self-hosted Kindling.
+---
+
+# Operations runbook
+
+Use this page as the **starting index** for day-two operations. Detailed topology rules remain in the repo HA and networking guides.
+
+## Install and bootstrap
+
+- [Production Setup](/operate/production-setup) — first node, worker join, WireGuard mesh env.
+- [Topology and Hostnames](/operate/topology-and-hostnames) — DNS and hostname expectations.
+
+## Upgrade
+
+1. Read release notes for the target `kindling` version.
+2. Back up **PostgreSQL** (control plane) on a schedule compatible with your rollback plan.
+3. Replace the `kindling` binary on each host (control plane and workers) with the same version **skew policy** your team allows (prefer minimal skew).
+4. Restart systemd units (`kindling@api`, `kindling@edge`, `kindling@worker`, …) in an order that keeps the API reachable.
+5. Validate: [Production Setup](/operate/production-setup) checklist, deploy a canary workload.
+
+## Backup and disaster recovery
+
+- [Control-plane backup and DR](/operate/control-plane-backup-and-dr) — what must be protected.
+- [Backup and restore](/operate/backup-and-restore) — Postgres vs volumes.
+- Repo: [`docs/control-plane-backup-and-dr.md`](https://github.com/kindlingvm/kindling/blob/main/docs/control-plane-backup-and-dr.md)
+
+## Maintenance: drain and reactivate
+
+- [Server Drain](/operate/server-drain) — evacuation semantics vs live migration.
+- Platform admins use `POST /api/servers/{id}/drain` and `POST /api/servers/{id}/activate` (see API reference).
+
+## Audit trail
+
+Cluster-global admin actions (server drain/activate, cluster meta updates, auth provider admin saves) append rows to **`cluster_audit_events`**.
+
+Design and action names: [`docs/cluster-audit-events.md`](https://github.com/kindlingvm/kindling/blob/main/docs/cluster-audit-events.md).
+
+Ad-hoc inspection (SQL, superuser only in production):
+
+```sql
+SELECT action, resource_type, resource_id, details, created_at
+FROM cluster_audit_events
+ORDER BY created_at DESC
+LIMIT 50;
+```
+
+## Troubleshooting
+
+- [Troubleshooting](/operate/troubleshooting)
+
+## Milestone acceptance
+
+- [Production foundations acceptance](/operate/production-foundations-acceptance)

@@ -2236,6 +2236,12 @@ WHERE e.remote_vm_id = $1
   AND rv.org_id = $2
 ORDER BY e.created_at DESC;
 
+-- name: ClusterAuditEventCreate :exec
+INSERT INTO cluster_audit_events (
+  user_id, action, resource_type, resource_id, details, request_ip, user_agent
+)
+VALUES ($1, $2, $3, $4, COALESCE(sqlc.arg('details')::jsonb, '{}'::jsonb), $5, $6);
+
 -- name: UserIdentityListByUser :many
 SELECT * FROM user_identities
 WHERE user_id = $1

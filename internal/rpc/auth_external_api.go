@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/kindlingvm/kindling/internal/audit"
 	"github.com/kindlingvm/kindling/internal/auth"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	extoauth "github.com/kindlingvm/kindling/internal/oauth"
@@ -178,6 +179,15 @@ func (a *API) putAdminAuthProvider(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "save_auth_provider", err)
 		return
 	}
+	secretRotated := strings.TrimSpace(req.ClientSecret) != ""
+	audit.RecordClusterEvent(r.Context(), a.q, p.UserID, r, audit.ActionAuthProviderUpdate, "auth_provider", provider, map[string]any{
+		"enabled":               req.Enabled,
+		"display_name":          displayName,
+		"client_id_nonempty":    clientID != "",
+		"client_secret_cleared": req.ClearClientSecret,
+		"client_secret_rotated": secretRotated,
+		"issuer_url_set":        provider == "oidc" && issuerURL != "",
+	})
 	writeJSON(w, http.StatusOK, a.authProviderAdminJSON(r.Context(), r, row))
 }
 

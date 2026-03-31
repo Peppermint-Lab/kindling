@@ -90,3 +90,4 @@ First cluster node omits coordination variables; joining nodes include them so t
 
 - [High Availability and Supported Topologies](./high-availability.md) — topology contract.
 - [Internal DNS Runtime](./internal-dns-runtime.md) — worker DNS; cross-server VM DNS deferred.
+- [Control-plane backup and disaster recovery](./control-plane-backup-and-dr.md) — Postgres vs host-local vs volume scope.

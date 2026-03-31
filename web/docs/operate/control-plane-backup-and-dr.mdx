@@ -1,0 +1,41 @@
+---
+title: Control-plane backup and disaster recovery
+description: What to back up for Kindling control-plane recovery versus workload volumes.
+---
+
+# Control-plane backup and disaster recovery
+
+Kindling splits durable state into two operator concerns:
+
+1. **Control-plane state** — PostgreSQL rows: organizations, projects, deployments, routing, `cluster_settings`, `cluster_secrets`, volume *metadata*, audit tables, and more.
+2. **Workload data on persistent volumes** — guest filesystem data backed by Kindling volume cold backup / restore to object storage.
+
+**Volume backup does not replace Postgres backup.** If you only snapshot volumes, you can still lose the entire control plane.
+
+## Canonical contract
+
+The full technical contract (RPO/RTO planning, recovery ordering, host-local state) lives in the repository:
+
+- [`docs/control-plane-backup-and-dr.md`](https://github.com/kindlingvm/kindling/blob/main/docs/control-plane-backup-and-dr.md)
+
+Supporting context:
+
+- [High availability (`docs/high-availability.md`)](https://github.com/kindlingvm/kindling/blob/main/docs/high-availability.md) — supported topologies and PostgreSQL HA.
+- [Private networking (`docs/private-networking.md`)](https://github.com/kindlingvm/kindling/blob/main/docs/private-networking.md) — DSN layout and WireGuard mesh.
+
+## Quick checklist
+
+- [ ] Postgres backups (or equivalent) cover the **Kindling database** used by every `kindling serve` process.
+- [ ] Every host has identical `/etc/kindling/postgres.dsn` (and `postgres.replication.dsn` when using PgBouncer) documented for restore.
+- [ ] Volume backup credentials and policies are documented separately from DB backup (S3-compatible settings in cluster secrets).
+- [ ] You know where **`~/.kindling/server-id`** and WireGuard keys live on each node if you rebuild hardware.
+
+## Procedures
+
+Step-by-step backup and restore validation lives in [Backup and restore](/operate/backup-and-restore).
+
+## Read next
+
+- [Backup and restore](/operate/backup-and-restore)
+- [Operations runbook](/operate/operations-runbook)
+- [Production Setup](/operate/production-setup)

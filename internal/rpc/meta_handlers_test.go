@@ -51,3 +51,20 @@ func TestPutMeta_RequiresPlatformAdmin(t *testing.T) {
 	api.putMeta(rr, req)
 	assertHTTPForbidden(t, rr, "putMeta")
 }
+
+func TestClusterSettingValueChangeDetection(t *testing.T) {
+	t.Parallel()
+
+	var changed []string
+	changed = appendChangedSetting(changed, "public_base_url", "https://example.com", "https://example.com")
+	changed = appendChangedSetting(changed, "dashboard_public_host", "", "app.example.com")
+	changed = appendChangedSetting(changed, "cold_start_timeout_seconds", "2m0s", "2m0s")
+	changed = appendChangedSetting(changed, "scale_to_zero_idle_seconds", "300", "600")
+
+	if len(changed) != 2 {
+		t.Fatalf("changed count = %d, want 2 (%v)", len(changed), changed)
+	}
+	if changed[0] != "dashboard_public_host" || changed[1] != "scale_to_zero_idle_seconds" {
+		t.Fatalf("changed = %v, want [dashboard_public_host scale_to_zero_idle_seconds]", changed)
+	}
+}

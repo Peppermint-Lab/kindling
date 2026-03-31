@@ -39,6 +39,10 @@
           "operate/production-setup",
           "operate/topology-and-hostnames",
           "operate/server-drain",
+          "operate/control-plane-backup-and-dr",
+          "operate/backup-and-restore",
+          "operate/operations-runbook",
+          "operate/production-foundations-acceptance",
           "operate/troubleshooting"
         ]
       },

@@ -1385,6 +1385,36 @@ func (q *Queries) CertMagicStore(ctx context.Context, arg CertMagicStoreParams) 
 	return err
 }
 
+const clusterAuditEventCreate = `-- name: ClusterAuditEventCreate :exec
+INSERT INTO cluster_audit_events (
+  user_id, action, resource_type, resource_id, details, request_ip, user_agent
+)
+VALUES ($1, $2, $3, $4, COALESCE($7::jsonb, '{}'::jsonb), $5, $6)
+`
+
+type ClusterAuditEventCreateParams struct {
+	UserID       pgtype.UUID `json:"user_id"`
+	Action       string      `json:"action"`
+	ResourceType string      `json:"resource_type"`
+	ResourceID   string      `json:"resource_id"`
+	RequestIp    string      `json:"request_ip"`
+	UserAgent    string      `json:"user_agent"`
+	Details      []byte      `json:"details"`
+}
+
+func (q *Queries) ClusterAuditEventCreate(ctx context.Context, arg ClusterAuditEventCreateParams) error {
+	_, err := q.db.Exec(ctx, clusterAuditEventCreate,
+		arg.UserID,
+		arg.Action,
+		arg.ResourceType,
+		arg.ResourceID,
+		arg.RequestIp,
+		arg.UserAgent,
+		arg.Details,
+	)
+	return err
+}
+
 const clusterSecretDelete = `-- name: ClusterSecretDelete :exec
 DELETE FROM cluster_secrets WHERE key = $1
 `

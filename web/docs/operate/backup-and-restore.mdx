@@ -1,0 +1,46 @@
+---
+title: Backup and restore
+description: Operator procedures for PostgreSQL control-plane recovery and project volume backups.
+---
+
+# Backup and restore
+
+This runbook covers **two separate** backup surfaces. Treat them as complementary.
+
+## 1. Control-plane (PostgreSQL)
+
+The Kindling API and reconcilers store authoritative state in PostgreSQL. Recovery requires a **consistent restore of that database** (plus valid DSN files on each host).
+
+**Operator actions (outline):**
+
+1. Follow your organization’s Postgres backup tool (pgBackRest, Barman, cloud snapshots, etc.) with a cadence that meets your RPO.
+2. Ensure restores preserve **logical replication** compatibility documented in [High availability](https://github.com/kindlingvm/kindling/blob/main/docs/high-availability.md) (`wal_level = logical`, listener expectations).
+3. After restore, verify DSN files on every Kindling host still target the correct **primary** or pooler entrypoint.
+4. Restart `kindling serve` units in your topology; run the validation checklist in [Production Setup](/operate/production-setup).
+5. Inspect **cluster audit events** after recovery if you performed admin operations during the incident (see [`docs/cluster-audit-events.md`](https://github.com/kindlingvm/kindling/blob/main/docs/cluster-audit-events.md)).
+
+For semantics and ordering, read [`docs/control-plane-backup-and-dr.md`](https://github.com/kindlingvm/kindling/blob/main/docs/control-plane-backup-and-dr.md).
+
+## 2. Persistent volumes (application data)
+
+Kindling supports **cold backup** and **restore** of project volumes to S3-compatible storage when the cluster is configured with volume backup settings and Cloud Hypervisor workers.
+
+**Operator actions (outline):**
+
+1. Configure cluster-wide volume backup credentials (object store bucket, keys) via the product’s settings / secrets surface.
+2. Use dashboard or API to **queue a backup** for a project volume when needed.
+3. To recover data, use **restore** to a selected worker per product docs; validate the workload afterward.
+
+**Note:** Scheduled automated volume backups are roadmap; policy fields may exist before automation ships—see [Secrets and volumes](/guides/secrets-and-volumes).
+
+## 3. Validation after any restore
+
+- `GET /api/meta` succeeds (platform admin).
+- `GET /api/servers` lists expected nodes; heartbeats healthy.
+- Deploy or redeploy a canary project; confirm edge routes to workloads.
+- For volume restore: confirm application-level data integrity inside the guest.
+
+## Related
+
+- [Control-plane backup and DR](/operate/control-plane-backup-and-dr)
+- [Production foundations acceptance](/operate/production-foundations-acceptance)
