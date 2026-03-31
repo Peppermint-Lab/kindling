@@ -170,6 +170,7 @@ export function OnboardingPage() {
 
   const hostedCapacityReady = (snap?.healthy_worker_agents ?? 0) >= 1
   const selfCapacityReady = (snap?.healthy_servers ?? 0) >= 1 && (snap?.servers_count ?? 0) >= 1
+  const skipAppSetupAllowed = kind === "hosted" ? hostedCapacityReady : selfCapacityReady
 
   const handleNext = async () => {
     const idx = stepOrder.indexOf(step)
@@ -693,7 +694,14 @@ export function OnboardingPage() {
                 </Button>
               ) : null}
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2 justify-end">
+              {step === "confirm" ||
+              (step === "project" && !createdProject) ||
+              (step === "welcome" && skipAppSetupAllowed) ? (
+                <Button type="button" variant="outline" onClick={() => void handleFinish()} disabled={busy}>
+                  {busy ? "Finishing…" : "Skip app setup"}
+                </Button>
+              ) : null}
               {step === "domain" ? (
                 <Button type="button" onClick={() => void handleFinish()} disabled={busy}>
                   {busy ? "Finishing…" : "Finish setup"}
