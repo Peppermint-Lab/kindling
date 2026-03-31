@@ -46,6 +46,11 @@ const SettingsPage = lazy(() =>
     default: module.SettingsPage,
   }))
 )
+const PlatformSettingsPage = lazy(() =>
+  import("@/pages/PlatformSettingsPage").then((module) => ({
+    default: module.PlatformSettingsPage,
+  }))
+)
 const ServerDetailPage = lazy(() =>
   import("@/pages/ServerDetailPage").then((module) => ({
     default: module.ServerDetailPage,
@@ -67,28 +72,32 @@ const OnboardingPage = lazy(() =>
   }))
 )
 
-function PublicRouteFallback() {
+function PageLoadingFallback({ minHeightClass }: { minHeightClass: string }) {
   return (
-    <div className="flex min-h-svh items-center justify-center text-muted-foreground text-sm">
+    <div className={`flex ${minHeightClass} items-center justify-center text-muted-foreground text-sm`}>
       Loading page…
     </div>
   )
 }
 
+function PublicRouteFallback() {
+  return <PageLoadingFallback minHeightClass="min-h-svh" />
+}
+
 function PrivateRouteFallback() {
-  return (
-    <div className="flex min-h-[50vh] items-center justify-center text-muted-foreground text-sm">
-      Loading page…
-    </div>
-  )
+  return <PageLoadingFallback minHeightClass="min-h-[50vh]" />
 }
 
 function PrivateRouteContent({ children }: { children: ReactNode }) {
   return <Suspense fallback={<PrivateRouteFallback />}>{children}</Suspense>
 }
 
+const ONBOARDING_ALLOWED_ROUTE_PREFIXES = ["/settings", "/platform-settings"] as const
+
 function canAccessDuringOnboarding(pathname: string) {
-  return pathname === "/settings" || pathname.startsWith("/settings/")
+  return ONBOARDING_ALLOWED_ROUTE_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  )
 }
 
 type AuthenticatedSession = Extract<AuthSession, { authenticated: true }>
@@ -190,6 +199,14 @@ function Layout() {
               element={
                 <PrivateRouteContent>
                   <SettingsPage />
+                </PrivateRouteContent>
+              }
+            />
+            <Route
+              path="/platform-settings"
+              element={
+                <PrivateRouteContent>
+                  <PlatformSettingsPage />
                 </PrivateRouteContent>
               }
             />

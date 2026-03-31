@@ -61,6 +61,7 @@ export function ServerDetailPage() {
 
   const canManageServers =
     session?.authenticated && (session.role === "owner" || session.role === "admin")
+  const isPlatformAdmin = session?.authenticated === true && session.platform_admin
 
   const load = useCallback(async () => {
     if (!id) return
@@ -156,7 +157,7 @@ export function ServerDetailPage() {
     <PageContainer size="wide">
       <PageSection>
         <div>
-          <PageBackLink to="/settings">Back to settings</PageBackLink>
+          <PageBackLink to="/settings?tab=cluster">Back to workers</PageBackLink>
           <PageHeader>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -170,7 +171,7 @@ export function ServerDetailPage() {
                 Auto-refreshes every 15 seconds. Host: <span className="font-mono">{server.internal_ip || "—"}</span>
               </PageDescription>
             </div>
-            {canManageServers ? (
+            {isPlatformAdmin ? (
               <div className="flex flex-wrap items-center gap-2">
                 {server.status === "active" ? (
                   <Button
@@ -258,53 +259,55 @@ export function ServerDetailPage() {
           </SurfaceBody>
         </Surface>
 
-        <Surface>
-          <SurfaceHeader>
-            <SurfaceTitle>Control Plane</SurfaceTitle>
-            <SurfaceDescription>Latest known component heartbeat, success time, and error state.</SurfaceDescription>
-          </SurfaceHeader>
-          <SurfaceBody className="grid gap-4 lg:grid-cols-2">
-            {(server.components ?? []).map((component) => (
-              <div key={component.component} className="rounded-xl border p-4 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <p className="font-medium">{componentLabel(component.component)}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {component.enabled ? "Enabled" : "Not reporting on this host"}
+        {server.components && server.components.length > 0 ? (
+          <Surface>
+            <SurfaceHeader>
+              <SurfaceTitle>Control Plane</SurfaceTitle>
+              <SurfaceDescription>Latest known component heartbeat, success time, and error state.</SurfaceDescription>
+            </SurfaceHeader>
+            <SurfaceBody className="grid gap-4 lg:grid-cols-2">
+              {server.components.map((component) => (
+                <div key={component.component} className="rounded-xl border p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="font-medium">{componentLabel(component.component)}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {component.enabled ? "Enabled" : "Not reporting on this host"}
+                      </p>
+                    </div>
+                    <Badge variant="outline" className={healthChipClass(component.health)}>
+                      {component.enabled ? component.health : "off"}
+                    </Badge>
+                  </div>
+                  <MetadataGrid className="gap-3 sm:grid-cols-2">
+                    <MetadataItem label="Last success">{renderLastSeen(component)}</MetadataItem>
+                    <MetadataItem label="Observed at">
+                      {component.observed_at ? new Date(component.observed_at).toLocaleString() : "—"}
+                    </MetadataItem>
+                    <MetadataItem label="Last error">
+                      {component.last_error_at ? new Date(component.last_error_at).toLocaleString() : "—"}
+                    </MetadataItem>
+                    <MetadataItem label="Raw status">{component.raw_status || "—"}</MetadataItem>
+                  </MetadataGrid>
+                  {component.metadata && Object.keys(component.metadata).length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(component.metadata).map(([key, value]) => (
+                        <Badge key={key} variant="outline" className="border-border bg-muted/30 text-muted-foreground">
+                          {key}: {String(value)}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : null}
+                  {component.last_error_message ? (
+                    <p className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+                      {component.last_error_message}
                     </p>
-                  </div>
-                  <Badge variant="outline" className={healthChipClass(component.health)}>
-                    {component.enabled ? component.health : "off"}
-                  </Badge>
+                  ) : null}
                 </div>
-                <MetadataGrid className="gap-3 sm:grid-cols-2">
-                  <MetadataItem label="Last success">{renderLastSeen(component)}</MetadataItem>
-                  <MetadataItem label="Observed at">
-                    {component.observed_at ? new Date(component.observed_at).toLocaleString() : "—"}
-                  </MetadataItem>
-                  <MetadataItem label="Last error">
-                    {component.last_error_at ? new Date(component.last_error_at).toLocaleString() : "—"}
-                  </MetadataItem>
-                  <MetadataItem label="Raw status">{component.raw_status || "—"}</MetadataItem>
-                </MetadataGrid>
-                {component.metadata && Object.keys(component.metadata).length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {Object.entries(component.metadata).map(([key, value]) => (
-                      <Badge key={key} variant="outline" className="border-border bg-muted/30 text-muted-foreground">
-                        {key}: {String(value)}
-                      </Badge>
-                    ))}
-                  </div>
-                ) : null}
-                {component.last_error_message ? (
-                  <p className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
-                    {component.last_error_message}
-                  </p>
-                ) : null}
-              </div>
-            ))}
-          </SurfaceBody>
-        </Surface>
+              ))}
+            </SurfaceBody>
+          </Surface>
+        ) : null}
 
         <Surface>
           <SurfaceHeader>

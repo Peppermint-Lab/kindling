@@ -17,6 +17,7 @@ import {
   GitBranchIcon,
   RocketIcon,
   Settings2Icon,
+  ShieldIcon,
   LifeBuoyIcon,
   BookOpenIcon,
   LogOutIcon,
@@ -68,6 +69,20 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { logout, session, switchOrg } = useAuth()
   const navigate = useNavigate()
 
+  const navMainItems = React.useMemo(() => {
+    const items = [...data.navMain]
+    if (session?.authenticated === true && session.platform_admin) {
+      const settingsIdx = items.findIndex((i) => i.url === "/settings")
+      const insertAt = settingsIdx >= 0 ? settingsIdx + 1 : items.length
+      items.splice(insertAt, 0, {
+        title: "Control plane",
+        url: "/platform-settings",
+        icon: <ShieldIcon />,
+      })
+    }
+    return items
+  }, [session])
+
   return (
     <Sidebar variant="inset" className="bg-sidebar" {...props}>
       <SidebarHeader>
@@ -89,7 +104,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={data.navMain} />
+        <NavMain items={navMainItems} />
         {session && session.authenticated && session.organizations.length > 1 ? (
           <div className="px-2 py-2 border-t border-white/[0.06]">
             <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60 mb-1 px-2">Organization</p>

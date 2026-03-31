@@ -598,6 +598,17 @@ SELECT * FROM project_volumes
 WHERE server_id = $1 AND deleted_at IS NULL
 ORDER BY created_at ASC;
 
+-- name: ProjectVolumeFindByServerIDForOrg :many
+SELECT pv.* FROM project_volumes pv
+INNER JOIN projects p ON p.id = pv.project_id
+WHERE pv.server_id = $1 AND pv.deleted_at IS NULL AND p.org_id = $2
+ORDER BY pv.created_at ASC;
+
+-- name: ProjectVolumeCountByServerIDForOrg :one
+SELECT COUNT(*)::bigint AS count FROM project_volumes pv
+INNER JOIN projects p ON p.id = pv.project_id
+WHERE pv.server_id = $1 AND pv.deleted_at IS NULL AND p.org_id = $2;
+
 -- name: ProjectVolumeCreate :one
 INSERT INTO project_volumes (
     id, project_id, service_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled
@@ -914,6 +925,21 @@ SELECT COUNT(*)::bigint AS count FROM deployment_instances
 WHERE server_id = $1
   AND deleted_at IS NULL
   AND role = 'active';
+
+-- name: DeploymentInstanceCountByServerIDForOrg :one
+SELECT COUNT(*)::bigint AS count FROM deployment_instances di
+INNER JOIN deployments d ON d.id = di.deployment_id AND d.deleted_at IS NULL
+INNER JOIN projects p ON p.id = d.project_id
+WHERE di.server_id = $1 AND di.deleted_at IS NULL AND p.org_id = $2;
+
+-- name: DeploymentInstanceActiveCountByServerIDForOrg :one
+SELECT COUNT(*)::bigint AS count FROM deployment_instances di
+INNER JOIN deployments d ON d.id = di.deployment_id AND d.deleted_at IS NULL
+INNER JOIN projects p ON p.id = d.project_id
+WHERE di.server_id = $1
+  AND di.deleted_at IS NULL
+  AND di.role = 'active'
+  AND p.org_id = $2;
 
 -- name: DeploymentIDsForInstancesOnServer :many
 SELECT DISTINCT deployment_id FROM deployment_instances
@@ -2353,6 +2379,50 @@ FROM deployment_instances di
 INNER JOIN deployments d ON d.id = di.deployment_id
   AND d.deleted_at IS NULL
 INNER JOIN projects p ON p.id = d.project_id
+LEFT JOIN LATERAL (
+    SELECT id, state, destination_server_id, failure_message
+    FROM instance_migrations
+    WHERE deployment_instance_id = di.id
+    ORDER BY started_at DESC
+    LIMIT 1
+) m ON TRUE
+LEFT JOIN LATERAL (
+    SELECT sampled_at, cpu_percent, memory_rss_bytes, disk_read_bytes, disk_write_bytes, source
+    FROM instance_usage_samples
+    WHERE deployment_instance_id = di.id
+    ORDER BY sampled_at DESC
+    LIMIT 1
+) s ON TRUE
+WHERE di.server_id = $1
+  AND di.deleted_at IS NULL
+ORDER BY di.created_at ASC;
+
+-- name: ServerInstanceUsageLatestForOrg :many
+SELECT
+    di.id AS deployment_instance_id,
+    di.deployment_id,
+    d.project_id,
+    p.name AS project_name,
+    di.vm_id,
+    di.role,
+    di.status,
+    di.created_at,
+    di.updated_at,
+    m.id AS migration_id,
+    m.state AS migration_state,
+    m.destination_server_id AS migration_destination_server_id,
+    m.failure_message AS migration_failure_message,
+    s.sampled_at,
+    s.cpu_percent,
+    s.memory_rss_bytes,
+    s.disk_read_bytes,
+    s.disk_write_bytes,
+    s.source
+FROM deployment_instances di
+INNER JOIN deployments d ON d.id = di.deployment_id
+  AND d.deleted_at IS NULL
+INNER JOIN projects p ON p.id = d.project_id
+  AND p.org_id = $2
 LEFT JOIN LATERAL (
     SELECT id, state, destination_server_id, failure_message
     FROM instance_migrations

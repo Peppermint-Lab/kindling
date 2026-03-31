@@ -22,6 +22,33 @@ import (
 
 const migrationCutoverDeadline = 10 * time.Minute // deadline for live migration cutover
 
+func projectOrgMatches(proj queries.Project, orgID pgtype.UUID) bool {
+	if !proj.OrgID.Valid || !orgID.Valid {
+		return false
+	}
+	return proj.OrgID.Bytes == orgID.Bytes
+}
+
+func deploymentInstanceInOrg(q *queries.Queries, ctx context.Context, instanceID pgtype.UUID, orgID pgtype.UUID) (bool, error) {
+	inst, err := q.DeploymentInstanceFirstByID(ctx, instanceID)
+	if err != nil {
+		return false, err
+	}
+	dep, err := q.DeploymentFirstByID(ctx, inst.DeploymentID)
+	if err != nil {
+		return false, err
+	}
+	proj, err := q.ProjectFirstByID(ctx, dep.ProjectID)
+	if err != nil {
+		return false, err
+	}
+	return projectOrgMatches(proj, orgID), nil
+}
+
+func writeDeploymentInstanceNotFound(w http.ResponseWriter) {
+	rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "deployment instance not found")
+}
+
 type liveMigrationWorkerMetadata struct {
 	Runtime                string
 	LiveMigrationEnabled   bool
@@ -60,12 +87,25 @@ func (h *Handler) getDeploymentInstanceMigration(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	if !rpcutil.RequirePlatformAdmin(w, p) {
+	if !rpcutil.RequireOrgAdmin(w, p) {
 		return
 	}
 	id, err := rpcutil.ParseUUID(r.PathValue("id"))
 	if err != nil {
 		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_id", "invalid deployment instance id")
+		return
+	}
+	inOrg, err := deploymentInstanceInOrg(h.Q, r.Context(), id, p.OrganizationID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeDeploymentInstanceNotFound(w)
+			return
+		}
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "deployment_instance", err)
+		return
+	}
+	if !inOrg {
+		writeDeploymentInstanceNotFound(w)
 		return
 	}
 	row, err := h.Q.InstanceMigrationLatestByDeploymentInstanceID(r.Context(), id)
@@ -85,7 +125,7 @@ func (h *Handler) postDeploymentInstanceLiveMigrate(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	if !rpcutil.RequirePlatformAdmin(w, p) {
+	if !rpcutil.RequireOrgAdmin(w, p) {
 		return
 	}
 	instanceID, err := rpcutil.ParseUUID(r.PathValue("id"))
@@ -93,9 +133,22 @@ func (h *Handler) postDeploymentInstanceLiveMigrate(w http.ResponseWriter, r *ht
 		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_id", "invalid deployment instance id")
 		return
 	}
+	inOrg, err := deploymentInstanceInOrg(h.Q, r.Context(), instanceID, p.OrganizationID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeDeploymentInstanceNotFound(w)
+			return
+		}
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "deployment_instance", err)
+		return
+	}
+	if !inOrg {
+		writeDeploymentInstanceNotFound(w)
+		return
+	}
 	inst, err := h.Q.DeploymentInstanceFirstByID(r.Context(), instanceID)
 	if err != nil {
-		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "deployment instance not found")
+		writeDeploymentInstanceNotFound(w)
 		return
 	}
 	if inst.DeletedAt.Valid || !inst.ServerID.Valid || !inst.VmID.Valid || inst.Status != "running" || inst.Role != "active" {
@@ -128,11 +181,13 @@ func (h *Handler) postDeploymentInstanceLiveMigrate(w http.ResponseWriter, r *ht
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "project_volume", err)
 		return
 	}
-	if _, err := h.Q.InstanceMigrationFindActiveByDeploymentInstanceID(r.Context(), instanceID); err == nil {
+	_, activeErr := h.Q.InstanceMigrationFindActiveByDeploymentInstanceID(r.Context(), instanceID)
+	if activeErr == nil {
 		rpcutil.WriteAPIError(w, http.StatusConflict, "migration_in_progress", "an active migration already exists for this instance")
 		return
-	} else if err != nil && err != pgx.ErrNoRows {
-		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "instance_migration", err)
+	}
+	if activeErr != pgx.ErrNoRows {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "instance_migration", activeErr)
 		return
 	}
 	sourceServer, err := h.Q.ServerFindByID(r.Context(), inst.ServerID)
@@ -255,11 +310,6 @@ func (h *Handler) liveMigrationWorkerMetadataForServer(ctx context.Context, serv
 
 var errNoLiveMigrationDestination = errors.New("no active cloud-hypervisor destination server is available for live migration")
 
-// ParseLiveMigrationWorkerMetadata extracts migration metadata from a server component status.
-func ParseLiveMigrationWorkerMetadata(status queries.ServerComponentStatus) (liveMigrationWorkerMetadata, error) {
-	return parseLiveMigrationWorkerMetadata(status)
-}
-
 func parseLiveMigrationWorkerMetadata(status queries.ServerComponentStatus) (liveMigrationWorkerMetadata, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(status.Metadata, &raw); err != nil {
@@ -276,11 +326,6 @@ func parseLiveMigrationWorkerMetadata(status queries.ServerComponentStatus) (liv
 	return meta, nil
 }
 
-// ValidateLiveMigrationSource checks that a server is a valid live migration source.
-func ValidateLiveMigrationSource(meta liveMigrationWorkerMetadata) error {
-	return validateLiveMigrationSource(meta)
-}
-
 func validateLiveMigrationSource(meta liveMigrationWorkerMetadata) error {
 	if meta.Runtime != "cloud-hypervisor" {
 		return errors.New("source server worker runtime is not cloud-hypervisor")
@@ -292,11 +337,6 @@ func validateLiveMigrationSource(meta liveMigrationWorkerMetadata) error {
 		return errors.New("source server worker does not advertise shared rootfs storage")
 	}
 	return nil
-}
-
-// ValidateLiveMigrationDestination checks that a server is a valid live migration destination.
-func ValidateLiveMigrationDestination(source liveMigrationWorkerMetadata, server queries.Server, destination liveMigrationWorkerMetadata) error {
-	return validateLiveMigrationDestination(source, server, destination)
 }
 
 func validateLiveMigrationDestination(source liveMigrationWorkerMetadata, server queries.Server, destination liveMigrationWorkerMetadata) error {

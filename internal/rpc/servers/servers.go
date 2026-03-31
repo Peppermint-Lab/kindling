@@ -4,12 +4,14 @@ package servers
 import (
 	"context"
 	"encoding/json"
+	"net/netip"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/rpc/rpcutil"
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
@@ -104,6 +106,18 @@ type serverDetailOut struct {
 	Volumes   []serverVolumeOut   `json:"volumes"`
 }
 
+func redactServerSummary(summary serverSummaryOut) serverSummaryOut {
+	summary.InternalIp = ""
+	summary.IpRange = netip.Prefix{}
+	summary.WireguardIp = netip.Addr{}
+	summary.WireguardPublicKey = ""
+	summary.WireguardEndpoint = ""
+	summary.Runtime = ""
+	summary.EnabledComponents = nil
+	summary.Components = nil
+	return summary
+}
+
 // BuildServerVolumeOut converts a volume and project name into the API output.
 func BuildServerVolumeOut(volume queries.ProjectVolume, projectName string) serverVolumeOut {
 	projectName = strings.TrimSpace(projectName)
@@ -125,8 +139,28 @@ func BuildServerVolumeOut(volume queries.ProjectVolume, projectName string) serv
 	}
 }
 
-// OverviewRows returns server summaries for all servers.
-func (h *Handler) OverviewRows(ctx context.Context) ([]serverSummaryOut, error) {
+func (h *Handler) orgHasWorkloadOnServer(ctx context.Context, serverID, orgID pgtype.UUID) (bool, error) {
+	instanceCount, err := h.Q.DeploymentInstanceCountByServerIDForOrg(ctx, queries.DeploymentInstanceCountByServerIDForOrgParams{
+		ServerID: serverID,
+		OrgID:    orgID,
+	})
+	if err != nil {
+		return false, err
+	}
+	if instanceCount > 0 {
+		return true, nil
+	}
+	volumeCount, err := h.Q.ProjectVolumeCountByServerIDForOrg(ctx, queries.ProjectVolumeCountByServerIDForOrgParams{
+		ServerID: serverID,
+		OrgID:    orgID,
+	})
+	if err != nil {
+		return false, err
+	}
+	return volumeCount > 0, nil
+}
+
+func (h *Handler) overviewRowsForOrg(ctx context.Context, orgID pgtype.UUID) ([]serverSummaryOut, error) {
 	servers, err := h.Q.ServerFindAll(ctx)
 	if err != nil {
 		return nil, err
@@ -137,19 +171,40 @@ func (h *Handler) OverviewRows(ctx context.Context) ([]serverSummaryOut, error) 
 	}
 	byServer := make(map[string][]queries.ServerComponentStatus, len(servers))
 	for _, status := range statuses {
-		byServer[pguuid.ToString(status.ServerID)] = append(byServer[pguuid.ToString(status.ServerID)], status)
+		sid := pguuid.ToString(status.ServerID)
+		byServer[sid] = append(byServer[sid], status)
 	}
 
 	now := time.Now().UTC()
 	out := make([]serverSummaryOut, 0, len(servers))
 	for _, server := range servers {
-		instanceCount, err := h.Q.DeploymentInstanceCountByServerID(ctx, server.ID)
+		instanceCount, err := h.Q.DeploymentInstanceCountByServerIDForOrg(ctx, queries.DeploymentInstanceCountByServerIDForOrgParams{
+			ServerID: server.ID,
+			OrgID:    orgID,
+		})
 		if err != nil {
 			return nil, err
 		}
-		activeCount, err := h.Q.DeploymentInstanceActiveCountByServerID(ctx, server.ID)
+		activeCount, err := h.Q.DeploymentInstanceActiveCountByServerIDForOrg(ctx, queries.DeploymentInstanceActiveCountByServerIDForOrgParams{
+			ServerID: server.ID,
+			OrgID:    orgID,
+		})
 		if err != nil {
 			return nil, err
+		}
+		hasWorkload := instanceCount > 0
+		if !hasWorkload {
+			volumeCount, vErr := h.Q.ProjectVolumeCountByServerIDForOrg(ctx, queries.ProjectVolumeCountByServerIDForOrgParams{
+				ServerID: server.ID,
+				OrgID:    orgID,
+			})
+			if vErr != nil {
+				return nil, vErr
+			}
+			hasWorkload = volumeCount > 0
+		}
+		if !hasWorkload {
+			continue
 		}
 		out = append(out, buildServerSummary(server, instanceCount, activeCount, 0, byServer[pguuid.ToString(server.ID)], now))
 	}
@@ -161,13 +216,18 @@ func (h *Handler) listServers(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !rpcutil.RequirePlatformAdmin(w, p) {
+	if !rpcutil.RequireOrgAdmin(w, p) {
 		return
 	}
-	out, err := h.OverviewRows(r.Context())
+	out, err := h.overviewRowsForOrg(r.Context(), p.OrganizationID)
 	if err != nil {
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "list_servers", err)
 		return
+	}
+	if !p.PlatformAdmin {
+		for i := range out {
+			out[i] = redactServerSummary(out[i])
+		}
 	}
 	rpcutil.WriteJSON(w, http.StatusOK, out)
 }
@@ -243,7 +303,7 @@ func (h *Handler) getServerDetails(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !rpcutil.RequirePlatformAdmin(w, p) {
+	if !rpcutil.RequireOrgAdmin(w, p) {
 		return
 	}
 	id, err := rpcutil.ParseUUID(r.PathValue("id"))
@@ -259,12 +319,28 @@ func (h *Handler) getServerDetails(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	instanceCount, err := h.Q.DeploymentInstanceCountByServerID(ctx, id)
+	hasWorkload, err := h.orgHasWorkloadOnServer(ctx, id, p.OrganizationID)
 	if err != nil {
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
 		return
 	}
-	activeCount, err := h.Q.DeploymentInstanceActiveCountByServerID(ctx, id)
+	if !hasWorkload {
+		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "server not found")
+		return
+	}
+
+	instanceCount, err := h.Q.DeploymentInstanceCountByServerIDForOrg(ctx, queries.DeploymentInstanceCountByServerIDForOrgParams{
+		ServerID: id,
+		OrgID:    p.OrganizationID,
+	})
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
+		return
+	}
+	activeCount, err := h.Q.DeploymentInstanceActiveCountByServerIDForOrg(ctx, queries.DeploymentInstanceActiveCountByServerIDForOrgParams{
+		ServerID: id,
+		OrgID:    p.OrganizationID,
+	})
 	if err != nil {
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
 		return
@@ -274,12 +350,18 @@ func (h *Handler) getServerDetails(w http.ResponseWriter, r *http.Request) {
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
 		return
 	}
-	rows, err := h.Q.ServerInstanceUsageLatest(ctx, id)
+	rows, err := h.Q.ServerInstanceUsageLatestForOrg(ctx, queries.ServerInstanceUsageLatestForOrgParams{
+		ServerID: id,
+		OrgID:    p.OrganizationID,
+	})
 	if err != nil {
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
 		return
 	}
-	volumesByServer, err := h.Q.ProjectVolumeFindByServerID(ctx, id)
+	volumesByServer, err := h.Q.ProjectVolumeFindByServerIDForOrg(ctx, queries.ProjectVolumeFindByServerIDForOrgParams{
+		ServerID: id,
+		OrgID:    p.OrganizationID,
+	})
 	if err != nil {
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
 		return
@@ -401,8 +483,13 @@ func (h *Handler) getServerDetails(w http.ResponseWriter, r *http.Request) {
 		return 0
 	})
 
+	summary := buildServerSummary(server, instanceCount, activeCount, runningCount, statuses, now)
+	if !p.PlatformAdmin {
+		summary = redactServerSummary(summary)
+	}
+
 	rpcutil.WriteJSON(w, http.StatusOK, serverDetailOut{
-		Summary:   buildServerSummary(server, instanceCount, activeCount, runningCount, statuses, now),
+		Summary:   summary,
 		Instances: instances,
 		Volumes:   volumes,
 	})

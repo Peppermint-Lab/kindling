@@ -2177,6 +2177,28 @@ func (q *Queries) DeploymentInstanceActiveCountByServerID(ctx context.Context, s
 	return count, err
 }
 
+const deploymentInstanceActiveCountByServerIDForOrg = `-- name: DeploymentInstanceActiveCountByServerIDForOrg :one
+SELECT COUNT(*)::bigint AS count FROM deployment_instances di
+INNER JOIN deployments d ON d.id = di.deployment_id AND d.deleted_at IS NULL
+INNER JOIN projects p ON p.id = d.project_id
+WHERE di.server_id = $1
+  AND di.deleted_at IS NULL
+  AND di.role = 'active'
+  AND p.org_id = $2
+`
+
+type DeploymentInstanceActiveCountByServerIDForOrgParams struct {
+	ServerID pgtype.UUID `json:"server_id"`
+	OrgID    pgtype.UUID `json:"org_id"`
+}
+
+func (q *Queries) DeploymentInstanceActiveCountByServerIDForOrg(ctx context.Context, arg DeploymentInstanceActiveCountByServerIDForOrgParams) (int64, error) {
+	row := q.db.QueryRow(ctx, deploymentInstanceActiveCountByServerIDForOrg, arg.ServerID, arg.OrgID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deploymentInstanceAttachVM = `-- name: DeploymentInstanceAttachVM :one
 UPDATE deployment_instances SET vm_id = $2, status = $3, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
@@ -2216,6 +2238,25 @@ WHERE server_id = $1 AND deleted_at IS NULL
 
 func (q *Queries) DeploymentInstanceCountByServerID(ctx context.Context, serverID pgtype.UUID) (int64, error) {
 	row := q.db.QueryRow(ctx, deploymentInstanceCountByServerID, serverID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const deploymentInstanceCountByServerIDForOrg = `-- name: DeploymentInstanceCountByServerIDForOrg :one
+SELECT COUNT(*)::bigint AS count FROM deployment_instances di
+INNER JOIN deployments d ON d.id = di.deployment_id AND d.deleted_at IS NULL
+INNER JOIN projects p ON p.id = d.project_id
+WHERE di.server_id = $1 AND di.deleted_at IS NULL AND p.org_id = $2
+`
+
+type DeploymentInstanceCountByServerIDForOrgParams struct {
+	ServerID pgtype.UUID `json:"server_id"`
+	OrgID    pgtype.UUID `json:"org_id"`
+}
+
+func (q *Queries) DeploymentInstanceCountByServerIDForOrg(ctx context.Context, arg DeploymentInstanceCountByServerIDForOrgParams) (int64, error) {
+	row := q.db.QueryRow(ctx, deploymentInstanceCountByServerIDForOrg, arg.ServerID, arg.OrgID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -7274,6 +7315,24 @@ func (q *Queries) ProjectVolumeBackupUpdateState(ctx context.Context, arg Projec
 	return i, err
 }
 
+const projectVolumeCountByServerIDForOrg = `-- name: ProjectVolumeCountByServerIDForOrg :one
+SELECT COUNT(*)::bigint AS count FROM project_volumes pv
+INNER JOIN projects p ON p.id = pv.project_id
+WHERE pv.server_id = $1 AND pv.deleted_at IS NULL AND p.org_id = $2
+`
+
+type ProjectVolumeCountByServerIDForOrgParams struct {
+	ServerID pgtype.UUID `json:"server_id"`
+	OrgID    pgtype.UUID `json:"org_id"`
+}
+
+func (q *Queries) ProjectVolumeCountByServerIDForOrg(ctx context.Context, arg ProjectVolumeCountByServerIDForOrgParams) (int64, error) {
+	row := q.db.QueryRow(ctx, projectVolumeCountByServerIDForOrg, arg.ServerID, arg.OrgID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const projectVolumeCreate = `-- name: ProjectVolumeCreate :one
 INSERT INTO project_volumes (
     id, project_id, service_id, mount_path, size_gb, filesystem, status, health, backup_schedule, backup_retention_count, pre_delete_backup_enabled
@@ -7505,6 +7564,56 @@ ORDER BY created_at ASC
 
 func (q *Queries) ProjectVolumeFindByServerID(ctx context.Context, serverID pgtype.UUID) ([]ProjectVolume, error) {
 	rows, err := q.db.Query(ctx, projectVolumeFindByServerID, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectVolume{}
+	for rows.Next() {
+		var i ProjectVolume
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.ServiceID,
+			&i.ServerID,
+			&i.AttachedVmID,
+			&i.MountPath,
+			&i.SizeGb,
+			&i.Filesystem,
+			&i.Status,
+			&i.Health,
+			&i.BackupSchedule,
+			&i.BackupRetentionCount,
+			&i.PreDeleteBackupEnabled,
+			&i.LastError,
+			&i.DeletedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const projectVolumeFindByServerIDForOrg = `-- name: ProjectVolumeFindByServerIDForOrg :many
+SELECT pv.id, pv.project_id, pv.service_id, pv.server_id, pv.attached_vm_id, pv.mount_path, pv.size_gb, pv.filesystem, pv.status, pv.health, pv.backup_schedule, pv.backup_retention_count, pv.pre_delete_backup_enabled, pv.last_error, pv.deleted_at, pv.created_at, pv.updated_at FROM project_volumes pv
+INNER JOIN projects p ON p.id = pv.project_id
+WHERE pv.server_id = $1 AND pv.deleted_at IS NULL AND p.org_id = $2
+ORDER BY pv.created_at ASC
+`
+
+type ProjectVolumeFindByServerIDForOrgParams struct {
+	ServerID pgtype.UUID `json:"server_id"`
+	OrgID    pgtype.UUID `json:"org_id"`
+}
+
+func (q *Queries) ProjectVolumeFindByServerIDForOrg(ctx context.Context, arg ProjectVolumeFindByServerIDForOrgParams) ([]ProjectVolume, error) {
+	rows, err := q.db.Query(ctx, projectVolumeFindByServerIDForOrg, arg.ServerID, arg.OrgID)
 	if err != nil {
 		return nil, err
 	}
@@ -10108,6 +10217,118 @@ func (q *Queries) ServerInstanceUsageLatest(ctx context.Context, serverID pgtype
 	items := []ServerInstanceUsageLatestRow{}
 	for rows.Next() {
 		var i ServerInstanceUsageLatestRow
+		if err := rows.Scan(
+			&i.DeploymentInstanceID,
+			&i.DeploymentID,
+			&i.ProjectID,
+			&i.ProjectName,
+			&i.VmID,
+			&i.Role,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.MigrationID,
+			&i.MigrationState,
+			&i.MigrationDestinationServerID,
+			&i.MigrationFailureMessage,
+			&i.SampledAt,
+			&i.CpuPercent,
+			&i.MemoryRssBytes,
+			&i.DiskReadBytes,
+			&i.DiskWriteBytes,
+			&i.Source,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const serverInstanceUsageLatestForOrg = `-- name: ServerInstanceUsageLatestForOrg :many
+SELECT
+    di.id AS deployment_instance_id,
+    di.deployment_id,
+    d.project_id,
+    p.name AS project_name,
+    di.vm_id,
+    di.role,
+    di.status,
+    di.created_at,
+    di.updated_at,
+    m.id AS migration_id,
+    m.state AS migration_state,
+    m.destination_server_id AS migration_destination_server_id,
+    m.failure_message AS migration_failure_message,
+    s.sampled_at,
+    s.cpu_percent,
+    s.memory_rss_bytes,
+    s.disk_read_bytes,
+    s.disk_write_bytes,
+    s.source
+FROM deployment_instances di
+INNER JOIN deployments d ON d.id = di.deployment_id
+  AND d.deleted_at IS NULL
+INNER JOIN projects p ON p.id = d.project_id
+  AND p.org_id = $2
+LEFT JOIN LATERAL (
+    SELECT id, state, destination_server_id, failure_message
+    FROM instance_migrations
+    WHERE deployment_instance_id = di.id
+    ORDER BY started_at DESC
+    LIMIT 1
+) m ON TRUE
+LEFT JOIN LATERAL (
+    SELECT sampled_at, cpu_percent, memory_rss_bytes, disk_read_bytes, disk_write_bytes, source
+    FROM instance_usage_samples
+    WHERE deployment_instance_id = di.id
+    ORDER BY sampled_at DESC
+    LIMIT 1
+) s ON TRUE
+WHERE di.server_id = $1
+  AND di.deleted_at IS NULL
+ORDER BY di.created_at ASC
+`
+
+type ServerInstanceUsageLatestForOrgParams struct {
+	ServerID pgtype.UUID `json:"server_id"`
+	OrgID    pgtype.UUID `json:"org_id"`
+}
+
+type ServerInstanceUsageLatestForOrgRow struct {
+	DeploymentInstanceID         pgtype.UUID        `json:"deployment_instance_id"`
+	DeploymentID                 pgtype.UUID        `json:"deployment_id"`
+	ProjectID                    pgtype.UUID        `json:"project_id"`
+	ProjectName                  string             `json:"project_name"`
+	VmID                         pgtype.UUID        `json:"vm_id"`
+	Role                         string             `json:"role"`
+	Status                       string             `json:"status"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	MigrationID                  pgtype.UUID        `json:"migration_id"`
+	MigrationState               string             `json:"migration_state"`
+	MigrationDestinationServerID pgtype.UUID        `json:"migration_destination_server_id"`
+	MigrationFailureMessage      string             `json:"migration_failure_message"`
+	SampledAt                    pgtype.Timestamptz `json:"sampled_at"`
+	CpuPercent                   pgtype.Float8      `json:"cpu_percent"`
+	MemoryRssBytes               int64              `json:"memory_rss_bytes"`
+	DiskReadBytes                int64              `json:"disk_read_bytes"`
+	DiskWriteBytes               int64              `json:"disk_write_bytes"`
+	Source                       string             `json:"source"`
+}
+
+func (q *Queries) ServerInstanceUsageLatestForOrg(ctx context.Context, arg ServerInstanceUsageLatestForOrgParams) ([]ServerInstanceUsageLatestForOrgRow, error) {
+	rows, err := q.db.Query(ctx, serverInstanceUsageLatestForOrg, arg.ServerID, arg.OrgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ServerInstanceUsageLatestForOrgRow{}
+	for rows.Next() {
+		var i ServerInstanceUsageLatestForOrgRow
 		if err := rows.Scan(
 			&i.DeploymentInstanceID,
 			&i.DeploymentID,
