@@ -217,6 +217,9 @@ export function ProjectDetailPage() {
   const [scaleToZeroEnabled, setScaleToZeroEnabled] = useState(true)
   const [scalingSaving, setScalingSaving] = useState(false)
   const [buildRuleSaving, setBuildRuleSaving] = useState(false)
+  const [buildRootDirectory, setBuildRootDirectory] = useState("/")
+  const [buildDockerfilePath, setBuildDockerfilePath] = useState("Dockerfile")
+  const [buildPathsSaving, setBuildPathsSaving] = useState(false)
 
   const [domains, setDomains] = useState<ProjectDomain[]>([])
   const [domainsLoading, setDomainsLoading] = useState(false)
@@ -511,6 +514,8 @@ export function ProjectDetailPage() {
           setMinInstances(typeof p.min_instance_count === "number" && p.min_instance_count >= 0 ? p.min_instance_count : 0)
           setMaxInstances(typeof p.max_instance_count === "number" && p.max_instance_count >= 0 ? p.max_instance_count : 3)
           setScaleToZeroEnabled(p.scale_to_zero_enabled !== false)
+          setBuildRootDirectory(p.root_directory?.trim() ? p.root_directory : "/")
+          setBuildDockerfilePath(p.dockerfile_path?.trim() ? p.dockerfile_path : "Dockerfile")
           void loadGitHubSetup(id, Boolean(p.github_repository?.trim()))
           void loadDomains(id)
         })
@@ -535,6 +540,8 @@ export function ProjectDetailPage() {
     setMinInstances(0)
     setMaxInstances(3)
     setScaleToZeroEnabled(true)
+    setBuildRootDirectory("/")
+    setBuildDockerfilePath("Dockerfile")
     setProjectVolume(null)
     setVolumeBackups([])
     setVolumeMountPath("/data")
@@ -733,6 +740,26 @@ export function ProjectDetailPage() {
       setError(e instanceof APIError ? e.message : "Could not update build rules")
     } finally {
       setBuildRuleSaving(false)
+    }
+  }
+
+  const handleSaveBuildPaths = async () => {
+    if (!id) return
+    const root = buildRootDirectory.trim() || "/"
+    const dockerfile = buildDockerfilePath.trim() || "Dockerfile"
+    setBuildPathsSaving(true)
+    setError(null)
+    try {
+      const p = await api.patchProject(id, { root_directory: root, dockerfile_path: dockerfile })
+      setProject(p)
+      setBuildRootDirectory(p.root_directory?.trim() ? p.root_directory : "/")
+      setBuildDockerfilePath(p.dockerfile_path?.trim() ? p.dockerfile_path : "Dockerfile")
+      const svc = await api.listProjectServices(id)
+      setServices(svc)
+    } catch (e) {
+      setError(e instanceof APIError ? e.message : "Could not update build paths")
+    } finally {
+      setBuildPathsSaving(false)
     }
   }
 
@@ -1101,13 +1128,56 @@ export function ProjectDetailPage() {
                       </p>
                     )}
                   </MetadataItem>
-                  <MetadataItem label="Dockerfile">
-                    <p className="font-mono text-sm">{project.dockerfile_path}</p>
-                  </MetadataItem>
-                  <MetadataItem label="Root directory">
-                    <p className="font-mono text-sm">{project.root_directory}</p>
-                  </MetadataItem>
                 </MetadataGrid>
+                <div className="rounded-lg border bg-muted/20 p-4 space-y-3">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Build context</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Paths are relative to the repository root. Saving updates this project and syncs the primary
+                      service; trigger a new deploy for changes to take effect.
+                    </p>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="space-y-1 min-w-0">
+                      <Label htmlFor="project-root-dir" className="text-xs text-muted-foreground">
+                        Root directory
+                      </Label>
+                      <Input
+                        id="project-root-dir"
+                        className="font-mono h-9"
+                        value={buildRootDirectory}
+                        disabled={buildPathsSaving}
+                        onChange={(e) => setBuildRootDirectory(e.target.value)}
+                        placeholder="/web/landing"
+                      />
+                    </div>
+                    <div className="space-y-1 min-w-0">
+                      <Label htmlFor="project-dockerfile" className="text-xs text-muted-foreground">
+                        Dockerfile path
+                      </Label>
+                      <Input
+                        id="project-dockerfile"
+                        className="font-mono h-9"
+                        value={buildDockerfilePath}
+                        disabled={buildPathsSaving}
+                        onChange={(e) => setBuildDockerfilePath(e.target.value)}
+                        placeholder="Dockerfile"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={buildPathsSaving}
+                      className="shrink-0"
+                      onClick={() => void handleSaveBuildPaths()}
+                    >
+                      {buildPathsSaving ? "Saving…" : "Save build context"}
+                    </Button>
+                  </div>
+                </div>
                 <div className="space-y-3">
                   <div>
                     <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Services</p>

@@ -879,6 +879,8 @@ export const api = {
       max_instance_count?: number
       scale_to_zero_enabled?: boolean
       build_only_on_root_changes?: boolean
+      root_directory?: string
+      dockerfile_path?: string
     },
   ) =>
     request<Project>(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(data) }),

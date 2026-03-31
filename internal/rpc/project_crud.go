@@ -235,18 +235,20 @@ func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		DesiredInstanceCount   *int32 `json:"desired_instance_count"`
-		MinInstanceCount       *int32 `json:"min_instance_count"`
-		MaxInstanceCount       *int32 `json:"max_instance_count"`
-		ScaleToZeroEnabled     *bool  `json:"scale_to_zero_enabled"`
-		BuildOnlyOnRootChanges *bool  `json:"build_only_on_root_changes"`
+		DesiredInstanceCount   *int32  `json:"desired_instance_count"`
+		MinInstanceCount       *int32  `json:"min_instance_count"`
+		MaxInstanceCount       *int32  `json:"max_instance_count"`
+		ScaleToZeroEnabled     *bool   `json:"scale_to_zero_enabled"`
+		BuildOnlyOnRootChanges *bool   `json:"build_only_on_root_changes"`
+		RootDirectory          *string `json:"root_directory"`
+		DockerfilePath         *string `json:"dockerfile_path"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "invalid JSON body")
 		return
 	}
-	if req.DesiredInstanceCount == nil && req.MinInstanceCount == nil && req.MaxInstanceCount == nil && req.ScaleToZeroEnabled == nil && req.BuildOnlyOnRootChanges == nil {
-		writeAPIError(w, http.StatusBadRequest, "validation_error", "provide min_instance_count and/or max_instance_count and/or scale_to_zero_enabled and/or build_only_on_root_changes")
+	if req.DesiredInstanceCount == nil && req.MinInstanceCount == nil && req.MaxInstanceCount == nil && req.ScaleToZeroEnabled == nil && req.BuildOnlyOnRootChanges == nil && req.RootDirectory == nil && req.DockerfilePath == nil {
+		writeAPIError(w, http.StatusBadRequest, "validation_error", "provide at least one field to update")
 		return
 	}
 	current, err := a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
@@ -313,6 +315,34 @@ func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
 			ID:                     id,
 			BuildOnlyOnRootChanges: *req.BuildOnlyOnRootChanges,
 			OrgID:                  p.OrganizationID,
+		})
+		if err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)
+			return
+		}
+	}
+	if req.RootDirectory != nil || req.DockerfilePath != nil {
+		rootDir := current.RootDirectory
+		if req.RootDirectory != nil {
+			t := strings.TrimSpace(*req.RootDirectory)
+			if t == "" {
+				t = "/"
+			}
+			rootDir = t
+		}
+		dockerfilePath := current.DockerfilePath
+		if req.DockerfilePath != nil {
+			t := strings.TrimSpace(*req.DockerfilePath)
+			if t == "" {
+				t = "Dockerfile"
+			}
+			dockerfilePath = t
+		}
+		project, err = a.q.ProjectUpdateBuildPaths(r.Context(), queries.ProjectUpdateBuildPathsParams{
+			ID:             id,
+			RootDirectory:  rootDir,
+			DockerfilePath: dockerfilePath,
+			OrgID:          p.OrganizationID,
 		})
 		if err != nil {
 			writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project", err)

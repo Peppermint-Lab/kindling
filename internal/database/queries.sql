@@ -392,6 +392,14 @@ SET build_only_on_root_changes = $2, updated_at = NOW()
 WHERE id = $1 AND org_id = $3
 RETURNING *;
 
+-- name: ProjectUpdateBuildPaths :one
+UPDATE projects
+SET root_directory = $2,
+    dockerfile_path = $3,
+    updated_at = NOW()
+WHERE id = $1 AND org_id = $4
+RETURNING *;
+
 -- Services --
 
 -- name: ServiceCreate :one

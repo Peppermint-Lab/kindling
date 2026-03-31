@@ -6757,6 +6757,52 @@ func (q *Queries) ProjectUpdateBuildOnlyOnRootChanges(ctx context.Context, arg P
 	return i, err
 }
 
+const projectUpdateBuildPaths = `-- name: ProjectUpdateBuildPaths :one
+UPDATE projects
+SET root_directory = $2,
+    dockerfile_path = $3,
+    updated_at = NOW()
+WHERE id = $1 AND org_id = $4
+RETURNING id, org_id, name, github_repository, github_installation_id, github_webhook_secret, root_directory, dockerfile_path, desired_instance_count, min_instance_count, max_instance_count, last_request_at, scaled_to_zero, scale_to_zero_enabled, build_only_on_root_changes, created_at, updated_at
+`
+
+type ProjectUpdateBuildPathsParams struct {
+	ID             pgtype.UUID `json:"id"`
+	RootDirectory  string      `json:"root_directory"`
+	DockerfilePath string      `json:"dockerfile_path"`
+	OrgID          pgtype.UUID `json:"org_id"`
+}
+
+func (q *Queries) ProjectUpdateBuildPaths(ctx context.Context, arg ProjectUpdateBuildPathsParams) (Project, error) {
+	row := q.db.QueryRow(ctx, projectUpdateBuildPaths,
+		arg.ID,
+		arg.RootDirectory,
+		arg.DockerfilePath,
+		arg.OrgID,
+	)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.GithubRepository,
+		&i.GithubInstallationID,
+		&i.GithubWebhookSecret,
+		&i.RootDirectory,
+		&i.DockerfilePath,
+		&i.DesiredInstanceCount,
+		&i.MinInstanceCount,
+		&i.MaxInstanceCount,
+		&i.LastRequestAt,
+		&i.ScaledToZero,
+		&i.ScaleToZeroEnabled,
+		&i.BuildOnlyOnRootChanges,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const projectUpdateDesiredInstanceCount = `-- name: ProjectUpdateDesiredInstanceCount :one
 UPDATE projects
 SET desired_instance_count = $2, updated_at = NOW()
