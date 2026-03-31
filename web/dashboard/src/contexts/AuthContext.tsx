@@ -12,9 +12,9 @@ import { api, type AuthSession } from "@/lib/api"
 type AuthContextValue = {
   session: AuthSession | null
   loading: boolean
-  refresh: () => Promise<void>
+  refresh: () => Promise<AuthSession>
   logout: () => Promise<void>
-  switchOrg: (organizationId: string) => Promise<void>
+  switchOrg: (organizationId: string) => Promise<AuthSession>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -26,6 +26,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     const s = await api.authSession()
     setSession(s)
+    return s
   }, [])
 
   const logout = useCallback(async () => {
@@ -36,6 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const switchOrg = useCallback(async (organizationId: string) => {
     const s = await api.authSwitchOrg(organizationId)
     setSession(s)
+    return s
   }, [])
 
   useEffect(() => {

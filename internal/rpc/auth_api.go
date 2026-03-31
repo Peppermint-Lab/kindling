@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/auth"
 	"github.com/kindlingvm/kindling/internal/database/queries"
@@ -101,7 +102,7 @@ func (a *API) sessionPayloadFromAPIKey(r *http.Request) map[string]any {
 		slog.Warn("list orgs for api key session", "error", err)
 		orgs = nil
 	}
-	return map[string]any{
+	out := map[string]any{
 		"authenticated": true,
 		"user": map[string]any{
 			"id":           uuid.UUID(u.ID.Bytes).String(),
@@ -120,6 +121,8 @@ func (a *API) sessionPayloadFromAPIKey(r *http.Request) map[string]any {
 		}(),
 		"auth": "api_key",
 	}
+	a.mergeOnboardingSession(r.Context(), keyRow.OrganizationID, out)
+	return out
 }
 
 func (a *API) authSuccessPayload(ctx context.Context, u queries.User, org queries.Organization, role string, allOrgs []queries.Organization) map[string]any {
@@ -127,7 +130,7 @@ func (a *API) authSuccessPayload(ctx context.Context, u queries.User, org querie
 	for _, o := range allOrgs {
 		sl = append(sl, organizationJSON(o))
 	}
-	return map[string]any{
+	out := map[string]any{
 		"authenticated": true,
 		"user": map[string]any{
 			"id":           uuid.UUID(u.ID.Bytes).String(),
@@ -139,6 +142,8 @@ func (a *API) authSuccessPayload(ctx context.Context, u queries.User, org querie
 		"role":           role,
 		"organizations":  sl,
 	}
+	a.mergeOnboardingSession(ctx, org.ID, out)
+	return out
 }
 
 func (a *API) sessionPayload(r *http.Request) map[string]any {
@@ -174,7 +179,7 @@ func (a *API) sessionPayload(r *http.Request) map[string]any {
 		slog.Warn("list orgs for session", "error", err)
 		orgs = nil
 	}
-	return map[string]any{
+	out := map[string]any{
 		"authenticated": true,
 		"user": map[string]any{
 			"id":           uuid.UUID(u.ID.Bytes).String(),
@@ -192,6 +197,8 @@ func (a *API) sessionPayload(r *http.Request) map[string]any {
 			return sl
 		}(),
 	}
+	a.mergeOnboardingSession(r.Context(), sess.CurrentOrganizationID, out)
+	return out
 }
 
 func organizationJSON(o queries.Organization) map[string]any {
@@ -200,6 +207,34 @@ func organizationJSON(o queries.Organization) map[string]any {
 		"name": o.Name,
 		"slug": o.Slug,
 	}
+}
+
+func setSessionOnboardingFlags(dest map[string]any, completed bool) {
+	dest["onboarding_completed"] = completed
+	dest["needs_onboarding"] = !completed
+}
+
+func (a *API) mergeOnboardingSession(ctx context.Context, orgID pgtype.UUID, dest map[string]any) {
+	dest["deployment_kind"] = DeploymentKind()
+	onboardingOrgID := onboardingStateOrgID(orgID)
+	if !onboardingOrgID.Valid {
+		setSessionOnboardingFlags(dest, false)
+		return
+	}
+	if err := a.q.OrgOnboardingEnsure(ctx, onboardingOrgID); err != nil {
+		slog.Warn("org onboarding ensure", "error", err)
+		setSessionOnboardingFlags(dest, false)
+		return
+	}
+	row, err := a.q.OrgOnboardingGet(ctx, onboardingOrgID)
+	if err != nil {
+		if err != pgx.ErrNoRows {
+			slog.Warn("org onboarding get", "error", err)
+		}
+		setSessionOnboardingFlags(dest, false)
+		return
+	}
+	setSessionOnboardingFlags(dest, row.CompletedAt.Valid)
 }
 
 func (a *API) authBootstrap(w http.ResponseWriter, r *http.Request) {

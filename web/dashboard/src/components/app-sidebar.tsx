@@ -96,8 +96,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <select
               className="w-full text-xs rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1.5 text-foreground backdrop-blur-sm focus:outline-none focus:border-orange-500/40"
               value={session.organization.id}
-              onChange={(e) => {
-                void switchOrg(e.target.value)
+              onChange={async (e) => {
+                const s = await switchOrg(e.target.value)
+                if (s.authenticated && s.needs_onboarding) navigate("/onboarding", { replace: true })
               }}
             >
               {session.organizations.map((o: AuthOrganization) => (

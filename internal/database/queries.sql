@@ -2455,3 +2455,103 @@ FROM organization_memberships m
 INNER JOIN users u ON u.id = m.user_id
 WHERE m.organization_id = $1 AND m.status = 'pending'
 ORDER BY m.created_at ASC;
+
+-- Onboarding & hosted worker agents --
+
+-- name: OrgOnboardingGet :one
+SELECT * FROM org_onboarding WHERE organization_id = $1;
+
+-- name: OrgOnboardingEnsure :exec
+INSERT INTO org_onboarding (organization_id, wizard_state)
+VALUES ($1, '{}'::jsonb)
+ON CONFLICT (organization_id) DO NOTHING;
+
+-- name: OrgOnboardingUpdateWizardState :exec
+UPDATE org_onboarding
+SET wizard_state = $2, updated_at = NOW()
+WHERE organization_id = $1;
+
+-- name: OrgOnboardingComplete :exec
+UPDATE org_onboarding
+SET completed_at = NOW(), updated_at = NOW()
+WHERE organization_id = $1 AND completed_at IS NULL;
+
+-- name: WorkerEnrollmentTokenInsert :one
+INSERT INTO worker_enrollment_tokens (id, organization_id, token_hash, expires_at)
+VALUES ($1, $2, $3, $4)
+RETURNING *;
+
+-- name: WorkerEnrollmentTokenByHash :one
+SELECT * FROM worker_enrollment_tokens
+WHERE token_hash = $1 AND expires_at > NOW() AND used_at IS NULL;
+
+-- name: WorkerEnrollmentTokenMarkUsed :exec
+UPDATE worker_enrollment_tokens SET used_at = NOW() WHERE id = $1;
+
+-- name: WorkerEnrollmentTokenConsume :one
+UPDATE worker_enrollment_tokens
+SET used_at = NOW()
+WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()
+RETURNING *;
+
+-- name: WorkerAgentEnrollWithToken :one
+WITH consumed AS (
+    UPDATE worker_enrollment_tokens
+    SET used_at = NOW()
+    WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()
+    RETURNING id, organization_id
+)
+INSERT INTO worker_agents (
+    id, organization_id, enrollment_token_id, worker_public_key, api_token_hash, hostname,
+    last_seen_at, desired_version, desired_state_payload, reported_version_applied
+)
+SELECT
+    $2,
+    consumed.organization_id,
+    consumed.id,
+    $3,
+    $4,
+    $5,
+    NOW(),
+    $6,
+    $7,
+    $8
+FROM consumed
+RETURNING *;
+
+-- name: WorkerAgentInsert :one
+INSERT INTO worker_agents (
+    id, organization_id, enrollment_token_id, worker_public_key, api_token_hash, hostname,
+    last_seen_at, desired_version, desired_state_payload, reported_version_applied
+)
+VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9)
+RETURNING *;
+
+-- name: WorkerAgentByAPITokenHash :one
+SELECT * FROM worker_agents WHERE api_token_hash = $1;
+
+-- name: WorkerAgentByID :one
+SELECT * FROM worker_agents WHERE id = $1;
+
+-- name: WorkerAgentTouchSeen :exec
+UPDATE worker_agents SET last_seen_at = NOW(), updated_at = NOW() WHERE id = $1;
+
+-- name: WorkerAgentSetReportedVersion :exec
+UPDATE worker_agents
+SET reported_version_applied = $2, updated_at = NOW()
+WHERE id = $1;
+
+-- name: WorkerAgentSetDesiredState :exec
+UPDATE worker_agents
+SET desired_version = $2, desired_state_payload = $3, updated_at = NOW()
+WHERE id = $1;
+
+-- name: WorkerAgentListByOrg :many
+SELECT * FROM worker_agents WHERE organization_id = $1 ORDER BY created_at ASC;
+
+-- name: WorkerAgentCountHealthyByOrg :one
+SELECT COUNT(*)::bigint AS n FROM worker_agents wa
+WHERE wa.organization_id = $1
+  AND wa.last_seen_at IS NOT NULL
+  AND wa.last_seen_at > NOW() - INTERVAL '3 minutes'
+  AND wa.reported_version_applied = wa.desired_version;

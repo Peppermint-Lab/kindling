@@ -5041,6 +5041,63 @@ func (q *Queries) OrgNetworkByOrganizationID(ctx context.Context, organizationID
 	return i, err
 }
 
+const orgOnboardingComplete = `-- name: OrgOnboardingComplete :exec
+UPDATE org_onboarding
+SET completed_at = NOW(), updated_at = NOW()
+WHERE organization_id = $1 AND completed_at IS NULL
+`
+
+func (q *Queries) OrgOnboardingComplete(ctx context.Context, organizationID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, orgOnboardingComplete, organizationID)
+	return err
+}
+
+const orgOnboardingEnsure = `-- name: OrgOnboardingEnsure :exec
+INSERT INTO org_onboarding (organization_id, wizard_state)
+VALUES ($1, '{}'::jsonb)
+ON CONFLICT (organization_id) DO NOTHING
+`
+
+func (q *Queries) OrgOnboardingEnsure(ctx context.Context, organizationID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, orgOnboardingEnsure, organizationID)
+	return err
+}
+
+const orgOnboardingGet = `-- name: OrgOnboardingGet :one
+
+SELECT organization_id, completed_at, wizard_state, created_at, updated_at FROM org_onboarding WHERE organization_id = $1
+`
+
+// Onboarding & hosted worker agents --
+func (q *Queries) OrgOnboardingGet(ctx context.Context, organizationID pgtype.UUID) (OrgOnboarding, error) {
+	row := q.db.QueryRow(ctx, orgOnboardingGet, organizationID)
+	var i OrgOnboarding
+	err := row.Scan(
+		&i.OrganizationID,
+		&i.CompletedAt,
+		&i.WizardState,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const orgOnboardingUpdateWizardState = `-- name: OrgOnboardingUpdateWizardState :exec
+UPDATE org_onboarding
+SET wizard_state = $2, updated_at = NOW()
+WHERE organization_id = $1
+`
+
+type OrgOnboardingUpdateWizardStateParams struct {
+	OrganizationID pgtype.UUID `json:"organization_id"`
+	WizardState    []byte      `json:"wizard_state"`
+}
+
+func (q *Queries) OrgOnboardingUpdateWizardState(ctx context.Context, arg OrgOnboardingUpdateWizardStateParams) error {
+	_, err := q.db.Exec(ctx, orgOnboardingUpdateWizardState, arg.OrganizationID, arg.WizardState)
+	return err
+}
+
 const orgProviderConnectionByIDAndOrg = `-- name: OrgProviderConnectionByIDAndOrg :one
 SELECT id, organization_id, provider, external_slug, display_label, credentials_ciphertext, metadata, created_at, updated_at FROM org_provider_connections
 WHERE id = $1 AND organization_id = $2
@@ -11808,4 +11865,344 @@ func (q *Queries) VMUpdateStatus(ctx context.Context, arg VMUpdateStatusParams) 
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const workerAgentByAPITokenHash = `-- name: WorkerAgentByAPITokenHash :one
+SELECT id, organization_id, enrollment_token_id, worker_public_key, api_token_hash, hostname, last_seen_at, desired_version, desired_state_payload, reported_version_applied, created_at, updated_at FROM worker_agents WHERE api_token_hash = $1
+`
+
+func (q *Queries) WorkerAgentByAPITokenHash(ctx context.Context, apiTokenHash []byte) (WorkerAgent, error) {
+	row := q.db.QueryRow(ctx, workerAgentByAPITokenHash, apiTokenHash)
+	var i WorkerAgent
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.EnrollmentTokenID,
+		&i.WorkerPublicKey,
+		&i.ApiTokenHash,
+		&i.Hostname,
+		&i.LastSeenAt,
+		&i.DesiredVersion,
+		&i.DesiredStatePayload,
+		&i.ReportedVersionApplied,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const workerAgentByID = `-- name: WorkerAgentByID :one
+SELECT id, organization_id, enrollment_token_id, worker_public_key, api_token_hash, hostname, last_seen_at, desired_version, desired_state_payload, reported_version_applied, created_at, updated_at FROM worker_agents WHERE id = $1
+`
+
+func (q *Queries) WorkerAgentByID(ctx context.Context, id pgtype.UUID) (WorkerAgent, error) {
+	row := q.db.QueryRow(ctx, workerAgentByID, id)
+	var i WorkerAgent
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.EnrollmentTokenID,
+		&i.WorkerPublicKey,
+		&i.ApiTokenHash,
+		&i.Hostname,
+		&i.LastSeenAt,
+		&i.DesiredVersion,
+		&i.DesiredStatePayload,
+		&i.ReportedVersionApplied,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const workerAgentCountHealthyByOrg = `-- name: WorkerAgentCountHealthyByOrg :one
+SELECT COUNT(*)::bigint AS n FROM worker_agents wa
+WHERE wa.organization_id = $1
+  AND wa.last_seen_at IS NOT NULL
+  AND wa.last_seen_at > NOW() - INTERVAL '3 minutes'
+  AND wa.reported_version_applied = wa.desired_version
+`
+
+func (q *Queries) WorkerAgentCountHealthyByOrg(ctx context.Context, organizationID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, workerAgentCountHealthyByOrg, organizationID)
+	var n int64
+	err := row.Scan(&n)
+	return n, err
+}
+
+const workerAgentEnrollWithToken = `-- name: WorkerAgentEnrollWithToken :one
+WITH consumed AS (
+    UPDATE worker_enrollment_tokens
+    SET used_at = NOW()
+    WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()
+    RETURNING id, organization_id
+)
+INSERT INTO worker_agents (
+    id, organization_id, enrollment_token_id, worker_public_key, api_token_hash, hostname,
+    last_seen_at, desired_version, desired_state_payload, reported_version_applied
+)
+SELECT
+    $2,
+    consumed.organization_id,
+    consumed.id,
+    $3,
+    $4,
+    $5,
+    NOW(),
+    $6,
+    $7,
+    $8
+FROM consumed
+RETURNING id, organization_id, enrollment_token_id, worker_public_key, api_token_hash, hostname, last_seen_at, desired_version, desired_state_payload, reported_version_applied, created_at, updated_at
+`
+
+type WorkerAgentEnrollWithTokenParams struct {
+	TokenHash              []byte      `json:"token_hash"`
+	ID                     pgtype.UUID `json:"id"`
+	WorkerPublicKey        string      `json:"worker_public_key"`
+	ApiTokenHash           []byte      `json:"api_token_hash"`
+	Hostname               string      `json:"hostname"`
+	DesiredVersion         int32       `json:"desired_version"`
+	DesiredStatePayload    []byte      `json:"desired_state_payload"`
+	ReportedVersionApplied int32       `json:"reported_version_applied"`
+}
+
+func (q *Queries) WorkerAgentEnrollWithToken(ctx context.Context, arg WorkerAgentEnrollWithTokenParams) (WorkerAgent, error) {
+	row := q.db.QueryRow(ctx, workerAgentEnrollWithToken,
+		arg.TokenHash,
+		arg.ID,
+		arg.WorkerPublicKey,
+		arg.ApiTokenHash,
+		arg.Hostname,
+		arg.DesiredVersion,
+		arg.DesiredStatePayload,
+		arg.ReportedVersionApplied,
+	)
+	var i WorkerAgent
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.EnrollmentTokenID,
+		&i.WorkerPublicKey,
+		&i.ApiTokenHash,
+		&i.Hostname,
+		&i.LastSeenAt,
+		&i.DesiredVersion,
+		&i.DesiredStatePayload,
+		&i.ReportedVersionApplied,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const workerAgentInsert = `-- name: WorkerAgentInsert :one
+INSERT INTO worker_agents (
+    id, organization_id, enrollment_token_id, worker_public_key, api_token_hash, hostname,
+    last_seen_at, desired_version, desired_state_payload, reported_version_applied
+)
+VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9)
+RETURNING id, organization_id, enrollment_token_id, worker_public_key, api_token_hash, hostname, last_seen_at, desired_version, desired_state_payload, reported_version_applied, created_at, updated_at
+`
+
+type WorkerAgentInsertParams struct {
+	ID                     pgtype.UUID `json:"id"`
+	OrganizationID         pgtype.UUID `json:"organization_id"`
+	EnrollmentTokenID      pgtype.UUID `json:"enrollment_token_id"`
+	WorkerPublicKey        string      `json:"worker_public_key"`
+	ApiTokenHash           []byte      `json:"api_token_hash"`
+	Hostname               string      `json:"hostname"`
+	DesiredVersion         int32       `json:"desired_version"`
+	DesiredStatePayload    []byte      `json:"desired_state_payload"`
+	ReportedVersionApplied int32       `json:"reported_version_applied"`
+}
+
+func (q *Queries) WorkerAgentInsert(ctx context.Context, arg WorkerAgentInsertParams) (WorkerAgent, error) {
+	row := q.db.QueryRow(ctx, workerAgentInsert,
+		arg.ID,
+		arg.OrganizationID,
+		arg.EnrollmentTokenID,
+		arg.WorkerPublicKey,
+		arg.ApiTokenHash,
+		arg.Hostname,
+		arg.DesiredVersion,
+		arg.DesiredStatePayload,
+		arg.ReportedVersionApplied,
+	)
+	var i WorkerAgent
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.EnrollmentTokenID,
+		&i.WorkerPublicKey,
+		&i.ApiTokenHash,
+		&i.Hostname,
+		&i.LastSeenAt,
+		&i.DesiredVersion,
+		&i.DesiredStatePayload,
+		&i.ReportedVersionApplied,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const workerAgentListByOrg = `-- name: WorkerAgentListByOrg :many
+SELECT id, organization_id, enrollment_token_id, worker_public_key, api_token_hash, hostname, last_seen_at, desired_version, desired_state_payload, reported_version_applied, created_at, updated_at FROM worker_agents WHERE organization_id = $1 ORDER BY created_at ASC
+`
+
+func (q *Queries) WorkerAgentListByOrg(ctx context.Context, organizationID pgtype.UUID) ([]WorkerAgent, error) {
+	rows, err := q.db.Query(ctx, workerAgentListByOrg, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WorkerAgent{}
+	for rows.Next() {
+		var i WorkerAgent
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.EnrollmentTokenID,
+			&i.WorkerPublicKey,
+			&i.ApiTokenHash,
+			&i.Hostname,
+			&i.LastSeenAt,
+			&i.DesiredVersion,
+			&i.DesiredStatePayload,
+			&i.ReportedVersionApplied,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workerAgentSetDesiredState = `-- name: WorkerAgentSetDesiredState :exec
+UPDATE worker_agents
+SET desired_version = $2, desired_state_payload = $3, updated_at = NOW()
+WHERE id = $1
+`
+
+type WorkerAgentSetDesiredStateParams struct {
+	ID                  pgtype.UUID `json:"id"`
+	DesiredVersion      int32       `json:"desired_version"`
+	DesiredStatePayload []byte      `json:"desired_state_payload"`
+}
+
+func (q *Queries) WorkerAgentSetDesiredState(ctx context.Context, arg WorkerAgentSetDesiredStateParams) error {
+	_, err := q.db.Exec(ctx, workerAgentSetDesiredState, arg.ID, arg.DesiredVersion, arg.DesiredStatePayload)
+	return err
+}
+
+const workerAgentSetReportedVersion = `-- name: WorkerAgentSetReportedVersion :exec
+UPDATE worker_agents
+SET reported_version_applied = $2, updated_at = NOW()
+WHERE id = $1
+`
+
+type WorkerAgentSetReportedVersionParams struct {
+	ID                     pgtype.UUID `json:"id"`
+	ReportedVersionApplied int32       `json:"reported_version_applied"`
+}
+
+func (q *Queries) WorkerAgentSetReportedVersion(ctx context.Context, arg WorkerAgentSetReportedVersionParams) error {
+	_, err := q.db.Exec(ctx, workerAgentSetReportedVersion, arg.ID, arg.ReportedVersionApplied)
+	return err
+}
+
+const workerAgentTouchSeen = `-- name: WorkerAgentTouchSeen :exec
+UPDATE worker_agents SET last_seen_at = NOW(), updated_at = NOW() WHERE id = $1
+`
+
+func (q *Queries) WorkerAgentTouchSeen(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, workerAgentTouchSeen, id)
+	return err
+}
+
+const workerEnrollmentTokenByHash = `-- name: WorkerEnrollmentTokenByHash :one
+SELECT id, organization_id, token_hash, expires_at, used_at, created_at FROM worker_enrollment_tokens
+WHERE token_hash = $1 AND expires_at > NOW() AND used_at IS NULL
+`
+
+func (q *Queries) WorkerEnrollmentTokenByHash(ctx context.Context, tokenHash []byte) (WorkerEnrollmentToken, error) {
+	row := q.db.QueryRow(ctx, workerEnrollmentTokenByHash, tokenHash)
+	var i WorkerEnrollmentToken
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.TokenHash,
+		&i.ExpiresAt,
+		&i.UsedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const workerEnrollmentTokenConsume = `-- name: WorkerEnrollmentTokenConsume :one
+UPDATE worker_enrollment_tokens
+SET used_at = NOW()
+WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()
+RETURNING id, organization_id, token_hash, expires_at, used_at, created_at
+`
+
+func (q *Queries) WorkerEnrollmentTokenConsume(ctx context.Context, tokenHash []byte) (WorkerEnrollmentToken, error) {
+	row := q.db.QueryRow(ctx, workerEnrollmentTokenConsume, tokenHash)
+	var i WorkerEnrollmentToken
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.TokenHash,
+		&i.ExpiresAt,
+		&i.UsedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const workerEnrollmentTokenInsert = `-- name: WorkerEnrollmentTokenInsert :one
+INSERT INTO worker_enrollment_tokens (id, organization_id, token_hash, expires_at)
+VALUES ($1, $2, $3, $4)
+RETURNING id, organization_id, token_hash, expires_at, used_at, created_at
+`
+
+type WorkerEnrollmentTokenInsertParams struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	TokenHash      []byte             `json:"token_hash"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+}
+
+func (q *Queries) WorkerEnrollmentTokenInsert(ctx context.Context, arg WorkerEnrollmentTokenInsertParams) (WorkerEnrollmentToken, error) {
+	row := q.db.QueryRow(ctx, workerEnrollmentTokenInsert,
+		arg.ID,
+		arg.OrganizationID,
+		arg.TokenHash,
+		arg.ExpiresAt,
+	)
+	var i WorkerEnrollmentToken
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.TokenHash,
+		&i.ExpiresAt,
+		&i.UsedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const workerEnrollmentTokenMarkUsed = `-- name: WorkerEnrollmentTokenMarkUsed :exec
+UPDATE worker_enrollment_tokens SET used_at = NOW() WHERE id = $1
+`
+
+func (q *Queries) WorkerEnrollmentTokenMarkUsed(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, workerEnrollmentTokenMarkUsed, id)
+	return err
 }

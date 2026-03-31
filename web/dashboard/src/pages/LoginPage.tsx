@@ -79,9 +79,9 @@ export function LoginPage() {
             setError(null)
             setBusy(true)
             try {
-              await api.authLogin({ email, password })
+              const sess = await api.authLogin({ email, password })
               await refresh()
-              navigate("/", { replace: true })
+              navigate(sess.authenticated && sess.needs_onboarding ? "/onboarding" : "/", { replace: true })
             } catch (err) {
               setError(err instanceof Error ? err.message : "Login failed")
             } finally {

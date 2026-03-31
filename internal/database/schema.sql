@@ -1714,3 +1714,47 @@ CREATE INDEX IF NOT EXISTS idx_environment_variables_project_id ON environment_v
 CREATE INDEX IF NOT EXISTS idx_projects_org_id ON projects(org_id);
 CREATE INDEX IF NOT EXISTS idx_instance_usage_samples_server_time
     ON instance_usage_samples (server_id, sampled_at DESC);
+
+-- First-run onboarding (per organization)
+CREATE TABLE IF NOT EXISTS org_onboarding (
+    organization_id UUID PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    completed_at      TIMESTAMPTZ,
+    wizard_state      JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- One-time tokens for hosted BYOH worker install (dashboard-generated)
+CREATE TABLE IF NOT EXISTS worker_enrollment_tokens (
+    id              UUID PRIMARY KEY,
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    token_hash      BYTEA NOT NULL,
+    expires_at      TIMESTAMPTZ NOT NULL,
+    used_at         TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_worker_enrollment_tokens_hash
+    ON worker_enrollment_tokens (token_hash);
+
+CREATE INDEX IF NOT EXISTS idx_worker_enrollment_tokens_org
+    ON worker_enrollment_tokens (organization_id);
+
+-- Enrolled outbound worker agents (hosted control plane)
+CREATE TABLE IF NOT EXISTS worker_agents (
+    id                        UUID PRIMARY KEY,
+    organization_id           UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    enrollment_token_id       UUID REFERENCES worker_enrollment_tokens(id) ON DELETE SET NULL,
+    worker_public_key         TEXT NOT NULL DEFAULT '',
+    api_token_hash            BYTEA NOT NULL,
+    hostname                  TEXT NOT NULL DEFAULT '',
+    last_seen_at              TIMESTAMPTZ,
+    desired_version           INT NOT NULL DEFAULT 0,
+    desired_state_payload     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    reported_version_applied  INT NOT NULL DEFAULT 0,
+    created_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at                TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_worker_agents_api_token_hash ON worker_agents (api_token_hash);
+CREATE INDEX IF NOT EXISTS idx_worker_agents_org ON worker_agents (organization_id);

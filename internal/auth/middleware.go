@@ -138,6 +138,25 @@ func Middleware(q *queries.Queries, next http.Handler) http.Handler {
 			return
 		}
 
+		if tok, ok := bearerValue(r); ok && strings.HasPrefix(tok, WorkerAgentTokenPrefix) {
+			wa, err := q.WorkerAgentByAPITokenHash(r.Context(), HashWorkerAgentToken(tok))
+			if err != nil {
+				if err == pgx.ErrNoRows {
+					writeUnauthorized(w)
+					return
+				}
+				httputil.WriteAPIError(w, http.StatusInternalServerError, "internal", "worker agent lookup failed")
+				return
+			}
+			_ = q.WorkerAgentTouchSeen(r.Context(), wa.ID)
+			wp := WorkerAgentPrincipal{
+				AgentID: uuid.UUID(wa.ID.Bytes),
+				OrgID:   uuid.UUID(wa.OrganizationID.Bytes),
+			}
+			next.ServeHTTP(w, r.WithContext(WithWorkerAgent(r.Context(), wp)))
+			return
+		}
+
 		cookie, err := r.Cookie(SessionCookieName)
 		if err != nil || cookie.Value == "" {
 			writeUnauthorized(w)
@@ -223,6 +242,12 @@ func PublicRoute(r *http.Request) bool {
 		return true
 	}
 	if path == "/api/auth/providers" && r.Method == http.MethodGet {
+		return true
+	}
+	if path == "/api/worker/v1/enroll" && r.Method == http.MethodPost {
+		return true
+	}
+	if path == "/install-kindling-worker.sh" && r.Method == http.MethodGet {
 		return true
 	}
 	if strings.HasPrefix(path, "/api/auth/providers/") && r.Method == http.MethodGet {

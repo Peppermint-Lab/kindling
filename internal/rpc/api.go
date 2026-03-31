@@ -151,6 +151,9 @@ func (a *API) Register(mux *http.ServeMux) {
 
 	// Pending membership management (org admin only)
 	a.registerPendingMemberRoutes(mux)
+
+	a.registerOnboardingRoutes(mux)
+	a.registerWorkerAgentRoutes(mux)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) {

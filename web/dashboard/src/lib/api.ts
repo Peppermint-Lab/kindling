@@ -171,6 +171,8 @@ export type AuthOrganization = {
   slug: string
 }
 
+export type AuthDeploymentKind = "hosted" | "self_hosted"
+
 export type AuthSession =
   | { authenticated: false }
   | {
@@ -180,7 +182,29 @@ export type AuthSession =
       organization: AuthOrganization
       role: string
       organizations: AuthOrganization[]
+      deployment_kind: AuthDeploymentKind
+      onboarding_completed: boolean
+      needs_onboarding: boolean
     }
+
+export type OnboardingWorkerAgent = {
+  id: string
+  hostname: string
+  last_seen_at: string | null
+  desired_version: number
+  reported_version_applied: number
+}
+
+export type OnboardingSnapshot = {
+  deployment_kind: AuthDeploymentKind
+  onboarding_completed: boolean
+  wizard_state: Record<string, unknown>
+  can_edit: boolean
+  healthy_worker_agents?: number
+  worker_agents?: OnboardingWorkerAgent[]
+  servers_count?: number
+  healthy_servers?: number
+}
 
 export type AuthPublicProvider = {
   provider: "github" | "oidc"
@@ -664,6 +688,25 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ organization_id }),
     }),
+
+  getOnboarding: () => request<OnboardingSnapshot>("/api/onboarding"),
+  patchOnboarding: (wizard_state: Record<string, unknown>) =>
+    request<{ status: string }>("/api/onboarding", {
+      method: "PATCH",
+      body: JSON.stringify({ wizard_state }),
+    }),
+  completeOnboarding: () =>
+    request<{ status: string }>("/api/onboarding/complete", {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  createWorkerEnrollmentToken: () =>
+    request<{
+      enrollment_token: string
+      expires_at: string
+      api_base_url: string
+      install_hint: string
+    }>("/api/onboarding/worker-enrollment-token", { method: "POST", body: JSON.stringify({}) }),
   listAdminAuthProviders: () =>
     request<AuthAdminProvider[]>("/api/auth/admin/providers"),
   updateAdminAuthProvider: (

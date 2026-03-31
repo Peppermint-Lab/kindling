@@ -233,6 +233,14 @@ type OrgNetwork struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
+type OrgOnboarding struct {
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	CompletedAt    pgtype.Timestamptz `json:"completed_at"`
+	WizardState    []byte             `json:"wizard_state"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type OrgProviderConnection struct {
 	ID                    pgtype.UUID        `json:"id"`
 	OrganizationID        pgtype.UUID        `json:"organization_id"`
@@ -606,4 +614,28 @@ type VmLog struct {
 	Message   string             `json:"message"`
 	Level     string             `json:"level"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type WorkerAgent struct {
+	ID                     pgtype.UUID        `json:"id"`
+	OrganizationID         pgtype.UUID        `json:"organization_id"`
+	EnrollmentTokenID      pgtype.UUID        `json:"enrollment_token_id"`
+	WorkerPublicKey        string             `json:"worker_public_key"`
+	ApiTokenHash           []byte             `json:"api_token_hash"`
+	Hostname               string             `json:"hostname"`
+	LastSeenAt             pgtype.Timestamptz `json:"last_seen_at"`
+	DesiredVersion         int32              `json:"desired_version"`
+	DesiredStatePayload    []byte             `json:"desired_state_payload"`
+	ReportedVersionApplied int32              `json:"reported_version_applied"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+type WorkerEnrollmentToken struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrganizationID pgtype.UUID        `json:"organization_id"`
+	TokenHash      []byte             `json:"token_hash"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+	UsedAt         pgtype.Timestamptz `json:"used_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }

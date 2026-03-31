@@ -56,14 +56,17 @@ export function BootstrapPage() {
             setError(null)
             setBusy(true)
             try {
-              await api.authBootstrap({
+              const sess = await api.authBootstrap({
                 email,
                 password,
                 display_name: displayName || undefined,
                 bootstrap_token: bootstrapToken || undefined,
               })
               await refresh()
-              navigate("/", { replace: true })
+              navigate(
+                sess.authenticated && sess.needs_onboarding ? "/onboarding" : "/",
+                { replace: true },
+              )
             } catch (err) {
               setError(err instanceof Error ? err.message : "Bootstrap failed")
             } finally {

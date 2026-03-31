@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactNode } from "react"
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom"
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom"
 import { AppSidebar } from "@/components/app-sidebar"
 import {
   SidebarInset,
@@ -9,6 +9,7 @@ import {
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { AuthProvider, useAuth } from "@/contexts/AuthContext"
+import type { AuthSession } from "@/lib/api"
 
 const ProjectsPage = lazy(() =>
   import("@/pages/ProjectsPage").then((module) => ({
@@ -65,6 +66,11 @@ const BootstrapPage = lazy(() =>
     default: module.BootstrapPage,
   }))
 )
+const OnboardingPage = lazy(() =>
+  import("@/pages/OnboardingPage").then((module) => ({
+    default: module.OnboardingPage,
+  }))
+)
 
 function PublicRouteFallback() {
   return (
@@ -84,6 +90,28 @@ function PrivateRouteFallback() {
 
 function PrivateRouteContent({ children }: { children: ReactNode }) {
   return <Suspense fallback={<PrivateRouteFallback />}>{children}</Suspense>
+}
+
+function canAccessDuringOnboarding(pathname: string) {
+  return pathname === "/settings" || pathname.startsWith("/settings/")
+}
+
+type AuthenticatedSession = Extract<AuthSession, { authenticated: true }>
+
+function mustRedirectToOnboarding(session: AuthenticatedSession, pathname: string) {
+  if (!session.needs_onboarding) return false
+  if (session.deployment_kind === "self_hosted" && canAccessDuringOnboarding(pathname)) {
+    return false
+  }
+  return true
+}
+
+function SessionLoading() {
+  return (
+    <div className="flex min-h-svh items-center justify-center text-muted-foreground text-sm">
+      Loading…
+    </div>
+  )
 }
 
 function Layout() {
@@ -195,17 +223,36 @@ function Layout() {
 
 function PrivateRoutes() {
   const { session, loading } = useAuth()
+  const location = useLocation()
   if (loading) {
-    return (
-      <div className="flex min-h-svh items-center justify-center text-muted-foreground text-sm">
-        Loading…
-      </div>
-    )
+    return <SessionLoading />
   }
   if (!session || !session.authenticated) {
-    return <Navigate to="/login" replace />
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />
+  }
+  if (mustRedirectToOnboarding(session, location.pathname)) {
+    return <Navigate to="/onboarding" replace />
   }
   return <Layout />
+}
+
+function OnboardingRoute() {
+  const { session, loading } = useAuth()
+  const location = useLocation()
+  if (loading) {
+    return <SessionLoading />
+  }
+  if (!session || !session.authenticated) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />
+  }
+  if (!session.needs_onboarding) {
+    return <Navigate to="/" replace />
+  }
+  return (
+    <Suspense fallback={<PrivateRouteFallback />}>
+      <OnboardingPage />
+    </Suspense>
+  )
 }
 
 export default function App() {
@@ -217,6 +264,7 @@ export default function App() {
             <Routes>
               <Route path="/login" element={<LoginPage />} />
               <Route path="/bootstrap" element={<BootstrapPage />} />
+              <Route path="/onboarding" element={<OnboardingRoute />} />
               <Route path="/*" element={<PrivateRoutes />} />
             </Routes>
           </Suspense>
