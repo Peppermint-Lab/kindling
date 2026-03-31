@@ -71,8 +71,10 @@ func (d *Deployer) SetDashboardPublishers(projectEvents func(projectID uuid.UUID
 }
 
 // effectiveReplicaCount returns how many instances the deployment reconciler
-// should converge to. Scale-to-zero uses projects.scaled_to_zero; cold start
-// uses deployments.wake_requested_at to temporarily raise the count.
+// should converge to. Scale-to-zero uses projects.scaled_to_zero. When
+// wake_requested_at is set (cold start, scale-from-zero, or crash recovery),
+// the target is the clamped service+project desired count so traffic can burst
+// against full capacity rather than a single-instance floor.
 func serviceDesiredReplicaCount(proj queries.Project, service *queries.Service) int32 {
 	if service != nil && service.DesiredInstanceCount > 0 {
 		return service.DesiredInstanceCount
@@ -99,8 +101,11 @@ func effectiveReplicaCount(proj queries.Project, service *queries.Service, dep q
 		}
 		return d
 	}
+	// Wake from cold start, scale-from-zero, or crash recovery: converge toward the
+	// effective service+project replica target (not an artificial single-instance floor),
+	// while still respecting project min/max bounds.
 	if dep.WakeRequestedAt.Valid {
-		return nonZeroReplicaFloor(proj)
+		return clampDesiredReplicaCount(proj, serviceDesired)
 	}
 	if proj.ScaledToZero {
 		return 0

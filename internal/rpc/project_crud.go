@@ -111,6 +111,10 @@ func clampDesiredReplicaTarget(desired, min, max int32) int32 {
 	return desired
 }
 
+func shouldResetInheritedServiceTargets(requested *int32, currentDesired, nextDesired int32) bool {
+	return requested != nil && nextDesired != currentDesired
+}
+
 func (a *API) listProjects(w http.ResponseWriter, r *http.Request) {
 	p, ok := mustPrincipal(w, r)
 	if !ok {
@@ -290,7 +294,11 @@ func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
 	if req.ScaleToZeroEnabled != nil {
 		scaleToZeroEnabled = *req.ScaleToZeroEnabled
 	}
-	desiredTarget := clampDesiredReplicaTarget(current.DesiredInstanceCount, minCount, maxCount)
+	desiredTarget := current.DesiredInstanceCount
+	if req.DesiredInstanceCount != nil {
+		desiredTarget = *req.DesiredInstanceCount
+	}
+	desiredTarget = clampDesiredReplicaTarget(desiredTarget, minCount, maxCount)
 
 	project, err = a.q.ProjectUpdateScalingConfig(r.Context(), queries.ProjectUpdateScalingConfigParams{
 		ID:                   id,
@@ -352,6 +360,15 @@ func (a *API) patchProject(w http.ResponseWriter, r *http.Request) {
 	if _, err := a.q.ServiceSyncPrimaryFromProject(r.Context(), id); err != nil {
 		writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project_service", err)
 		return
+	}
+	if shouldResetInheritedServiceTargets(req.DesiredInstanceCount, current.DesiredInstanceCount, desiredTarget) {
+		if err := a.q.ServiceDesiredInheritFromProjectWithTarget(r.Context(), queries.ServiceDesiredInheritFromProjectWithTargetParams{
+			ProjectID:             id,
+			DesiredInstanceCount: current.DesiredInstanceCount,
+		}); err != nil {
+			writeAPIErrorFromErr(w, http.StatusInternalServerError, "update_project_service", err)
+			return
+		}
 	}
 	project, err = a.q.ProjectFirstByIDAndOrg(r.Context(), queries.ProjectFirstByIDAndOrgParams{
 		ID:    id,

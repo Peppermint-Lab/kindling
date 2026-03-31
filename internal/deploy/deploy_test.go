@@ -27,8 +27,8 @@ func TestEffectiveReplicaCount(t *testing.T) {
 		t.Fatalf("scaled_to_zero: got %d want 0", got)
 	}
 	dep.WakeRequestedAt = wake
-	if got := effectiveReplicaCount(proj, nil, dep); got != 1 {
-		t.Fatalf("wake + scaled_to_zero: got %d want 1", got)
+	if got := effectiveReplicaCount(proj, nil, dep); got != 3 {
+		t.Fatalf("wake + scaled_to_zero: got %d want 3 (full project target)", got)
 	}
 	proj.ScaledToZero = false
 	proj.MinInstanceCount = 2
@@ -43,6 +43,20 @@ func TestEffectiveReplicaCount(t *testing.T) {
 	proj.MaxInstanceCount = 0
 	if got := effectiveReplicaCount(proj, nil, dep); got != 0 {
 		t.Fatalf("max 0: got %d want 0", got)
+	}
+}
+
+func TestEffectiveReplicaCountWakeConvergesToServiceTarget(t *testing.T) {
+	wake := pgtype.Timestamptz{Valid: true, Time: time.Now()}
+	proj := queries.Project{
+		DesiredInstanceCount: 1,
+		MinInstanceCount:     1,
+		MaxInstanceCount:     5,
+	}
+	svc := &queries.Service{DesiredInstanceCount: 4}
+	dep := queries.Deployment{WakeRequestedAt: wake}
+	if got := effectiveReplicaCount(proj, svc, dep); got != 4 {
+		t.Fatalf("wake: got %d want 4", got)
 	}
 }
 

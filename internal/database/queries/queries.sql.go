@@ -5009,6 +5009,79 @@ func (q *Queries) InstanceUsageLatestPerInstance(ctx context.Context, arg Instan
 	return items, nil
 }
 
+const instanceUsageLatestPerInstanceByDeployment = `-- name: InstanceUsageLatestPerInstanceByDeployment :many
+SELECT DISTINCT ON (s.deployment_instance_id)
+    s.deployment_instance_id,
+    s.sampled_at,
+    s.cpu_nanos_cumulative,
+    s.cpu_percent,
+    s.memory_rss_bytes,
+    s.disk_read_bytes,
+    s.disk_write_bytes,
+    s.source,
+    s.server_id
+FROM instance_usage_samples s
+INNER JOIN deployment_instances di ON di.id = s.deployment_instance_id
+  AND di.deleted_at IS NULL
+  AND di.status = 'running'
+  AND di.vm_id IS NOT NULL
+INNER JOIN deployments d ON d.id = di.deployment_id
+  AND d.deleted_at IS NULL
+  AND d.project_id = s.project_id
+  AND d.id = $2
+WHERE s.project_id = $1
+  AND s.sampled_at >= $3
+ORDER BY s.deployment_instance_id, s.sampled_at DESC
+`
+
+type InstanceUsageLatestPerInstanceByDeploymentParams struct {
+	ProjectID pgtype.UUID        `json:"project_id"`
+	ID        pgtype.UUID        `json:"id"`
+	SampledAt pgtype.Timestamptz `json:"sampled_at"`
+}
+
+type InstanceUsageLatestPerInstanceByDeploymentRow struct {
+	DeploymentInstanceID pgtype.UUID        `json:"deployment_instance_id"`
+	SampledAt            pgtype.Timestamptz `json:"sampled_at"`
+	CpuNanosCumulative   int64              `json:"cpu_nanos_cumulative"`
+	CpuPercent           pgtype.Float8      `json:"cpu_percent"`
+	MemoryRssBytes       int64              `json:"memory_rss_bytes"`
+	DiskReadBytes        int64              `json:"disk_read_bytes"`
+	DiskWriteBytes       int64              `json:"disk_write_bytes"`
+	Source               string             `json:"source"`
+	ServerID             pgtype.UUID        `json:"server_id"`
+}
+
+func (q *Queries) InstanceUsageLatestPerInstanceByDeployment(ctx context.Context, arg InstanceUsageLatestPerInstanceByDeploymentParams) ([]InstanceUsageLatestPerInstanceByDeploymentRow, error) {
+	rows, err := q.db.Query(ctx, instanceUsageLatestPerInstanceByDeployment, arg.ProjectID, arg.ID, arg.SampledAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []InstanceUsageLatestPerInstanceByDeploymentRow{}
+	for rows.Next() {
+		var i InstanceUsageLatestPerInstanceByDeploymentRow
+		if err := rows.Scan(
+			&i.DeploymentInstanceID,
+			&i.SampledAt,
+			&i.CpuNanosCumulative,
+			&i.CpuPercent,
+			&i.MemoryRssBytes,
+			&i.DiskReadBytes,
+			&i.DiskWriteBytes,
+			&i.Source,
+			&i.ServerID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const instanceUsageSampleInsert = `-- name: InstanceUsageSampleInsert :exec
 
 INSERT INTO instance_usage_samples (
@@ -6720,6 +6793,74 @@ func (q *Queries) ProjectHTTPUsageRollupsAggregated(ctx context.Context, arg Pro
 	items := []ProjectHTTPUsageRollupsAggregatedRow{}
 	for rows.Next() {
 		var i ProjectHTTPUsageRollupsAggregatedRow
+		if err := rows.Scan(
+			&i.BucketStart,
+			&i.RequestCount,
+			&i.Status2xx,
+			&i.Status4xx,
+			&i.Status5xx,
+			&i.BytesIn,
+			&i.BytesOut,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const projectHTTPUsageRollupsAggregatedByDeployment = `-- name: ProjectHTTPUsageRollupsAggregatedByDeployment :many
+SELECT
+    bucket_start,
+    COALESCE(SUM(request_count), 0)::bigint AS request_count,
+    COALESCE(SUM(status_2xx), 0)::bigint AS status_2xx,
+    COALESCE(SUM(status_4xx), 0)::bigint AS status_4xx,
+    COALESCE(SUM(status_5xx), 0)::bigint AS status_5xx,
+    COALESCE(SUM(bytes_in), 0)::bigint AS bytes_in,
+    COALESCE(SUM(bytes_out), 0)::bigint AS bytes_out
+FROM project_http_usage_rollups
+WHERE project_id = $1
+  AND deployment_id = $2
+  AND bucket_start >= $3
+  AND bucket_start <= $4
+GROUP BY bucket_start
+ORDER BY bucket_start ASC
+`
+
+type ProjectHTTPUsageRollupsAggregatedByDeploymentParams struct {
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	DeploymentID  pgtype.UUID        `json:"deployment_id"`
+	BucketStart   pgtype.Timestamptz `json:"bucket_start"`
+	BucketStart_2 pgtype.Timestamptz `json:"bucket_start_2"`
+}
+
+type ProjectHTTPUsageRollupsAggregatedByDeploymentRow struct {
+	BucketStart  pgtype.Timestamptz `json:"bucket_start"`
+	RequestCount int64              `json:"request_count"`
+	Status2xx    int64              `json:"status_2xx"`
+	Status4xx    int64              `json:"status_4xx"`
+	Status5xx    int64              `json:"status_5xx"`
+	BytesIn      int64              `json:"bytes_in"`
+	BytesOut     int64              `json:"bytes_out"`
+}
+
+func (q *Queries) ProjectHTTPUsageRollupsAggregatedByDeployment(ctx context.Context, arg ProjectHTTPUsageRollupsAggregatedByDeploymentParams) ([]ProjectHTTPUsageRollupsAggregatedByDeploymentRow, error) {
+	rows, err := q.db.Query(ctx, projectHTTPUsageRollupsAggregatedByDeployment,
+		arg.ProjectID,
+		arg.DeploymentID,
+		arg.BucketStart,
+		arg.BucketStart_2,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectHTTPUsageRollupsAggregatedByDeploymentRow{}
+	for rows.Next() {
+		var i ProjectHTTPUsageRollupsAggregatedByDeploymentRow
 		if err := rows.Scan(
 			&i.BucketStart,
 			&i.RequestCount,
@@ -10678,6 +10819,21 @@ func (q *Queries) ServiceCreate(ctx context.Context, arg ServiceCreateParams) (S
 	return i, err
 }
 
+const serviceDesiredInheritFromProjectWithTarget = `-- name: ServiceDesiredInheritFromProjectWithTarget :exec
+UPDATE services SET desired_instance_count = 0, updated_at = NOW()
+WHERE project_id = $1 AND desired_instance_count = $2
+`
+
+type ServiceDesiredInheritFromProjectWithTargetParams struct {
+	ProjectID            pgtype.UUID `json:"project_id"`
+	DesiredInstanceCount int32       `json:"desired_instance_count"`
+}
+
+func (q *Queries) ServiceDesiredInheritFromProjectWithTarget(ctx context.Context, arg ServiceDesiredInheritFromProjectWithTargetParams) error {
+	_, err := q.db.Exec(ctx, serviceDesiredInheritFromProjectWithTarget, arg.ProjectID, arg.DesiredInstanceCount)
+	return err
+}
+
 const serviceEndpointCreate = `-- name: ServiceEndpointCreate :one
 WITH svc AS (
     SELECT s.id, p.org_id
@@ -11087,12 +11243,25 @@ func (q *Queries) ServicePrimaryByProjectID(ctx context.Context, projectID pgtyp
 	return i, err
 }
 
+const serviceSetDesiredInstanceCount = `-- name: ServiceSetDesiredInstanceCount :exec
+UPDATE services SET desired_instance_count = $2, updated_at = NOW() WHERE id = $1
+`
+
+type ServiceSetDesiredInstanceCountParams struct {
+	ID                   pgtype.UUID `json:"id"`
+	DesiredInstanceCount int32       `json:"desired_instance_count"`
+}
+
+func (q *Queries) ServiceSetDesiredInstanceCount(ctx context.Context, arg ServiceSetDesiredInstanceCountParams) error {
+	_, err := q.db.Exec(ctx, serviceSetDesiredInstanceCount, arg.ID, arg.DesiredInstanceCount)
+	return err
+}
+
 const serviceSyncPrimaryFromProject = `-- name: ServiceSyncPrimaryFromProject :one
 UPDATE services s
 SET name = p.name,
     root_directory = p.root_directory,
     dockerfile_path = p.dockerfile_path,
-    desired_instance_count = p.desired_instance_count,
     build_only_on_root_changes = p.build_only_on_root_changes,
     updated_at = NOW()
 FROM projects p
@@ -11102,6 +11271,7 @@ WHERE s.project_id = p.id
 RETURNING s.id, s.project_id, s.name, s.slug, s.root_directory, s.dockerfile_path, s.desired_instance_count, s.build_only_on_root_changes, s.public_default, s.is_primary, s.created_at, s.updated_at
 `
 
+// Do not copy desired_instance_count here; 0 inherits the project target.
 func (q *Queries) ServiceSyncPrimaryFromProject(ctx context.Context, projectID pgtype.UUID) (Service, error) {
 	row := q.db.QueryRow(ctx, serviceSyncPrimaryFromProject, projectID)
 	var i Service

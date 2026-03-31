@@ -412,7 +412,7 @@ func (a *API) createProjectService(w http.ResponseWriter, r *http.Request) {
 	if dockerfilePath == "" {
 		dockerfilePath = project.DockerfilePath
 	}
-	desired := project.DesiredInstanceCount
+	desired := int32(0)
 	if req.DesiredInstanceCount != nil {
 		desired = *req.DesiredInstanceCount
 	}

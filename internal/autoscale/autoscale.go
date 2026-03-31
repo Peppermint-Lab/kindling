@@ -1,3 +1,4 @@
+// Package autoscale adjusts per-service replica targets from HTTP and CPU signals.
 package autoscale
 
 import (
@@ -32,11 +33,22 @@ func nonZeroFloor(proj queries.Project) int32 {
 	return 1
 }
 
-func clampCurrentTarget(proj queries.Project) int32 {
+func serviceDesiredReplicaCount(proj queries.Project, service *queries.Service) int32 {
+	if service != nil && service.DesiredInstanceCount > 0 {
+		return service.DesiredInstanceCount
+	}
+	return proj.DesiredInstanceCount
+}
+
+func shouldSkipAutoscale(service *queries.Service, avgRequestsPerMinute float64, hasCPU bool) bool {
+	return service != nil && service.DesiredInstanceCount == 0 && avgRequestsPerMinute == 0 && !hasCPU
+}
+
+func clampCurrentTarget(proj queries.Project, service *queries.Service) int32 {
 	if proj.MaxInstanceCount <= 0 {
 		return 0
 	}
-	target := proj.DesiredInstanceCount
+	target := serviceDesiredReplicaCount(proj, service)
 	floor := nonZeroFloor(proj)
 	if target < floor {
 		target = floor
@@ -85,8 +97,8 @@ func shouldStepDown(current int32, avgRequestsPerMinute, totalCPUPercent float64
 	return httpOK && cpuOK
 }
 
-func ComputeDesiredInstanceCount(proj queries.Project, avgRequestsPerMinute, totalCPUPercent float64, hasCPU bool) int32 {
-	current := clampCurrentTarget(proj)
+func ComputeDesiredInstanceCount(proj queries.Project, service *queries.Service, avgRequestsPerMinute, totalCPUPercent float64, hasCPU bool) int32 {
+	current := clampCurrentTarget(proj, service)
 	if proj.MaxInstanceCount <= 0 {
 		return 0
 	}
@@ -145,68 +157,82 @@ func RunOnce(ctx context.Context, databaseURL string, q *queries.Queries, deploy
 		if proj.MaxInstanceCount <= 0 || proj.ScaledToZero {
 			continue
 		}
-		dep, err := q.DeploymentLatestRunningByProjectID(ctx, proj.ID)
+		services, err := q.ServiceListByProjectID(ctx, proj.ID)
 		if err != nil {
+			slog.Warn("project autoscaler: list services", "project_id", proj.ID, "error", err)
 			continue
 		}
-		if dep.WakeRequestedAt.Valid {
+		if len(services) == 0 {
 			continue
 		}
-
-		httpRows, err := q.ProjectHTTPUsageRollupsAggregated(ctx, queries.ProjectHTTPUsageRollupsAggregatedParams{
-			ProjectID:     proj.ID,
-			BucketStart:   pgtype.Timestamptz{Time: httpWindowStart, Valid: true},
-			BucketStart_2: pgtype.Timestamptz{Time: httpWindowInclusiveEnd, Valid: true},
-		})
-		if err != nil {
-			slog.Warn("project autoscaler: http usage", "project_id", proj.ID, "error", err)
-			continue
-		}
-		var requestCount int64
-		for _, row := range httpRows {
-			requestCount += row.RequestCount
-		}
-		avgRPM := float64(requestCount) / float64(httpWindowMinutes)
-
-		cpuRows, err := q.InstanceUsageLatestPerInstance(ctx, queries.InstanceUsageLatestPerInstanceParams{
-			ProjectID: proj.ID,
-			SampledAt: pgtype.Timestamptz{Time: cpuSince, Valid: true},
-		})
-		if err != nil {
-			slog.Warn("project autoscaler: cpu usage", "project_id", proj.ID, "error", err)
-			continue
-		}
-		var totalCPU float64
-		hasCPU := false
-		for _, row := range cpuRows {
-			if row.CpuPercent.Valid {
-				totalCPU += row.CpuPercent.Float64
-				hasCPU = true
+		for i := range services {
+			svc := &services[i]
+			dep, err := q.DeploymentLatestRunningByServiceID(ctx, svc.ID)
+			if err != nil {
+				continue
 			}
-		}
 
-		current := clampCurrentTarget(proj)
-		next := ComputeDesiredInstanceCount(proj, avgRPM, totalCPU, hasCPU)
-		if next == current {
-			continue
-		}
+			httpRows, err := q.ProjectHTTPUsageRollupsAggregatedByDeployment(ctx, queries.ProjectHTTPUsageRollupsAggregatedByDeploymentParams{
+				ProjectID:     proj.ID,
+				DeploymentID:  dep.ID,
+				BucketStart:   pgtype.Timestamptz{Time: httpWindowStart, Valid: true},
+				BucketStart_2: pgtype.Timestamptz{Time: httpWindowInclusiveEnd, Valid: true},
+			})
+			if err != nil {
+				slog.Warn("project autoscaler: http usage", "project_id", proj.ID, "service_id", svc.ID, "error", err)
+				continue
+			}
+			var requestCount int64
+			for _, row := range httpRows {
+				requestCount += row.RequestCount
+			}
+			avgRPM := float64(requestCount) / float64(httpWindowMinutes)
 
-		if _, err := q.ProjectSetDesiredInstanceCount(ctx, queries.ProjectSetDesiredInstanceCountParams{
-			ID:                   proj.ID,
-			DesiredInstanceCount: next,
-		}); err != nil {
-			slog.Warn("project autoscaler: update target", "project_id", proj.ID, "error", err)
-			continue
+			cpuRows, err := q.InstanceUsageLatestPerInstanceByDeployment(ctx, queries.InstanceUsageLatestPerInstanceByDeploymentParams{
+				ProjectID: proj.ID,
+				ID:        dep.ID,
+				SampledAt: pgtype.Timestamptz{Time: cpuSince, Valid: true},
+			})
+			if err != nil {
+				slog.Warn("project autoscaler: cpu usage", "project_id", proj.ID, "service_id", svc.ID, "error", err)
+				continue
+			}
+			var totalCPU float64
+			hasCPU := false
+			for _, row := range cpuRows {
+				if row.CpuPercent.Valid {
+					totalCPU += row.CpuPercent.Float64
+					hasCPU = true
+				}
+			}
+			if shouldSkipAutoscale(svc, avgRPM, hasCPU) {
+				continue
+			}
+
+			current := clampCurrentTarget(proj, svc)
+			next := ComputeDesiredInstanceCount(proj, svc, avgRPM, totalCPU, hasCPU)
+			if next == current {
+				continue
+			}
+
+			if err := q.ServiceSetDesiredInstanceCount(ctx, queries.ServiceSetDesiredInstanceCountParams{
+				ID:                   svc.ID,
+				DesiredInstanceCount: next,
+			}); err != nil {
+				slog.Warn("project autoscaler: update service target", "project_id", proj.ID, "service_id", svc.ID, "error", err)
+				continue
+			}
+			scheduleDeploymentNow(deploymentReconciler, dep)
+			slog.Info(
+				"service autoscaled",
+				"project_id", proj.ID,
+				"service_id", svc.ID,
+				"deployment_id", dep.ID,
+				"from", current,
+				"to", next,
+				"avg_rpm", avgRPM,
+				"total_cpu_percent", totalCPU,
+			)
 		}
-		scheduleDeploymentNow(deploymentReconciler, dep)
-		slog.Info(
-			"project autoscaled",
-			"project_id", proj.ID,
-			"deployment_id", dep.ID,
-			"from", current,
-			"to", next,
-			"avg_rpm", avgRPM,
-			"total_cpu_percent", totalCPU,
-		)
 	}
 }

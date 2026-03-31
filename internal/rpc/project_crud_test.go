@@ -38,3 +38,17 @@ func TestClampDesiredReplicaTarget(t *testing.T) {
 		t.Fatalf("got %d want 0", got)
 	}
 }
+
+func TestShouldResetInheritedServiceTargets(t *testing.T) {
+	t.Parallel()
+
+	if shouldResetInheritedServiceTargets(nil, 2, 2) {
+		t.Fatal("expected nil request not to reset services")
+	}
+	if shouldResetInheritedServiceTargets(int32ptr(2), 2, 2) {
+		t.Fatal("expected no-op desired update not to reset services")
+	}
+	if !shouldResetInheritedServiceTargets(int32ptr(4), 2, 4) {
+		t.Fatal("expected desired change to reset matching inherited services")
+	}
+}
