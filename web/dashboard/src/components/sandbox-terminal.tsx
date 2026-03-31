@@ -206,6 +206,10 @@ export function SandboxTerminal({ sandbox }: { sandbox: Sandbox }) {
           exit_code?: number
         }
         switch (frame.type) {
+          case "ready":
+            // Guest shell upgraded; clear the provisional “Connecting…” line.
+            terminal.write("\r\x1b[2K")
+            return
           case "stdout":
           case "stderr":
             if (frame.data) terminal.write(frame.data)

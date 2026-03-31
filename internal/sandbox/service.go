@@ -377,7 +377,21 @@ func (s *Service) reconcileRunning(ctx context.Context, sb queries.RemoteVm) err
 		vm, err := s.Q.VMFirstByID(ctx, sb.VmID)
 		if err == nil {
 			if vm.Status == "suspended" || sb.ObservedState == "stopped" {
-				return s.resumeSandbox(ctx, sb, vm)
+				if err := s.resumeSandbox(ctx, sb, vm); err != nil {
+					if !errors.Is(err, kruntime.ErrInstanceNotRunning) {
+						return err
+					}
+					// The DB still points at a suspended VM, but the worker no longer has
+					// retained runtime state for it. Clear the stale binding and fall back
+					// to the normal cold-start / clone path below.
+					_ = s.Q.VMSoftDelete(ctx, sb.VmID)
+					if _, err := s.Q.RemoteVMClearVM(ctx, sb.ID); err != nil {
+						return fmt.Errorf("clear stale resumed vm: %w", err)
+					}
+					sb.VmID = pgtype.UUID{}
+				} else {
+					return nil
+				}
 			}
 			if vm.Status == "running" && s.Runtime.Healthy(ctx, uuid.UUID(sb.ID.Bytes)) {
 				_ = s.syncSandboxSSHAccess(ctx, sb)

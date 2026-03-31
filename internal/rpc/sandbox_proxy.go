@@ -28,6 +28,18 @@ const (
 	sandboxProxyClockSkew       = 2 * time.Minute
 )
 
+// sandboxProxyWebsocketDialer enforces TCP + WebSocket handshake deadlines so a
+// mis-routed worker address cannot leave dashboard clients stuck on "Connecting…".
+var sandboxProxyWebsocketDialer = &websocket.Dialer{
+	HandshakeTimeout: 45 * time.Second,
+	Proxy:            http.ProxyFromEnvironment,
+	NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+		var d net.Dialer
+		d.Timeout = 12 * time.Second
+		return d.DialContext(ctx, network, addr)
+	},
+}
+
 // sandboxWebsocketUpgrader validates Origin against trusted dashboard origins.
 func (a *API) sandboxWebsocketUpgrader() *websocket.Upgrader {
 	return &websocket.Upgrader{
@@ -112,7 +124,7 @@ func (a *API) sandboxOwnerOrigin(ctx context.Context, sb queries.RemoteVm) (*url
 	if err != nil {
 		return nil, fmt.Errorf("find worker settings for remote VM: %w", err)
 	}
-	host, err := validateSandboxProxyHost(server.InternalIp)
+	host, err := sandboxProxyDialHost(server, settings)
 	if err != nil {
 		return nil, err
 	}
@@ -124,6 +136,50 @@ func (a *API) sandboxOwnerOrigin(ctx context.Context, sb queries.RemoteVm) (*url
 		Scheme: "http",
 		Host:   netJoinHostPort(host, int(port)),
 	}, nil
+}
+
+// sandboxProxyDialHost picks the TCP address the control plane uses to reach a
+// worker for sandbox proxying (shell, ssh-ws, exec, etc.).
+//
+// Workers often auto-register a RFC1918/interface IP (e.g. docker0) as
+// servers.internal_ip while server_settings.advertise_host holds the
+// Internet-reachable address used for runtime_url. The control plane is usually
+// outside that private network, so we prefer advertise_host when internal_ip is
+// private and advertise_host is set.
+//
+// Operators who genuinely route over a VPC should set KINDLING_INTERNAL_IP (or DB
+// servers.internal_ip) to the address reachable from their API, or leave
+// advertise_host empty so this fallback does not apply.
+func sandboxProxyDialHost(server queries.Server, settings queries.ServerSetting) (string, error) {
+	internal := strings.TrimSpace(server.InternalIp)
+	advertise := strings.TrimSpace(settings.AdvertiseHost)
+
+	if internal != "" {
+		h, err := validateSandboxProxyHost(internal)
+		if err == nil {
+			if shouldPreferAdvertiseHostForProxy(internal) && advertise != "" {
+				if adv, errAdv := validateSandboxProxyHost(advertise); errAdv == nil {
+					return adv, nil
+				}
+			}
+			return h, nil
+		}
+	}
+	if advertise != "" {
+		return validateSandboxProxyHost(advertise)
+	}
+	if internal == "" {
+		return validateSandboxProxyHost("")
+	}
+	return validateSandboxProxyHost(internal)
+}
+
+func shouldPreferAdvertiseHostForProxy(internal string) bool {
+	host := normalizeSandboxProxyHost(internal)
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsPrivate() || ip.IsLinkLocalUnicast()
+	}
+	return false
 }
 
 func validateSandboxProxyHost(raw string) (string, error) {
@@ -249,7 +305,7 @@ func (a *API) proxySandboxWebsocket(w http.ResponseWriter, r *http.Request, sb q
 	copySandboxProxyableHeaders(proxyReq.Header, r.Header)
 	a.addSandboxProxyHeaders(proxyReq)
 	dialHeaders := proxyReq.Header.Clone()
-	remoteConn, resp, err := websocket.DefaultDialer.DialContext(r.Context(), wsURL.String(), dialHeaders)
+	remoteConn, resp, err := sandboxProxyWebsocketDialer.DialContext(r.Context(), wsURL.String(), dialHeaders)
 	if err != nil {
 		if resp != nil {
 			defer resp.Body.Close()

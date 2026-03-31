@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ListenAndServe listens on addr and forwards accepted TCP connections to the
@@ -68,6 +69,11 @@ func DialGuestOverUDS(vsockUDS string, port uint32) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+	handshakeDeadline := time.Now().Add(15 * time.Second)
+	if err := c.SetDeadline(handshakeDeadline); err != nil {
+		_ = c.Close()
+		return nil, err
+	}
 	if _, err := fmt.Fprintf(c, "CONNECT %d\n", port); err != nil {
 		_ = c.Close()
 		return nil, err
@@ -82,6 +88,7 @@ func DialGuestOverUDS(vsockUDS string, port uint32) (net.Conn, error) {
 		_ = c.Close()
 		return nil, fmt.Errorf("vsock connect ack: got %q", strings.TrimSpace(line))
 	}
+	_ = c.SetDeadline(time.Time{})
 	return &bridgedConn{Conn: c, br: br}, nil
 }
 

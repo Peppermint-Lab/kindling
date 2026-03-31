@@ -10,6 +10,51 @@ import (
 	"github.com/kindlingvm/kindling/internal/sandbox"
 )
 
+func TestSandboxProxyDialHost_prefersAdvertiseWhenInternalIsPrivate(t *testing.T) {
+	t.Parallel()
+
+	h, err := sandboxProxyDialHost(
+		queries.Server{InternalIp: "172.17.0.1"},
+		queries.ServerSetting{AdvertiseHost: "203.0.113.50"},
+	)
+	if err != nil {
+		t.Fatalf("sandboxProxyDialHost: %v", err)
+	}
+	if h != "203.0.113.50" {
+		t.Fatalf("host = %q, want 203.0.113.50", h)
+	}
+}
+
+func TestSandboxProxyDialHost_keepsPublicInternalWhenSet(t *testing.T) {
+	t.Parallel()
+
+	h, err := sandboxProxyDialHost(
+		queries.Server{InternalIp: "145.239.71.199"},
+		queries.ServerSetting{AdvertiseHost: "10.0.0.1"},
+	)
+	if err != nil {
+		t.Fatalf("sandboxProxyDialHost: %v", err)
+	}
+	if h != "145.239.71.199" {
+		t.Fatalf("host = %q, want 145.239.71.199", h)
+	}
+}
+
+func TestSandboxProxyDialHost_fallsBackToAdvertiseWhenInternalInvalid(t *testing.T) {
+	t.Parallel()
+
+	h, err := sandboxProxyDialHost(
+		queries.Server{InternalIp: "localhost"},
+		queries.ServerSetting{AdvertiseHost: "198.51.100.9"},
+	)
+	if err != nil {
+		t.Fatalf("sandboxProxyDialHost: %v", err)
+	}
+	if h != "198.51.100.9" {
+		t.Fatalf("host = %q, want 198.51.100.9", h)
+	}
+}
+
 func TestSandboxIsLocalOwnerRequiresRuntime(t *testing.T) {
 	t.Parallel()
 
