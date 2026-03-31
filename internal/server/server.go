@@ -1,10 +1,13 @@
 // Package server manages the server lifecycle: registration, heartbeats,
 // leader election via PG advisory locks, and dead server detection.
 //
-// Each server persists a stable UUID on first boot using the shared bootstrap helper.
-// On startup it registers with PostgreSQL, allocating an IP range for
-// its VMs. The leader runs cluster-wide duties (dead server detection,
-// VM failover).
+// Deprecated: not used by production `kindling serve`. Cluster registration
+// and heartbeats live in cmd/kindling (server_registration.go, serve_reconcilers.go).
+// Do not add new call sites here without reconciling overlap with that path.
+//
+// Historical behavior: this package persisted a stable UUID on first boot,
+// registered the server in PostgreSQL, allocated an IP range for its VMs, and
+// ran cluster-wide duties such as dead-server detection and VM failover.
 package server
 
 import (
@@ -14,9 +17,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/google/uuid"
 	"github.com/kindlingvm/kindling/internal/bootstrap"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"

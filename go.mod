@@ -13,7 +13,6 @@ require (
 	github.com/coreos/go-oidc/v3 v3.17.0
 	github.com/creack/pty v1.1.24
 	github.com/google/uuid v1.6.0
-	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pglogrepl v0.0.0-20251213150135-2e8d0df862c1
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/mattn/go-sqlite3 v1.14.37
@@ -24,6 +23,7 @@ require (
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.41.0
 	golang.org/x/term v0.40.0
+	golang.zx2c4.com/wireguard/wgctrl v0.0.0-20241231184526-a9ab2273dd10
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -46,13 +46,18 @@ require (
 	github.com/aws/smithy-go v1.24.2 // indirect
 	github.com/caddyserver/zerossl v0.1.5 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
+	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgio v1.0.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/josharian/native v1.1.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/libdns/libdns v1.1.1 // indirect
+	github.com/mdlayher/genetlink v1.3.2 // indirect
+	github.com/mdlayher/netlink v1.7.2 // indirect
+	github.com/mdlayher/socket v0.5.1 // indirect
 	github.com/mholt/acmez/v3 v3.1.6 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
@@ -65,4 +70,5 @@ require (
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 	golang.org/x/tools v0.42.0 // indirect
+	golang.zx2c4.com/wireguard v0.0.0-20231211153847-12269c276173 // indirect
 )

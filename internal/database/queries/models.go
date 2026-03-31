@@ -446,14 +446,17 @@ type RemoteVmTemplate struct {
 }
 
 type Server struct {
-	ID              pgtype.UUID        `json:"id"`
-	Hostname        string             `json:"hostname"`
-	InternalIp      string             `json:"internal_ip"`
-	IpRange         netip.Prefix       `json:"ip_range"`
-	Status          string             `json:"status"`
-	LastHeartbeatAt pgtype.Timestamptz `json:"last_heartbeat_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ID                 pgtype.UUID        `json:"id"`
+	Hostname           string             `json:"hostname"`
+	InternalIp         string             `json:"internal_ip"`
+	IpRange            netip.Prefix       `json:"ip_range"`
+	WireguardIp        netip.Addr         `json:"wireguard_ip"`
+	WireguardPublicKey string             `json:"wireguard_public_key"`
+	WireguardEndpoint  string             `json:"wireguard_endpoint"`
+	Status             string             `json:"status"`
+	LastHeartbeatAt    pgtype.Timestamptz `json:"last_heartbeat_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
 type ServerComponentStatus struct {

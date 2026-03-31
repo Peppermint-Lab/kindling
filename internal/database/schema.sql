@@ -7,6 +7,9 @@ CREATE TABLE IF NOT EXISTS servers (
     hostname        TEXT NOT NULL DEFAULT '',
     internal_ip     TEXT NOT NULL DEFAULT '',
     ip_range        CIDR NOT NULL,
+    wireguard_ip    INET NOT NULL DEFAULT '0.0.0.0'::inet,
+    wireguard_public_key TEXT NOT NULL DEFAULT '',
+    wireguard_endpoint TEXT NOT NULL DEFAULT '',
     status          TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'draining', 'drained', 'dead')),
     last_heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1665,6 +1668,29 @@ DROP TRIGGER IF EXISTS cluster_secrets_config_notify ON cluster_secrets;
 CREATE TRIGGER cluster_secrets_config_notify
     AFTER INSERT OR UPDATE OR DELETE ON cluster_secrets
     FOR EACH ROW EXECUTE PROCEDURE kindling_notify_config_change();
+
+-- WireGuard mesh metadata (Production Foundations — cluster bootstrap / private networking)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'servers' AND column_name = 'wireguard_ip'
+    ) THEN
+        ALTER TABLE servers ADD COLUMN wireguard_ip INET NOT NULL DEFAULT '0.0.0.0'::inet;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'servers' AND column_name = 'wireguard_public_key'
+    ) THEN
+        ALTER TABLE servers ADD COLUMN wireguard_public_key TEXT NOT NULL DEFAULT '';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'servers' AND column_name = 'wireguard_endpoint'
+    ) THEN
+        ALTER TABLE servers ADD COLUMN wireguard_endpoint TEXT NOT NULL DEFAULT '';
+    END IF;
+END $$;
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_vms_server_id ON vms(server_id);

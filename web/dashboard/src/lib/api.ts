@@ -357,6 +357,12 @@ export type Server = {
   id: string
   hostname: string
   internal_ip: string
+  /** WireGuard overlay address when mesh is enabled (IPv4). */
+  wireguard_ip?: string
+  /** WireGuard public key (base64), when mesh is enabled. */
+  wireguard_public_key?: string
+  /** UDP endpoint (host:port) peers use for WireGuard, when set. */
+  wireguard_endpoint?: string
   ip_range?: string
   status: string
   last_heartbeat_at: string

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/bootstrap"
 	"github.com/kindlingvm/kindling/internal/ci"
 	"github.com/kindlingvm/kindling/internal/config"
@@ -18,6 +19,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/deploy"
 	"github.com/kindlingvm/kindling/internal/rpc"
 	crunrt "github.com/kindlingvm/kindling/internal/runtime"
+	"github.com/kindlingvm/kindling/internal/wgmesh"
 	"github.com/spf13/cobra"
 )
 
@@ -128,24 +130,57 @@ func runServe(ctx context.Context, databaseURL, replicationDSN string, opts serv
 		q:    q,
 	}
 
+	// Master key is required for cluster secrets and config manager paths.
+	masterKey, err := bootstrap.LoadOrCreateMasterKey()
+	if err != nil {
+		return fmt.Errorf("master key: %w", err)
+	}
+
 	// Register server and seed cluster/server settings.
 	if components.worker || components.edge {
 		if err := validateSharedDatabaseEntryPoint(ctx, regStore, serverID, databaseURL); err != nil {
 			return err
 		}
-		if err := registerServerAndHeartbeat(ctx, db.Pool, q, serverID); err != nil {
+		regIP, err := resolveServerRegistrationIP(ctx, regStore, serverID)
+		if err != nil {
 			return err
+		}
+		if err := registerServerAndHeartbeat(ctx, db.Pool, q, serverID, regIP); err != nil {
+			return err
+		}
+		if wgmesh.Enabled() {
+			priv, err := wgmesh.EnsurePrivateKey()
+			if err != nil {
+				return fmt.Errorf("wireguard private key: %w", err)
+			}
+			ep := wgmesh.Endpoint()
+			if ep == "" {
+				return fmt.Errorf("KINDLING_WG_ENDPOINT is required when KINDLING_WG_MESH is enabled (UDP endpoint peers use to reach this host)")
+			}
+			wgIP := wgmesh.OverlayIP(serverID)
+			pub := priv.PublicKey()
+			if err := q.ServerWireGuardSet(ctx, queries.ServerWireGuardSetParams{
+				ID:                 pgtype.UUID{Bytes: serverID, Valid: true},
+				WireguardIp:        wgIP,
+				WireguardPublicKey: pub.String(),
+				WireguardEndpoint:  ep,
+			}); err != nil {
+				return fmt.Errorf("publish wireguard server metadata: %w", err)
+			}
+			go wgmesh.RunReconcileLoop(ctx, q, serverID, priv)
+			listenPort, lpErr := wgmesh.ListenPort()
+			if lpErr == nil {
+				slog.Info("wireguard mesh enabled", "iface", wgmesh.IfaceName, "overlay_ip", wgIP.String(), "listen_port", listenPort)
+			} else {
+				slog.Warn("wireguard mesh enabled with invalid KINDLING_WG_LISTEN_PORT", "iface", wgmesh.IfaceName, "overlay_ip", wgIP.String(), "error", lpErr)
+			}
 		}
 	}
 	if err := seedAllSettings(ctx, q, serverID, opts, components); err != nil {
 		return err
 	}
 
-	// Master key, secrets, config manager.
-	masterKey, err := bootstrap.LoadOrCreateMasterKey()
-	if err != nil {
-		return fmt.Errorf("master key: %w", err)
-	}
+	// Secrets backfill and config manager.
 	backfilledSecrets, err := config.BackfillProjectSecrets(ctx, q, masterKey)
 	if err != nil {
 		return fmt.Errorf("backfill project secrets: %w", err)
@@ -296,6 +331,10 @@ func runServe(ctx context.Context, databaseURL, replicationDSN string, opts serv
 	}
 
 	// Worker background loops.
+	if components.api || components.edge || components.worker {
+		go runDeadServerDetectionLoop(ctx, databaseURL, q)
+	}
+
 	if components.worker {
 		go runProjectAutoscaleLoop(ctx, databaseURL, q, recs.deployment)
 		go runIdleScaleDownLoop(ctx, databaseURL, q, recs.deployment, cfgMgr)

@@ -9789,7 +9789,7 @@ func (q *Queries) ServerComponentStatusUpsert(ctx context.Context, arg ServerCom
 }
 
 const serverFindAll = `-- name: ServerFindAll :many
-SELECT id, hostname, internal_ip, ip_range, status, last_heartbeat_at, created_at, updated_at FROM servers ORDER BY created_at
+SELECT id, hostname, internal_ip, ip_range, wireguard_ip, wireguard_public_key, wireguard_endpoint, status, last_heartbeat_at, created_at, updated_at FROM servers ORDER BY created_at
 `
 
 func (q *Queries) ServerFindAll(ctx context.Context) ([]Server, error) {
@@ -9806,6 +9806,9 @@ func (q *Queries) ServerFindAll(ctx context.Context) ([]Server, error) {
 			&i.Hostname,
 			&i.InternalIp,
 			&i.IpRange,
+			&i.WireguardIp,
+			&i.WireguardPublicKey,
+			&i.WireguardEndpoint,
 			&i.Status,
 			&i.LastHeartbeatAt,
 			&i.CreatedAt,
@@ -9822,7 +9825,7 @@ func (q *Queries) ServerFindAll(ctx context.Context) ([]Server, error) {
 }
 
 const serverFindByID = `-- name: ServerFindByID :one
-SELECT id, hostname, internal_ip, ip_range, status, last_heartbeat_at, created_at, updated_at FROM servers WHERE id = $1
+SELECT id, hostname, internal_ip, ip_range, wireguard_ip, wireguard_public_key, wireguard_endpoint, status, last_heartbeat_at, created_at, updated_at FROM servers WHERE id = $1
 `
 
 func (q *Queries) ServerFindByID(ctx context.Context, id pgtype.UUID) (Server, error) {
@@ -9833,6 +9836,9 @@ func (q *Queries) ServerFindByID(ctx context.Context, id pgtype.UUID) (Server, e
 		&i.Hostname,
 		&i.InternalIp,
 		&i.IpRange,
+		&i.WireguardIp,
+		&i.WireguardPublicKey,
+		&i.WireguardEndpoint,
 		&i.Status,
 		&i.LastHeartbeatAt,
 		&i.CreatedAt,
@@ -9842,8 +9848,8 @@ func (q *Queries) ServerFindByID(ctx context.Context, id pgtype.UUID) (Server, e
 }
 
 const serverFindDead = `-- name: ServerFindDead :many
-SELECT id, hostname, internal_ip, ip_range, status, last_heartbeat_at, created_at, updated_at FROM servers
-WHERE status IN ('active', 'draining')
+SELECT id, hostname, internal_ip, ip_range, wireguard_ip, wireguard_public_key, wireguard_endpoint, status, last_heartbeat_at, created_at, updated_at FROM servers
+WHERE status = 'active'
   AND last_heartbeat_at < NOW() - INTERVAL '30 seconds'
 `
 
@@ -9861,6 +9867,9 @@ func (q *Queries) ServerFindDead(ctx context.Context) ([]Server, error) {
 			&i.Hostname,
 			&i.InternalIp,
 			&i.IpRange,
+			&i.WireguardIp,
+			&i.WireguardPublicKey,
+			&i.WireguardEndpoint,
 			&i.Status,
 			&i.LastHeartbeatAt,
 			&i.CreatedAt,
@@ -9877,7 +9886,7 @@ func (q *Queries) ServerFindDead(ctx context.Context) ([]Server, error) {
 }
 
 const serverFindLeastLoaded = `-- name: ServerFindLeastLoaded :one
-SELECT s.id, s.hostname, s.internal_ip, s.ip_range, s.status, s.last_heartbeat_at, s.created_at, s.updated_at FROM servers s
+SELECT s.id, s.hostname, s.internal_ip, s.ip_range, s.wireguard_ip, s.wireguard_public_key, s.wireguard_endpoint, s.status, s.last_heartbeat_at, s.created_at, s.updated_at FROM servers s
 LEFT JOIN vms v ON v.server_id = s.id AND v.deleted_at IS NULL
 WHERE s.status = 'active'
   AND s.last_heartbeat_at > NOW() - INTERVAL '3 minutes'
@@ -9894,6 +9903,9 @@ func (q *Queries) ServerFindLeastLoaded(ctx context.Context) (Server, error) {
 		&i.Hostname,
 		&i.InternalIp,
 		&i.IpRange,
+		&i.WireguardIp,
+		&i.WireguardPublicKey,
+		&i.WireguardEndpoint,
 		&i.Status,
 		&i.LastHeartbeatAt,
 		&i.CreatedAt,
@@ -9903,7 +9915,14 @@ func (q *Queries) ServerFindLeastLoaded(ctx context.Context) (Server, error) {
 }
 
 const serverHeartbeat = `-- name: ServerHeartbeat :exec
-UPDATE servers SET last_heartbeat_at = NOW(), updated_at = NOW() WHERE id = $1
+UPDATE servers
+SET last_heartbeat_at = NOW(),
+    status = CASE
+        WHEN status IN ('draining', 'drained') THEN status
+        ELSE 'active'
+    END,
+    updated_at = NOW()
+WHERE id = $1
 `
 
 func (q *Queries) ServerHeartbeat(ctx context.Context, id pgtype.UUID) error {
@@ -10024,12 +10043,12 @@ ON CONFLICT (id) DO UPDATE SET
     hostname = EXCLUDED.hostname,
     internal_ip = EXCLUDED.internal_ip,
     status = CASE
-        WHEN servers.status IN ('draining', 'drained', 'dead') THEN servers.status
+        WHEN servers.status IN ('draining', 'drained') THEN servers.status
         ELSE 'active'
     END,
     last_heartbeat_at = NOW(),
     updated_at = NOW()
-RETURNING id, hostname, internal_ip, ip_range, status, last_heartbeat_at, created_at, updated_at
+RETURNING id, hostname, internal_ip, ip_range, wireguard_ip, wireguard_public_key, wireguard_endpoint, status, last_heartbeat_at, created_at, updated_at
 `
 
 type ServerRegisterParams struct {
@@ -10052,6 +10071,9 @@ func (q *Queries) ServerRegister(ctx context.Context, arg ServerRegisterParams) 
 		&i.Hostname,
 		&i.InternalIp,
 		&i.IpRange,
+		&i.WireguardIp,
+		&i.WireguardPublicKey,
+		&i.WireguardEndpoint,
 		&i.Status,
 		&i.LastHeartbeatAt,
 		&i.CreatedAt,
@@ -10180,6 +10202,32 @@ type ServerUpdateStatusParams struct {
 
 func (q *Queries) ServerUpdateStatus(ctx context.Context, arg ServerUpdateStatusParams) error {
 	_, err := q.db.Exec(ctx, serverUpdateStatus, arg.ID, arg.Status)
+	return err
+}
+
+const serverWireGuardSet = `-- name: ServerWireGuardSet :exec
+UPDATE servers SET
+    wireguard_ip = $1::inet,
+    wireguard_public_key = $2,
+    wireguard_endpoint = $3,
+    updated_at = NOW()
+WHERE id = $4
+`
+
+type ServerWireGuardSetParams struct {
+	WireguardIp        netip.Addr  `json:"wireguard_ip"`
+	WireguardPublicKey string      `json:"wireguard_public_key"`
+	WireguardEndpoint  string      `json:"wireguard_endpoint"`
+	ID                 pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) ServerWireGuardSet(ctx context.Context, arg ServerWireGuardSetParams) error {
+	_, err := q.db.Exec(ctx, serverWireGuardSet,
+		arg.WireguardIp,
+		arg.WireguardPublicKey,
+		arg.WireguardEndpoint,
+		arg.ID,
+	)
 	return err
 }
 

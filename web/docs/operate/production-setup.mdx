@@ -45,6 +45,8 @@ Production self-hosting is not only "the server starts." It also means:
 
 This is the recommended sequence for a control-plane-plus-workers cluster.
 
+Canonical topology boundaries: repo [`docs/high-availability.md`](https://github.com/kindlingvm/kindling/blob/main/docs/high-availability.md) and [`docs/private-networking.md`](https://github.com/kindlingvm/kindling/blob/main/docs/private-networking.md).
+
 ### 1. Prepare the database tier
 
 - Create or identify the PostgreSQL cluster that will hold Kindling state.
@@ -118,6 +120,8 @@ For each additional worker host:
 - edit `/etc/kindling/kindling.env`
   - set `KINDLING_ADVERTISE_HOST` to that host’s reachable address
   - keep `KINDLING_PUBLIC_URL` pointed at the shared control-plane API origin
+  - **Without WireGuard mesh:** set `KINDLING_INTERNAL_IP` to this host’s stable **private** IPv4 (required when other servers already exist in the cluster)
+  - **With WireGuard mesh (Linux):** set `KINDLING_WG_MESH=1`, `KINDLING_WG_ENDPOINT` to this host’s UDP `ip:port`, and on joiners set the coordination-server variables (see below)
 - start the worker component:
 
 ```bash
@@ -126,10 +130,32 @@ sudo systemctl enable --now kindling@worker
 
 The worker must not join with:
 
-- loopback `internal_ip`
+- loopback `internal_ip` (or, without mesh, omitting `KINDLING_INTERNAL_IP` when the cluster already has other servers)
 - a loopback / localhost PostgreSQL DSN
 
-Kindling now rejects those unsafe multi-server join cases at startup.
+Kindling rejects those unsafe multi-server join cases at startup.
+
+### WireGuard mesh (Linux, optional)
+
+When **`KINDLING_WG_MESH=1`** on **Linux** edge/worker processes, Kindling:
+
+- allocates a deterministic **10.64.x.x** overlay address per `server-id`
+- stores **WireGuard metadata** on [`servers`](https://github.com/kindlingvm/kindling/blob/main/internal/database/schema.sql) (`wireguard_ip`, `wireguard_public_key`, `wireguard_endpoint`)
+- configures **`wg0`**, syncs peers from PostgreSQL on an interval, and sets **`servers.internal_ip`** to the overlay address for that process
+
+Environment (see [`docs/private-networking.md`](https://github.com/kindlingvm/kindling/blob/main/docs/private-networking.md) for the full contract):
+
+| Variable | Role |
+|----------|------|
+| `KINDLING_WG_MESH=1` | Enable automation |
+| `KINDLING_WG_ENDPOINT` | This node’s UDP endpoint (`host:port`) as seen by peers |
+| `KINDLING_WG_LISTEN_PORT` | Optional; default **51820** |
+| `KINDLING_WG_PRIVATE_KEY` | Optional override (base64); else file `~/.kindling/wg-private-key`, else Kindling generates a per-node local key |
+| `KINDLING_COORDINATION_SERVER_WG_IP` | **Joiners only** — coordination peer overlay IP |
+| `KINDLING_COORDINATION_SERVER_ENDPOINT` | **Joiners only** — coordination peer UDP endpoint |
+| `KINDLING_COORDINATION_SERVER_PUBKEY` | **Joiners only** — coordination peer WireGuard public key |
+
+**Edge → workloads:** the edge proxy still connects to **`vm_ip:port` from Postgres**. With mesh enabled, peers advertise each server’s **VM `ip_range`** as WireGuard **AllowedIPs**, so the control-plane host can route to remote VM addresses over `wg0` when those IPs sit in the peer’s allocated range. If you disable mesh, you must provide your own routing or port publishing between edge and workers.
 
 ### 6. Validate the joined worker
 
@@ -148,10 +174,19 @@ Before calling the cluster healthy:
 - every host uses the same `/etc/kindling/postgres.dsn`
 - the DSN points at a **shared private** database entry point
 - if pooling, every host uses the same `/etc/kindling/postgres.replication.dsn` and it points at a replication-capable PostgreSQL host
-- every host has a stable `server-id`
+- every host has a stable `server-id` at `~/.kindling/server-id` (no `KINDLING_SERVER_ID` env — obsolete)
+- **without mesh:** every joining worker has **`KINDLING_INTERNAL_IP`** set to a non-loopback private address
+- **with mesh:** every participating host has **`KINDLING_WG_MESH=1`**, **`KINDLING_WG_ENDPOINT`**, and joiners have coordination-server env vars until the mesh converges
 - no multi-server worker advertises `127.0.0.1`, `0.0.0.0`, or `localhost` as its internal address
 - the control plane can proxy to workloads on joined workers
 - DNS, TLS, and dashboard API origin all match the public hostnames you configured
+
+## Documentation map
+
+Strategic product architecture (including supported topology narrative) may live in your team’s Kindling vault as `Spec.md`. **Operator runbooks in this repository** are what you follow for day-one setup and validation:
+
+- [`docs/high-availability.md`](https://github.com/kindlingvm/kindling/blob/main/docs/high-availability.md) — supported topologies, PostgreSQL HA, multi-server bootstrap.
+- [`docs/private-networking.md`](https://github.com/kindlingvm/kindling/blob/main/docs/private-networking.md) — private DSN pattern, WireGuard mesh contract (`PEP-287`), edge → workload routing.
 
 ## Read Next
 

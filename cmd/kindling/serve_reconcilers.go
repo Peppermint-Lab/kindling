@@ -257,11 +257,11 @@ func startWorkerHeartbeats(ctx context.Context, q *queries.Queries, serverID uui
 
 // registerServerAndHeartbeat registers the server in the database and starts the
 // periodic heartbeat loop. Call when the worker or edge component is enabled.
-func registerServerAndHeartbeat(ctx context.Context, pool *pgxpool.Pool, q *queries.Queries, serverID uuid.UUID) error {
+func registerServerAndHeartbeat(ctx context.Context, pool *pgxpool.Pool, q *queries.Queries, serverID uuid.UUID, internalIP string) error {
 	server, err := registerServer(ctx, pgServerRegistrationStore{
 		pool: pool,
 		q:    q,
-	}, serverID, hostname(), detectInternalIP())
+	}, serverID, hostname(), internalIP)
 	if err != nil {
 		return err
 	}

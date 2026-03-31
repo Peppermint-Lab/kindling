@@ -5,7 +5,7 @@ ON CONFLICT (id) DO UPDATE SET
     hostname = EXCLUDED.hostname,
     internal_ip = EXCLUDED.internal_ip,
     status = CASE
-        WHEN servers.status IN ('draining', 'drained', 'dead') THEN servers.status
+        WHEN servers.status IN ('draining', 'drained') THEN servers.status
         ELSE 'active'
     END,
     last_heartbeat_at = NOW(),
@@ -16,11 +16,26 @@ RETURNING *;
 SELECT * FROM servers WHERE id = $1;
 
 -- name: ServerHeartbeat :exec
-UPDATE servers SET last_heartbeat_at = NOW(), updated_at = NOW() WHERE id = $1;
+UPDATE servers
+SET last_heartbeat_at = NOW(),
+    status = CASE
+        WHEN status IN ('draining', 'drained') THEN status
+        ELSE 'active'
+    END,
+    updated_at = NOW()
+WHERE id = $1;
+
+-- name: ServerWireGuardSet :exec
+UPDATE servers SET
+    wireguard_ip = sqlc.arg(wireguard_ip)::inet,
+    wireguard_public_key = sqlc.arg(wireguard_public_key),
+    wireguard_endpoint = sqlc.arg(wireguard_endpoint),
+    updated_at = NOW()
+WHERE id = sqlc.arg(id);
 
 -- name: ServerFindDead :many
 SELECT * FROM servers
-WHERE status IN ('active', 'draining')
+WHERE status = 'active'
   AND last_heartbeat_at < NOW() - INTERVAL '30 seconds';
 
 -- name: ServerUpdateStatus :exec

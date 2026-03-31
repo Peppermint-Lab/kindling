@@ -19,8 +19,9 @@ import (
 	"github.com/kindlingvm/kindling/internal/volumeops"
 )
 
-const buildRecoveryInterval = 1 * time.Minute     // interval for build orphan recovery sweep
-const buildRecoveryStuckTimeout = 15 * time.Minute // must match internal/builder/buildStuckTimeout
+const buildRecoveryInterval = 1 * time.Minute        // interval for build orphan recovery sweep
+const buildRecoveryStuckTimeout = 15 * time.Minute   // must match internal/builder/buildStuckTimeout
+const deadServerDetectionInterval = 30 * time.Second // must match ServerFindDead staleness threshold
 
 func runProjectVolumeOperationRecoveryLoop(ctx context.Context, q *queries.Queries, sched *reconciler.Scheduler) {
 	if q == nil || sched == nil {
@@ -52,6 +53,76 @@ func runBuildRecoveryLoop(ctx context.Context, databaseURL string, q *queries.Qu
 			return
 		case <-ticker.C:
 			runBuildRecoveryOnce(ctx, databaseURL, q, buildReconciler)
+		}
+	}
+}
+
+// runDeadServerDetectionLoop marks active servers with stale heartbeats as dead and resets
+// their workload rows. Only one process runs it (session advisory lock), matching build recovery.
+func runDeadServerDetectionLoop(ctx context.Context, databaseURL string, q *queries.Queries) {
+	ticker := time.NewTicker(deadServerDetectionInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runDeadServerDetectionOnce(ctx, databaseURL, q)
+		}
+	}
+}
+
+func runDeadServerDetectionOnce(ctx context.Context, databaseURL string, q *queries.Queries) {
+	leaderConn, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		slog.Debug("dead server detection: db connect", "error", err)
+		return
+	}
+	defer leaderConn.Close(context.Background())
+
+	qLeader := queries.New(leaderConn)
+	acquired, err := qLeader.TrySessionAdvisoryLock(ctx, "kindling_dead_server_detection")
+	if err != nil || !acquired {
+		return
+	}
+
+	dead, err := q.ServerFindDead(ctx)
+	if err != nil {
+		slog.Warn("dead server detection: query", "error", err)
+		return
+	}
+	for _, srv := range dead {
+		sid := srv.ID
+		current, err := q.ServerFindByID(ctx, sid)
+		if err != nil {
+			slog.Error("dead server detection: reload server", "server_id", sid, "error", err)
+			continue
+		}
+		if current.Status != "active" || !current.LastHeartbeatAt.Valid || time.Since(current.LastHeartbeatAt.Time) <= deadServerDetectionInterval {
+			continue
+		}
+		vmIDs, err := q.DeploymentInstanceVMIDsByServerID(ctx, sid)
+		if err != nil {
+			slog.Error("dead server detection: list vms", "server_id", sid, "error", err)
+			continue
+		}
+		for _, vid := range vmIDs {
+			if vid.Valid {
+				if err := q.VMSoftDelete(ctx, vid); err != nil {
+					slog.Error("dead server detection: soft-delete vm", "server_id", sid, "error", err)
+				}
+			}
+		}
+		if err := q.DeploymentInstanceResetForDeadServer(ctx, sid); err != nil {
+			slog.Error("dead server detection: reset instances", "server_id", sid, "error", err)
+			continue
+		}
+		slog.Warn("marking server dead (stale heartbeat)", "server_id", sid, "hostname", srv.Hostname)
+		if err := q.ServerUpdateStatus(ctx, queries.ServerUpdateStatusParams{
+			ID:     sid,
+			Status: "dead",
+		}); err != nil {
+			slog.Error("dead server detection: update status", "server_id", sid, "error", err)
 		}
 	}
 }
@@ -287,13 +358,13 @@ func runWebhookPollingOnce(ctx context.Context, databaseURL string, q *queries.Q
 
 			dep, err := q.DeploymentCreate(ctx, queries.DeploymentCreateParams{
 				ID:             pgtype.UUID{Bytes: uuid.New(), Valid: true},
-				ProjectID:       proj.ID,
-				ServiceID:       svc.ID,
-				BuildID:         pgtype.UUID{Valid: false},
-				ImageID:         pgtype.UUID{Valid: false},
-				GithubCommit:    headSHA,
-				GithubBranch:    defaultBranch,
-				DeploymentKind:  "production",
+				ProjectID:      proj.ID,
+				ServiceID:      svc.ID,
+				BuildID:        pgtype.UUID{Valid: false},
+				ImageID:        pgtype.UUID{Valid: false},
+				GithubCommit:   headSHA,
+				GithubBranch:   defaultBranch,
+				DeploymentKind: "production",
 			})
 			if err != nil {
 				slog.Warn("webhook polling: create deployment",

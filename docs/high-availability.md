@@ -10,7 +10,7 @@ These are the only topology shapes treated as supported for self-hosted producti
 
 All control plane components, the worker runtime, and PostgreSQL run on one host:
 
-- **On this host:** API, edge proxy (TLS), WAL listener, all reconcilers (`deployment`, `build`, `ci_job`, `remote_vm`, `server`, `volume`, `domain`, `instance_migration`, …), worker runtime (Cloud Hypervisor / Apple VZ / crun as detected), PostgreSQL.
+- **On this host:** API, edge proxy (TLS), WAL listener, all reconcilers (`deployment`, `build`, `ci_job`, `server`, `volume`, `domain`, `instance_migration`, …), worker runtime (Cloud Hypervisor / Apple VZ / crun as detected), PostgreSQL.
 - **Typical use:** Small teams, single-node production, dev clusters.
 - **DNS:** Operator provides records for `api.*`, `app.*`, `docs.*` (and workload domains) pointing at this host or your load balancer.
 - **Storage:** Local state under `/var/lib/kindling` or `KINDLING_STATE_DIR` (and per-product defaults). For Cloud Hypervisor, `KINDLING_CH_SHARED_ROOTFS_DIR` may be local disk or shared storage if you reuse layers across processes on the same host.
@@ -22,8 +22,14 @@ One host runs the **full control plane** and PostgreSQL. Additional hosts regist
 - **Control plane server:** API, edge, WAL listener, all reconcilers, PostgreSQL. Leader-elected work (e.g. builds) runs on whichever node holds the advisory lock; in this shape that is expected to be the control plane host.
 - **Worker servers:** Worker runtime and deployment VMs only — no WAL listener; workers consume shared state from PostgreSQL.
 - **Requirements:** Same Postgres **cluster** and **same logical DSN** for every Kindling process (identical URI in `/etc/kindling/postgres.dsn` or equivalent); each server has a **unique** server identity (see [Multi-server requirements](#multi-server-requirements)); low latency to the database tier (recommended **&lt;5 ms** RTT).
-- **Multi-server networking (today):** Every Kindling server must reach the **database entrypoint** on the private network—typically **PgBouncer** on **TCP 6432** (or your chosen port), not a public PostgreSQL port. See [private-networking.md](./private-networking.md). VM backend addresses stored for the edge are **host-local** (e.g. TAP); routing from the edge on the control plane to a VM on another host depends on your network (port publishing / operator overlay). See [internal-dns-runtime.md](./internal-dns-runtime.md) for worker DNS and cross-server routing scope.
+- **Multi-server networking:** Every Kindling process must reach the **database entrypoint** on the private network—typically **PgBouncer** on **TCP 6432** (or your chosen port), not a public PostgreSQL port. See [private-networking.md](./private-networking.md). Route **edge → remote worker VM** traffic either with **Kindling WireGuard mesh** on Linux (`KINDLING_WG_MESH=1`, see that doc) or with operator-managed routing. See [internal-dns-runtime.md](./internal-dns-runtime.md) for worker DNS scope (same-host vs cross-server).
 - **Shared filesystem:** For **multiple workers** using **Cloud Hypervisor**, plan shared storage (e.g. NFS) for `KINDLING_CH_SHARED_ROOTFS_DIR` so OCI layer cache is coherent across workers.
+
+### Split processes: API-only hosts (load-balanced API)
+
+You may run **`kindling serve` with `--components api` only** on extra hosts behind a load balancer. Those processes **do not** create or update a row in the `servers` table — registration and `servers.last_heartbeat_at` apply only when **worker** or **edge** is enabled on that process ([`serve.go`](https://github.com/kindlingvm/kindling/blob/main/cmd/kindling/serve.go)). API-only tiers still need the same database DSN and contribute API/component heartbeats only when colocated on a host that also runs worker or edge.
+
+For inventory of cluster nodes, use **`GET /api/servers`**: it lists database-registered hosts (typically control plane + workers with edge/worker components), not every API-only replica.
 
 ### Operator-managed infrastructure
 
@@ -35,7 +41,7 @@ Kindling does **not** supply: public DNS, load balancers, GitHub webhook reachab
 |--------|-----|
 | PostgreSQL on a host with **no** Kindling binary | WAL listener and migrations expect Kindling on the DB host. |
 | Workers only, **no** control-plane-capable server | Workers need WAL-driven updates and leader duties. |
-| **Cross-server VM-to-VM** without operator networking | VM IPs are host-local unless you add routing (e.g. WireGuard/VLAN). Kindling does not build a full mesh automatically **today** (see product spec for target mesh). |
+| **Cross-server VM-to-VM** private service mesh | VMs do not get automatic east-west discovery across hosts. **Edge → remote worker** routing is supported with **Kindling WireGuard mesh** (`KINDLING_WG_MESH=1` on Linux) or operator-provided routing; VM-to-VM across servers is not a first-product surface. |
 | Separate **CI-only** hosts | `ci_job` reconciler runs on the cluster; separate runner hosts are not a supported product shape. |
 | **Multi-region** clusters | Not tested; keep PostgreSQL and Kindling in low-latency proximity. |
 | **Crun-only** remote workers in the secondary shape | Secondary topology assumes Cloud Hypervisor workers; crun on remote workers is untested in multi-server clusters. |
@@ -177,11 +183,11 @@ Recommended order for a control-plane-plus-workers cluster:
 3. If the pooled DSN goes through PgBouncer, write the **same** direct-primary DSN to `/etc/kindling/postgres.replication.dsn` on every host.
 4. Bring up the **control plane** first (`kindling@edge`, `kindling@api`, `kindling@worker` or equivalent).
 5. Verify the first server registers and remains stable across restart (`~/.kindling/server-id` should persist).
-6. Join additional workers with the same DSN set and a **non-loopback** internal IP.
+6. Join additional workers with the same DSN set and a **non-loopback** internal IP, **unless** [WireGuard mesh](private-networking.md) is enabled on Linux (`KINDLING_WG_MESH=1`), in which case Kindling publishes an overlay **10.64.x.x** address automatically and **`KINDLING_INTERNAL_IP` is not required** for those processes.
 
 Kindling now rejects common unsafe join states, including:
 
-- multi-server registration with `127.0.0.1` / `0.0.0.0` / `localhost` as the worker internal address
+- multi-server registration with `127.0.0.1` / `0.0.0.0` / `localhost` as the worker internal address (without mesh, joining workers must set **`KINDLING_INTERNAL_IP`** explicitly once another server exists — heuristic auto-detection is only for the first node)
 - multi-server startup with a local-only database DSN (`localhost`, `127.0.0.1`, local socket)
 
 ### Validation Checklist
@@ -197,14 +203,12 @@ Kindling now rejects common unsafe join states, including:
 
 ### Server Heartbeat and Dead Server Detection
 
-Kindling detects dead workers via a heartbeat mechanism:
+Registered hosts (processes with **edge** or **worker** enabled) write `servers.last_heartbeat_at` every **10 seconds**.
 
-- Each worker writes a heartbeat row every **10 seconds** (`servers.last_heartbeat_at`)
-- A server is considered **dead** if no heartbeat is seen for **30 seconds**
-- Dead server detection triggers:
-  - Deployment instance recovery (instances on the dead server are re-provisioned)
-  - Build orphan recovery (builds claimed by the dead server are reset to pending)
-  - Sandbox cleanup
+- One cluster leader periodically marks **`active`** servers whose heartbeat is older than **30 seconds** as **`dead`** (hosts in **`draining`** are not auto-marked; resolve those via drain completion or operator action).
+- When a server becomes **`dead`**, Kindling soft-deletes associated VMs, resets deployment instances on that host to **pending**, and the deployment reconciler replaces them elsewhere.
+- Fresh heartbeats or a clean re-register transition a **`dead`** server back to **`active`** automatically; **`draining`** and **`drained`** remain operator-controlled.
+- A separate leader-elected loop resets **build** rows orphaned by unreachable `processing_by` servers (stale heartbeat), independent of server status.
 
 ### Graceful Shutdown
 

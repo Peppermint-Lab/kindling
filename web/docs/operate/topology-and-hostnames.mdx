@@ -13,7 +13,9 @@ Kindling officially supports two self-hosted shapes. Other layouts are untested.
 
 **Primary — all-in-one:** API, edge, WAL listener, reconcilers, worker runtime, and PostgreSQL on a single host. Best default for most teams.
 
-**Secondary — control plane + remote workers:** One host runs the full control plane and PostgreSQL; additional hosts are worker-only (local runtime + deployment VMs). All processes share one PostgreSQL cluster. VM backend IPs for the edge are host-local unless you provide operator-managed routing between hosts.
+**Secondary — control plane + remote workers:** One host runs the full control plane and PostgreSQL; additional hosts are worker-only (local runtime + deployment VMs). All processes share one PostgreSQL cluster. VM backend IPs for the edge are host-local unless you provide operator-managed routing between hosts or enable Kindling-managed **WireGuard** (see [Private networking](https://github.com/kindlingvm/kindling/blob/main/docs/private-networking.md) and production setup).
+
+**API-only replicas:** Extra hosts may run API-only `kindling serve` for horizontal API capacity; they do not appear in `GET /api/servers` unless that process also runs edge or worker. See the HA guide for details.
 
 For ports, storage, DNS, and an explicit unsupported list, see the repo guide [High Availability and Supported Topologies](https://github.com/kindlingvm/kindling/blob/main/docs/high-availability.md) (`docs/high-availability.md`).
 

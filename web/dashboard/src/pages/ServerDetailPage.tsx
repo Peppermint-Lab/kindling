@@ -229,6 +229,15 @@ export function ServerDetailPage() {
                 </span>
               </MetadataItem>
               <MetadataItem label="Runtime">{server.runtime || "—"}</MetadataItem>
+              {server.wireguard_ip || server.wireguard_public_key ? (
+                <MetadataItem label="WireGuard" span="2">
+                  <div className="space-y-1 font-mono text-xs break-all">
+                    {server.wireguard_ip ? <div>overlay: {server.wireguard_ip}</div> : null}
+                    {server.wireguard_endpoint ? <div>endpoint: {server.wireguard_endpoint}</div> : null}
+                    {server.wireguard_public_key ? <div>pubkey: {server.wireguard_public_key}</div> : null}
+                  </div>
+                </MetadataItem>
+              ) : null}
               <MetadataItem label="Enabled components" span="2">
                 {server.enabled_components && server.enabled_components.length > 0
                   ? server.enabled_components.map(componentLabel).join(", ")
