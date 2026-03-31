@@ -89,93 +89,6 @@ export type ServiceEndpoint = {
   last_unhealthy_at?: string | null
 }
 
-export type SandboxPublishedPort = {
-  target_port: number
-  protocol: "http"
-  visibility: "public"
-  public_hostname?: string
-}
-
-/** Remote VM product capabilities (Milestone 2 API contract). Keys are stable (e.g. terminal_shell). */
-export type RemoteVMCapabilityEntry = {
-  supported: boolean
-  available: boolean
-}
-
-export type Sandbox = {
-  id: string
-  name: string
-  host_group: string
-  isolation_policy?: string
-  backend?: string
-  arch?: string
-  desired_state: string
-  observed_state: string
-  server_id?: string | null
-  vm_id?: string | null
-  template_id?: string | null
-  base_image_ref: string
-  vcpu: number
-  memory_mb: number
-  disk_gb: number
-  env?: Record<string, string>
-  git_repo?: string
-  git_ref?: string
-  auto_suspend_seconds: number
-  last_used_at?: string | null
-  expires_at?: string | null
-  published_http_port?: number | null
-  runtime_url?: string
-  ssh_host_public_key?: string
-  failure_message?: string
-  created_at?: string | null
-  updated_at?: string | null
-  published_ports?: SandboxPublishedPort[]
-  capabilities?: Record<string, RemoteVMCapabilityEntry>
-}
-
-export type SandboxTemplate = {
-  id: string
-  name: string
-  host_group: string
-  isolation_policy?: string
-  backend?: string
-  arch?: string
-  source_remote_vm_id?: string | null
-  server_id?: string | null
-  base_image_ref: string
-  snapshot_ref?: string
-  vcpu: number
-  memory_mb: number
-  disk_gb: number
-  status: string
-  failure_message?: string
-  created_at?: string | null
-  updated_at?: string | null
-  capabilities?: Record<string, RemoteVMCapabilityEntry>
-}
-
-export type SandboxAccessEvent = {
-  id: string
-  remote_vm_id: string
-  user_id?: string
-  user_email?: string
-  display_name?: string
-  access_method: "shell_ws" | "ssh" | "exec" | "copy_in" | "copy_out"
-  event_type: "started" | "ended" | "failed"
-  exit_code?: number | null
-  error_summary?: string
-  created_at: string
-}
-
-export type UserSSHKey = {
-  id: string
-  name: string
-  public_key: string
-  created_at: string
-  updated_at: string
-}
-
 export type ProjectVolume = {
   id: string
   project_id: string
@@ -624,19 +537,6 @@ function parseUsageHistory(raw: unknown): UsageHistory {
   }
 }
 
-function parseListResponse<T>(raw: unknown, label: string): T[] {
-  if (Array.isArray(raw)) {
-    return raw as T[]
-  }
-  if (raw && typeof raw === "object") {
-    const items = (raw as { items?: unknown }).items
-    if (Array.isArray(items)) {
-      return items as T[]
-    }
-  }
-  throw new Error(`Invalid ${label} response`)
-}
-
 export type APIMeta = {
   public_base_url: string
   public_base_url_configured: boolean
@@ -720,60 +620,6 @@ export type ProjectDomain = {
 }
 
 export const api = {
-  listSandboxes: () => request<unknown>("/api/vms").then((raw) => parseListResponse<Sandbox>(raw, "remote VM list")),
-  createSandbox: (data: {
-    name: string
-    host_group?: string
-    isolation_policy?: string
-    base_image_ref?: string
-    template_id?: string
-    vcpu?: number
-    memory_mb?: number
-    disk_gb?: number
-    git_repo?: string
-    git_ref?: string
-    auto_suspend_seconds?: number
-    expires_at?: string
-    published_http_port?: number
-    desired_state?: "running" | "stopped"
-  }) =>
-    request<Sandbox>("/api/vms", { method: "POST", body: JSON.stringify(data) }),
-  getSandbox: (id: string) => request<Sandbox>(`/api/vms/${id}`),
-  updateSandbox: (id: string, data: {
-    auto_suspend_seconds?: number
-    base_image_ref?: string
-    vcpu?: number
-    memory_mb?: number
-    disk_gb?: number
-    expires_at?: string
-  }) =>
-    request<Sandbox>(`/api/vms/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  deleteSandbox: (id: string) =>
-    request<void>(`/api/vms/${id}`, { method: "DELETE" }),
-  sandboxAction: (id: string, action: "start" | "stop" | "suspend" | "resume") =>
-    request<Sandbox>(`/api/vms/${id}/${action}`, { method: "POST", body: JSON.stringify({}) }),
-  publishSandboxHTTP: (id: string, targetPort: number, hostname?: string) =>
-    request<Sandbox>(`/api/vms/${id}/publish-http`, {
-      method: "POST",
-      body: JSON.stringify({ target_port: targetPort, hostname }),
-    }),
-  unpublishSandboxHTTP: (id: string) =>
-    request<Sandbox>(`/api/vms/${id}/unpublish-http`, { method: "POST", body: JSON.stringify({}) }),
-  getSandboxLogs: (id: string) => request<string[]>(`/api/vms/${id}/logs`),
-  getSandboxStats: (id: string) => request<Record<string, unknown> | null>(`/api/vms/${id}/stats`),
-  getSandboxAccessEvents: (id: string) => request<SandboxAccessEvent[]>(`/api/vms/${id}/access-events`),
-  listSandboxTemplates: () => request<SandboxTemplate[]>("/api/vm-templates"),
-  createSandboxTemplate: (id: string, data?: { name?: string }) =>
-    request<SandboxTemplate>(`/api/vms/${id}/template`, { method: "POST", body: JSON.stringify(data ?? {}) }),
-  cloneSandboxTemplate: (id: string, data?: { name?: string }) =>
-    request<Sandbox>(`/api/vm-templates/${id}/clone`, { method: "POST", body: JSON.stringify(data ?? {}) }),
-  deleteSandboxTemplate: (id: string) =>
-    request<SandboxTemplate>(`/api/vm-templates/${id}`, { method: "DELETE" }),
-  listUserSSHKeys: () => request<UserSSHKey[]>("/api/me/ssh-keys"),
-  createUserSSHKey: (data: { name?: string; public_key: string }) =>
-    request<UserSSHKey>("/api/me/ssh-keys", { method: "POST", body: JSON.stringify(data) }),
-  deleteUserSSHKey: (id: string) =>
-    request<void>(`/api/me/ssh-keys/${id}`, { method: "DELETE" }),
   authBootstrapStatus: () =>
     request<{ needs_bootstrap: boolean; bootstrap_token_configured: boolean }>(
       "/api/auth/bootstrap-status"

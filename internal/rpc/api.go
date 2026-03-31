@@ -18,7 +18,6 @@ import (
 	"github.com/kindlingvm/kindling/internal/rpc/projects"
 	"github.com/kindlingvm/kindling/internal/rpc/servers"
 	"github.com/kindlingvm/kindling/internal/rpc/volumes"
-	"github.com/kindlingvm/kindling/internal/sandbox"
 )
 
 // API provides REST endpoints for the dashboard.
@@ -28,9 +27,6 @@ type API struct {
 	dashboardEvents      *DashboardEventBroker
 	deploymentReconciler *reconciler.Scheduler
 	ciJobReconciler      *reconciler.Scheduler
-	sandboxReconciler    *reconciler.Scheduler
-	sandboxTplReconciler *reconciler.Scheduler
-	sandboxSvc           *sandbox.Service
 	ciJobService         interface {
 		Cancel(context.Context, uuid.UUID) error
 		CreateLocalWorkflowJob(context.Context, ci.CreateJobRequest) (queries.CiJob, error)
@@ -56,12 +52,6 @@ func (a *API) SetCIJobRuntime(r *reconciler.Scheduler, svc interface {
 }) {
 	a.ciJobReconciler = r
 	a.ciJobService = svc
-}
-
-func (a *API) SetSandboxRuntime(sandboxReconciler, sandboxTemplateReconciler *reconciler.Scheduler, svc *sandbox.Service) {
-	a.sandboxReconciler = sandboxReconciler
-	a.sandboxTplReconciler = sandboxTemplateReconciler
-	a.sandboxSvc = svc
 }
 
 func (a *API) gitHubToken() string {
@@ -158,34 +148,6 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/ci/jobs/{id}/logs", a.getCIJobLogs)
 	mux.HandleFunc("GET /api/ci/jobs/{id}/artifacts", a.getCIJobArtifacts)
 	mux.HandleFunc("POST /api/ci/jobs/{id}/cancel", a.cancelCIJob)
-	mux.HandleFunc("GET /api/vms", a.listSandboxes)
-	mux.HandleFunc("POST /api/vms", a.createSandbox)
-	mux.HandleFunc("GET /api/vms/{id}", a.getSandbox)
-	mux.HandleFunc("PATCH /api/vms/{id}", a.patchSandbox)
-	mux.HandleFunc("DELETE /api/vms/{id}", a.deleteSandbox)
-	mux.HandleFunc("POST /api/vms/{id}/start", a.startSandbox)
-	mux.HandleFunc("POST /api/vms/{id}/stop", a.stopSandbox)
-	mux.HandleFunc("POST /api/vms/{id}/suspend", a.stopSandbox)
-	mux.HandleFunc("POST /api/vms/{id}/resume", a.startSandbox)
-	mux.HandleFunc("POST /api/vms/{id}/template", a.createSandboxTemplate)
-	mux.HandleFunc("POST /api/vms/{id}/publish-http", a.publishSandboxHTTP)
-	mux.HandleFunc("POST /api/vms/{id}/unpublish-http", a.unpublishSandboxHTTP)
-	mux.HandleFunc("POST /api/vms/{id}/exec", a.execSandbox)
-	mux.HandleFunc("GET /api/vms/{id}/shell", a.sandboxShell)
-	mux.HandleFunc("GET /api/vms/{id}/shell/ws", a.sandboxShellWS)
-	mux.HandleFunc("GET /api/vms/{id}/ssh/ws", a.sandboxSSHWS)
-	mux.HandleFunc("POST /api/vms/{id}/copy-in", a.copyIntoSandbox)
-	mux.HandleFunc("GET /api/vms/{id}/copy-out", a.copyOutOfSandbox)
-	mux.HandleFunc("GET /api/vms/{id}/logs", a.sandboxLogs)
-	mux.HandleFunc("GET /api/vms/{id}/stats", a.sandboxStats)
-	mux.HandleFunc("GET /api/vms/{id}/access-events", a.listRemoteVMAccessEvents)
-	mux.HandleFunc("GET /api/vm-templates", a.listSandboxTemplates)
-	mux.HandleFunc("GET /api/vm-templates/{id}", a.getSandboxTemplate)
-	mux.HandleFunc("DELETE /api/vm-templates/{id}", a.deleteSandboxTemplate)
-	mux.HandleFunc("POST /api/vm-templates/{id}/clone", a.cloneSandboxTemplate)
-	mux.HandleFunc("GET /api/me/ssh-keys", a.listUserSSHKeys)
-	mux.HandleFunc("POST /api/me/ssh-keys", a.createUserSSHKey)
-	mux.HandleFunc("DELETE /api/me/ssh-keys/{key_id}", a.deleteUserSSHKey)
 
 	// Pending membership management (org admin only)
 	a.registerPendingMemberRoutes(mux)

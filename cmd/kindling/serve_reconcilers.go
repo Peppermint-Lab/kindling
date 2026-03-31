@@ -20,7 +20,6 @@ import (
 	"github.com/kindlingvm/kindling/internal/migrationreconcile"
 	"github.com/kindlingvm/kindling/internal/reconciler"
 	crunrt "github.com/kindlingvm/kindling/internal/runtime"
-	"github.com/kindlingvm/kindling/internal/sandbox"
 	"github.com/kindlingvm/kindling/internal/serverreconcile"
 	"github.com/kindlingvm/kindling/internal/usage"
 	"github.com/kindlingvm/kindling/internal/volumeops"
@@ -36,8 +35,6 @@ type reconcilers struct {
 	server     *reconciler.Scheduler
 	migration  *reconciler.Scheduler
 	volumeOp   *reconciler.Scheduler
-	sandbox    *reconciler.Scheduler
-	sandboxTpl *reconciler.Scheduler
 }
 
 // workerSetupResult bundles the outputs from setupWorker.
@@ -46,7 +43,6 @@ type workerSetupResult struct {
 	hostRuntime crunrt.HostRuntimeConfig
 	deployer    *deploy.Deployer
 	ciSvc       *ciworker.JobService
-	sandboxSvc  *sandbox.Service
 	recs        reconcilers
 }
 
@@ -168,26 +164,11 @@ func setupWorker(
 	})
 	deployer.SetServerScheduler(serverReconciler)
 
-	sandboxSvc := &sandbox.Service{
-		Q:        q,
-		Runtime:  rt,
-		ServerID: serverID,
-	}
-	sandboxReconciler := reconciler.New(reconciler.Config{
-		Name:      "remote_vm",
-		Reconcile: failFastOnClosedPool("remote_vm", sandboxSvc.Reconcile),
-	})
-	sandboxTemplateReconciler := reconciler.New(reconciler.Config{
-		Name:      "remote_vm_template",
-		Reconcile: failFastOnClosedPool("remote_vm_template", sandboxSvc.ReconcileTemplate),
-	})
-
 	return workerSetupResult{
 		rt:          rt,
 		hostRuntime: hostCfg,
 		deployer:    deployer,
 		ciSvc:       ciSvc,
-		sandboxSvc:  sandboxSvc,
 		recs: reconcilers{
 			deployment: deploymentReconciler,
 			build:      buildReconciler,
@@ -197,8 +178,6 @@ func setupWorker(
 			server:     serverReconciler,
 			migration:  migrationReconciler,
 			volumeOp:   volumeOpReconciler,
-			sandbox:    sandboxReconciler,
-			sandboxTpl: sandboxTemplateReconciler,
 		},
 	}, nil
 }
@@ -224,8 +203,6 @@ func startReconcilers(ctx context.Context, q *queries.Queries, serverID uuid.UUI
 	go recs.server.Start(ctx)
 	go recs.migration.Start(ctx)
 	go recs.volumeOp.Start(ctx)
-	go recs.sandbox.Start(ctx)
-	go recs.sandboxTpl.Start(ctx)
 	slog.Info("reconcilers started")
 
 	if retainedRT, ok := rt.(crunrt.DurableRetainedStateRuntime); ok {
@@ -247,7 +224,9 @@ func startReconcilers(ctx context.Context, q *queries.Queries, serverID uuid.UUI
 // the worker component.
 func startWorkerHeartbeats(ctx context.Context, q *queries.Queries, serverID uuid.UUID, rt crunrt.Runtime, hostCfg crunrt.HostRuntimeConfig) {
 	go runServerComponentHeartbeat(ctx, q, serverID, "worker", componentHeartbeatInterval, func() map[string]any {
-		meta := crunrt.BuildWorkerRemoteVMMetadata(rt, hostCfg)
+		meta := map[string]any{
+			"runtime": rt.Name(),
+		}
 		if rt.Name() == "cloud-hypervisor" {
 			if v := cloudHypervisorVersion(); v != "" {
 				meta["cloud_hypervisor_version"] = v

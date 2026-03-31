@@ -52,8 +52,6 @@ type Config struct {
 	OnServer                 Handler
 	OnInstanceMigration      Handler
 	OnProjectVolumeOperation Handler
-	OnRemoteVM               Handler
-	OnRemoteVMTemplate       Handler
 }
 
 const walStandbyTimeout = 10 * time.Second // WAL standby status update interval
@@ -99,8 +97,6 @@ var publicationTables = []string{
 	"preview_environments",
 	"instance_migrations",
 	"project_volume_operations",
-	"remote_vms",
-	"remote_vm_templates",
 }
 
 func defaultSlotName() string {
@@ -400,14 +396,6 @@ func (l *Listener) dispatch(ctx context.Context, relationID uint32, tuple *pglog
 	case "project_volume_operations":
 		if l.cfg.OnProjectVolumeOperation != nil {
 			l.cfg.OnProjectVolumeOperation(ctx, id)
-		}
-	case "remote_vms":
-		if l.cfg.OnRemoteVM != nil {
-			l.cfg.OnRemoteVM(ctx, id)
-		}
-	case "remote_vm_templates":
-		if l.cfg.OnRemoteVMTemplate != nil {
-			l.cfg.OnRemoteVMTemplate(ctx, id)
 		}
 	case "preview_environments":
 		// No handler currently registered; changes are silently ignored.

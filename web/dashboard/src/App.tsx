@@ -30,16 +30,6 @@ const DeploymentsPage = lazy(() =>
     default: module.DeploymentsPage,
   }))
 )
-const SandboxesPage = lazy(() =>
-  import("@/pages/SandboxesPage").then((module) => ({
-    default: module.SandboxesPage,
-  }))
-)
-const SandboxDetailPage = lazy(() =>
-  import("@/pages/SandboxDetailPage").then((module) => ({
-    default: module.SandboxDetailPage,
-  }))
-)
 const PipelinesPage = lazy(() =>
   import("@/pages/PipelinesPage").then((module) => ({
     default: module.PipelinesPage,
@@ -58,11 +48,6 @@ const CIJobDetailPage = lazy(() =>
 const SettingsPage = lazy(() =>
   import("@/pages/SettingsPage").then((module) => ({
     default: module.SettingsPage,
-  }))
-)
-const SSHKeysPage = lazy(() =>
-  import("@/pages/SSHKeysPage").then((module) => ({
-    default: module.SSHKeysPage,
   }))
 )
 const ServerDetailPage = lazy(() =>
@@ -162,22 +147,6 @@ function Layout() {
               }
             />
             <Route
-              path="/vms"
-              element={
-                <PrivateRouteContent>
-                  <SandboxesPage />
-                </PrivateRouteContent>
-              }
-            />
-            <Route
-              path="/vms/:id"
-              element={
-                <PrivateRouteContent>
-                  <SandboxDetailPage />
-                </PrivateRouteContent>
-              }
-            />
-            <Route
               path="/pipelines"
               element={
                 <PrivateRouteContent>
@@ -206,14 +175,6 @@ function Layout() {
               element={
                 <PrivateRouteContent>
                   <SettingsPage />
-                </PrivateRouteContent>
-              }
-            />
-            <Route
-              path="/settings/ssh-keys"
-              element={
-                <PrivateRouteContent>
-                  <SSHKeysPage />
                 </PrivateRouteContent>
               }
             />
