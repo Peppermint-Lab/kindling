@@ -72,6 +72,40 @@ func TestEffectiveReplicaCountUsesServiceDesiredCount(t *testing.T) {
 	}
 }
 
+func TestRestartBudgetExceededSkipsHealthyRunningInstance(t *testing.T) {
+	t.Parallel()
+
+	inst := queries.DeploymentInstance{
+		Status:       "running",
+		RestartCount: maxRestartCount,
+		LastRestartAt: pgtype.Timestamptz{
+			Valid: true,
+			Time:  time.Now(),
+		},
+	}
+
+	if restartBudgetExceeded(inst, true, time.Now()) {
+		t.Fatal("expected healthy running instance not to trip the restart budget")
+	}
+}
+
+func TestRestartBudgetExceededTripsRecentUnhealthyInstance(t *testing.T) {
+	t.Parallel()
+
+	inst := queries.DeploymentInstance{
+		Status:       "failed",
+		RestartCount: maxRestartCount,
+		LastRestartAt: pgtype.Timestamptz{
+			Valid: true,
+			Time:  time.Now(),
+		},
+	}
+
+	if !restartBudgetExceeded(inst, false, time.Now()) {
+		t.Fatal("expected unhealthy instance with exhausted budget to trip the circuit breaker")
+	}
+}
+
 func TestRequiresExternalHealthCheck(t *testing.T) {
 	if requiresExternalHealthCheck("apple-vz") {
 		t.Fatal("expected apple-vz to rely on runtime readiness instead of external health checks")

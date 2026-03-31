@@ -19,6 +19,14 @@ import (
 const maxRestartCount = 3               // max restarts within the budget window before giving up
 const restartBudgetSeconds = 5 * 60    // 5-minute window for restart budget
 
+func restartBudgetExceeded(inst queries.DeploymentInstance, healthyRunning bool, now time.Time) bool {
+	if healthyRunning || inst.RestartCount < maxRestartCount || !inst.LastRestartAt.Valid {
+		return false
+	}
+	windowStart := inst.LastRestartAt.Time.Add(time.Duration(restartBudgetSeconds) * time.Second)
+	return now.Before(windowStart)
+}
+
 func (d *Deployer) reconcileOneInstance(
 	ctx context.Context,
 	dep queries.Deployment,
@@ -41,23 +49,6 @@ func (d *Deployer) reconcileOneInstance(
 		return nil
 	}
 
-	// Restart budget: if the instance has exceeded the restart budget, trip the circuit
-	// breaker for this deployment and stop retrying.
-	if inst.RestartCount >= maxRestartCount && inst.LastRestartAt.Valid {
-		windowStart := inst.LastRestartAt.Time.Add(time.Duration(restartBudgetSeconds) * time.Second)
-		if time.Now().Before(windowStart) {
-			logger.Warn("restart budget exceeded, tripping circuit breaker",
-				"instance_id", pguuid.FromPgtype(inst.ID),
-				"restart_count", inst.RestartCount,
-				"last_restart_at", inst.LastRestartAt.Time)
-			if _, err := d.q.DeploymentCircuitBreak(ctx, dep.ID); err != nil {
-				logger.Warn("failed to trip circuit breaker", "deployment_id", dep.ID, "error", err)
-			}
-			return nil
-		}
-		// Budget window has passed; reset and allow retry.
-	}
-
 	inst, err := d.reconcileInstanceServerAssignment(ctx, dep, inst, persistentVolume, logger)
 	if err != nil {
 		return err
@@ -69,10 +60,23 @@ func (d *Deployer) reconcileOneInstance(
 		}
 	}
 
+	healthyRunning := false
 	if inst.Status == "running" && inst.VmID.Valid {
-		if d.isRunningInstanceHealthy(ctx, inst) {
+		healthyRunning = d.isRunningInstanceHealthy(ctx, inst)
+		if healthyRunning {
 			return nil
 		}
+	}
+
+	if restartBudgetExceeded(inst, healthyRunning, time.Now()) {
+		logger.Warn("restart budget exceeded, tripping circuit breaker",
+			"instance_id", pguuid.FromPgtype(inst.ID),
+			"restart_count", inst.RestartCount,
+			"last_restart_at", inst.LastRestartAt.Time)
+		if _, err := d.q.DeploymentCircuitBreak(ctx, dep.ID); err != nil {
+			logger.Warn("failed to trip circuit breaker", "deployment_id", dep.ID, "error", err)
+		}
+		return nil
 	}
 
 	inst, err = d.resetStaleInstance(ctx, dep, inst, persistentVolume)
