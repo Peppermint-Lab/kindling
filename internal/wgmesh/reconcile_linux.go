@@ -111,6 +111,14 @@ func assignOverlayAddress(link netlink.Link, ip netip.Addr) error {
 	return nil
 }
 
+func prefixToIPNet(pref netip.Prefix) net.IPNet {
+	masked := pref.Masked()
+	return net.IPNet{
+		IP:   masked.Addr().AsSlice(),
+		Mask: net.CIDRMask(masked.Bits(), masked.Addr().BitLen()),
+	}
+}
+
 func buildPeerConfigs(rows []queries.Server, self uuid.UUID, selfPub wgtypes.Key) ([]wgtypes.PeerConfig, error) {
 	byKey := make(map[wgtypes.Key]*wgtypes.PeerConfig)
 
@@ -140,7 +148,7 @@ func buildPeerConfigs(rows []queries.Server, self uuid.UUID, selfPub wgtypes.Key
 			if _, ok := seen[k]; ok {
 				continue
 			}
-			p.AllowedIPs = append(p.AllowedIPs, pref)
+			p.AllowedIPs = append(p.AllowedIPs, prefixToIPNet(pref))
 			seen[k] = struct{}{}
 		}
 	}
