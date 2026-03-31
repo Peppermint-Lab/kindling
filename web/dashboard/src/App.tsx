@@ -21,11 +21,6 @@ const ProjectDetailPage = lazy(() =>
     default: module.ProjectDetailPage,
   }))
 )
-const ServiceDetailPage = lazy(() =>
-  import("@/pages/ServiceDetailPage").then((module) => ({
-    default: module.ServiceDetailPage,
-  }))
-)
 const DeploymentsPage = lazy(() =>
   import("@/pages/DeploymentsPage").then((module) => ({
     default: module.DeploymentsPage,
@@ -155,14 +150,6 @@ function Layout() {
               element={
                 <PrivateRouteContent>
                   <ProjectDetailPage />
-                </PrivateRouteContent>
-              }
-            />
-            <Route
-              path="/services/:id"
-              element={
-                <PrivateRouteContent>
-                  <ServiceDetailPage />
                 </PrivateRouteContent>
               }
             />

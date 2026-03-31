@@ -3,7 +3,6 @@ import { useParams, Link, useNavigate } from "react-router-dom"
 import {
   api,
   type Project,
-  type Service,
   type Deployment,
   type CIJob,
   type CIWorkflow,
@@ -192,7 +191,6 @@ export function ProjectDetailPage() {
   const navigate = useNavigate()
   const [project, setProject] = useState<Project | null>(null)
   const [deployments, setDeployments] = useState<Deployment[]>([])
-  const [services, setServices] = useState<Service[]>([])
   const [deploymentsPage, setDeploymentsPage] = useState(1)
   const [ghSetup, setGhSetup] = useState<GitHubSetup | null>(null)
   const [loading, setLoading] = useState(true)
@@ -482,7 +480,6 @@ export function ProjectDetailPage() {
       }
       return Promise.all([
         api.getProject(id),
-        api.listProjectServices(id),
         api.listDeployments(id),
         api.getProjectVolume(id).catch((e) => {
           if (e instanceof APIError && e.status === 404) {
@@ -498,9 +495,8 @@ export function ProjectDetailPage() {
         }),
         api.listServers().catch(() => []),
       ])
-        .then(([p, svc, d, v, backups, serverList]) => {
+        .then(([p, d, v, backups, serverList]) => {
           setProject(p)
-          setServices(svc)
           setDeployments(d)
           setProjectVolume(v)
           setVolumeBackups(backups)
@@ -536,7 +532,6 @@ export function ProjectDetailPage() {
 
   useEffect(() => {
     setDeploymentsPage(1)
-    setServices([])
     setMinInstances(0)
     setMaxInstances(3)
     setScaleToZeroEnabled(true)
@@ -754,8 +749,6 @@ export function ProjectDetailPage() {
       setProject(p)
       setBuildRootDirectory(p.root_directory?.trim() ? p.root_directory : "/")
       setBuildDockerfilePath(p.dockerfile_path?.trim() ? p.dockerfile_path : "Dockerfile")
-      const svc = await api.listProjectServices(id)
-      setServices(svc)
     } catch (e) {
       setError(e instanceof APIError ? e.message : "Could not update build paths")
     } finally {
@@ -1176,95 +1169,6 @@ export function ProjectDetailPage() {
                     >
                       {buildPathsSaving ? "Saving…" : "Save build context"}
                     </Button>
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  <div>
-                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Services</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Services are now the workload unit under a project. Existing projects keep a primary
-                      compatibility service automatically.
-                    </p>
-                  </div>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    {services.map((service) => {
-                      const endpoints = service.endpoints || []
-                      const publicEndpoints = endpoints.filter((endpoint) => endpoint.visibility === "public")
-                      const privateEndpoints = endpoints.filter((endpoint) => endpoint.visibility !== "public")
-                      const generatedPublicURL = publicEndpoints.find((endpoint) => endpoint.public_hostname)?.public_hostname
-                      return (
-                        <div key={service.id} className="rounded-lg border p-3 space-y-3">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className="font-medium truncate">{service.name}</p>
-                              <p className="font-mono text-xs text-muted-foreground break-all">{service.slug}</p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              {service.is_primary ? <Badge variant="secondary">Primary</Badge> : null}
-                              <Badge variant={publicEndpoints.length > 0 ? "default" : "secondary"}>
-                                {publicEndpoints.length > 0 ? "Public" : "Private"}
-                              </Badge>
-                            </div>
-                          </div>
-                          <div className="text-xs text-muted-foreground space-y-1">
-                            <p>
-                              Root: <span className="font-mono text-foreground">{service.root_directory}</span>
-                            </p>
-                            <p>
-                              Dockerfile: <span className="font-mono text-foreground">{service.dockerfile_path}</span>
-                            </p>
-                            <p>
-                              Private endpoints:{" "}
-                              <span className="font-medium text-foreground">{privateEndpoints.length}</span>
-                            </p>
-                            {generatedPublicURL ? (
-                              <p>
-                                Generated URL:{" "}
-                                <span className="font-mono text-foreground break-all">{generatedPublicURL}</span>
-                              </p>
-                            ) : null}
-                          </div>
-                          {endpoints.length > 0 ? (
-                            <div className="space-y-2 pt-1">
-                              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                                Networking
-                              </p>
-                              <div className="space-y-2">
-                                {endpoints.map((endpoint) => (
-                                  <div key={endpoint.id} className="rounded-md bg-muted/40 p-2.5 space-y-1">
-                                    <div className="flex items-center justify-between gap-2">
-                                      <span className="font-mono text-xs">{endpoint.name}</span>
-                                      <Badge variant={endpoint.visibility === "public" ? "default" : "secondary"}>
-                                        {endpoint.visibility}
-                                      </Badge>
-                                    </div>
-                                    <p className="text-[11px] text-muted-foreground">
-                                      {endpoint.protocol.toUpperCase()}:{endpoint.target_port}
-                                    </p>
-                                    <p className="font-mono text-[11px] break-all">{endpoint.dns_name}</p>
-                                    {endpoint.public_hostname ? (
-                                      <p className="font-mono text-[11px] break-all">{endpoint.public_hostname}</p>
-                                    ) : null}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          ) : (
-                            <p className="text-xs text-muted-foreground">
-                              No endpoints declared yet. Services start private by default.
-                            </p>
-                          )}
-                          <div className="pt-1">
-                            <Link
-                              to={`/services/${service.id}`}
-                              className="inline-flex h-7 items-center rounded-[min(var(--radius-md),12px)] border border-border bg-background px-2.5 text-[0.8rem] font-medium hover:bg-muted"
-                            >
-                              Open service
-                            </Link>
-                          </div>
-                        </div>
-                      )
-                    })}
                   </div>
                 </div>
               </SurfaceBody>
