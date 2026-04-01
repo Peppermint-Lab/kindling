@@ -21,7 +21,17 @@ const (
 	httpScaleDownRequestsPerMinute = 25.0
 	cpuScaleDownPercentTotal       = 35.0
 	cpuLookback                    = 2 * time.Minute
+	scaleDownCooldown              = 5 * time.Minute
 )
+
+type autoscaleStore interface {
+	ProjectFindAll(ctx context.Context) ([]queries.Project, error)
+	ServiceListByProjectID(ctx context.Context, projectID pgtype.UUID) ([]queries.Service, error)
+	DeploymentLatestRunningByServiceID(ctx context.Context, serviceID pgtype.UUID) (queries.Deployment, error)
+	ProjectHTTPUsageRollupsAggregatedByDeployment(ctx context.Context, arg queries.ProjectHTTPUsageRollupsAggregatedByDeploymentParams) ([]queries.ProjectHTTPUsageRollupsAggregatedByDeploymentRow, error)
+	InstanceUsageLatestPerInstanceByDeployment(ctx context.Context, arg queries.InstanceUsageLatestPerInstanceByDeploymentParams) ([]queries.InstanceUsageLatestPerInstanceByDeploymentRow, error)
+	ServiceSetDesiredInstanceCount(ctx context.Context, arg queries.ServiceSetDesiredInstanceCountParams) error
+}
 
 func nonZeroFloor(proj queries.Project) int32 {
 	if proj.MaxInstanceCount <= 0 {
@@ -97,6 +107,10 @@ func shouldStepDown(current int32, avgRequestsPerMinute, totalCPUPercent float64
 	return httpOK && cpuOK
 }
 
+func shouldHoldScaleDown(proj queries.Project, now time.Time) bool {
+	return proj.LastRequestAt.Valid && now.UTC().Sub(proj.LastRequestAt.Time.UTC()) < scaleDownCooldown
+}
+
 func ComputeDesiredInstanceCount(proj queries.Project, service *queries.Service, avgRequestsPerMinute, totalCPUPercent float64, hasCPU bool) int32 {
 	current := clampCurrentTarget(proj, service)
 	if proj.MaxInstanceCount <= 0 {
@@ -127,31 +141,21 @@ func scheduleDeploymentNow(deploymentReconciler *reconciler.Scheduler, dep queri
 	deploymentReconciler.ScheduleNow(uuid.UUID(dep.ID.Bytes))
 }
 
-func RunOnce(ctx context.Context, databaseURL string, q *queries.Queries, deploymentReconciler *reconciler.Scheduler) {
-	leaderConn, err := pgx.Connect(ctx, databaseURL)
-	if err != nil {
-		slog.Debug("project autoscaler: db connect", "error", err)
+func runAutoscaleSweep(ctx context.Context, q autoscaleStore, deploymentReconciler *reconciler.Scheduler, now time.Time) {
+	if q == nil {
 		return
 	}
-	defer leaderConn.Close(context.Background())
-
-	qLeader := queries.New(leaderConn)
-	acquired, err := qLeader.TrySessionAdvisoryLock(ctx, "kindling_project_autoscaler")
-	if err != nil || !acquired {
-		return
-	}
+	now = now.UTC()
+	httpWindowEnd := now.Truncate(time.Minute)
+	httpWindowStart := httpWindowEnd.Add(-httpWindowMinutes * time.Minute)
+	httpWindowInclusiveEnd := httpWindowEnd.Add(-time.Nanosecond)
+	cpuSince := now.Add(-cpuLookback)
 
 	projects, err := q.ProjectFindAll(ctx)
 	if err != nil {
 		slog.Warn("project autoscaler: list projects", "error", err)
 		return
 	}
-
-	now := time.Now().UTC()
-	httpWindowEnd := now.Truncate(time.Minute)
-	httpWindowStart := httpWindowEnd.Add(-httpWindowMinutes * time.Minute)
-	httpWindowInclusiveEnd := httpWindowEnd.Add(-time.Nanosecond)
-	cpuSince := now.Add(-cpuLookback)
 
 	for _, proj := range projects {
 		if proj.MaxInstanceCount <= 0 || proj.ScaledToZero {
@@ -211,6 +215,9 @@ func RunOnce(ctx context.Context, databaseURL string, q *queries.Queries, deploy
 
 			current := clampCurrentTarget(proj, svc)
 			next := ComputeDesiredInstanceCount(proj, svc, avgRPM, totalCPU, hasCPU)
+			if next < current && shouldHoldScaleDown(proj, now) {
+				continue
+			}
 			if next == current {
 				continue
 			}
@@ -235,4 +242,25 @@ func RunOnce(ctx context.Context, databaseURL string, q *queries.Queries, deploy
 			)
 		}
 	}
+}
+
+func RunOnce(ctx context.Context, databaseURL string, deploymentReconciler *reconciler.Scheduler) {
+	leaderConn, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		slog.Debug("project autoscaler: db connect", "error", err)
+		return
+	}
+	defer leaderConn.Close(context.Background())
+
+	qLeader := queries.New(leaderConn)
+	acquired, err := qLeader.TrySessionAdvisoryLock(ctx, "kindling_project_autoscaler")
+	if err != nil {
+		slog.Warn("project autoscaler: advisory lock", "error", err)
+		return
+	}
+	if !acquired {
+		return
+	}
+
+	runAutoscaleSweep(ctx, qLeader, deploymentReconciler, time.Now())
 }

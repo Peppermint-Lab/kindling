@@ -336,7 +336,7 @@ func runServe(ctx context.Context, databaseURL, replicationDSN string, opts serv
 	}
 
 	if components.worker {
-		go runProjectAutoscaleLoop(ctx, databaseURL, q, recs.deployment)
+		go runProjectAutoscaleLoop(ctx, replicationDSN, q, recs.deployment)
 		go runIdleScaleDownLoop(ctx, databaseURL, q, recs.deployment, cfgMgr)
 		go runPreviewCleanupLoop(ctx, databaseURL, q, recs.deployment)
 		go runPreviewIdleScaleDownLoop(ctx, databaseURL, q, recs.deployment, cfgMgr)

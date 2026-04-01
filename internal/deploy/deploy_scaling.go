@@ -167,7 +167,7 @@ func (d *Deployer) countActiveInstances(instList []queries.DeploymentInstance) i
 func (d *Deployer) countProvisionableInstances(instList []queries.DeploymentInstance) int {
 	n := 0
 	for _, inst := range instList {
-		if isActiveInstance(inst) || isWarmPoolInstance(inst) {
+		if isActiveInstance(inst) {
 			n++
 		}
 	}

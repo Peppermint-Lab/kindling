@@ -33,6 +33,8 @@ const coldStartMargin = 15 * time.Second          // extra margin added to HTTPS
 const httpServerReadTimeout = 30 * time.Second    // HTTP server read timeout
 const httpServerWriteTimeout = 30 * time.Second   // HTTP server write timeout
 const coldStartLookupPollInterval = 200 * time.Millisecond
+const defaultBackendResponseHeaderTimeout = 5 * time.Second
+const routeReloadTimeout = 2 * time.Second
 
 // edgeProxyRetryKey marks a request so we only reload-and-retry once per client request.
 type edgeProxyRetryKey struct{}
@@ -124,6 +126,7 @@ type Service struct {
 	cancel            context.CancelFunc
 	coldStartTimeout  time.Duration
 	httpsWriteTimeout time.Duration
+	backendResponseHeaderTimeout time.Duration
 	serverID          pgtype.UUID
 }
 
@@ -203,6 +206,7 @@ func New(cfg Config) (*Service, error) {
 		routes:            make(map[string]Route),
 		coldStartTimeout:  cold,
 		httpsWriteTimeout: httpsWT,
+		backendResponseHeaderTimeout: defaultBackendResponseHeaderTimeout,
 		serverID:          sid,
 	}
 
@@ -582,6 +586,7 @@ func (s *Service) proxyControlPlane(w http.ResponseWriter, r *http.Request, host
 	target := s.cfg.APIBackend
 	clientIP := stripPort(r.RemoteAddr)
 	proxy := &httputil.ReverseProxy{
+		Transport: s.backendTransport(),
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
 			pr.Out.Host = r.Host
@@ -602,27 +607,77 @@ func (s *Service) proxyControlPlane(w http.ResponseWriter, r *http.Request, host
 }
 
 func (s *Service) reverseProxy(w http.ResponseWriter, r *http.Request, host string, route Route) {
-	be, ok := s.pickBackend(route)
-	if !ok {
-		http.Error(w, "Service Not Found", http.StatusNotFound)
-		return
-	}
-
-	targetURL := fmt.Sprintf("http://%s:%d", be.IP, be.Port)
-	target, err := url.Parse(targetURL)
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
-
 	var inBytes int64
 	if r.Body != nil {
 		r.Body = &countReadCloser{ReadCloser: r.Body, n: &inBytes}
 	}
 	mw := &meteredResponseWriter{ResponseWriter: w}
+	projID := route.ProjectID
+	depID := route.DeploymentID
+
+	s.recordRequestActivity(route.DeploymentKind, projID, depID)
+	currentRoute := route
+	retried := false
+	statusCaptured := 0
+	for {
+		be, ok := s.pickBackend(currentRoute)
+		if !ok {
+			http.Error(w, "Service Not Found", http.StatusNotFound)
+			return
+		}
+		targetURL := fmt.Sprintf("http://%s:%d", be.IP, be.Port)
+		attemptStatus, err := s.proxyToBackend(mw, r, targetURL)
+		if err == nil {
+			statusCaptured = attemptStatus
+			break
+		}
+
+		slog.Warn("proxy error", "host", host, "target", targetURL, "error", err)
+		if retried || r.Context().Err() != nil {
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+
+		reloadCtx, cancel := context.WithTimeout(context.Background(), routeReloadTimeout)
+		loadErr := s.loadRoutes(reloadCtx)
+		cancel()
+		if loadErr != nil {
+			slog.Warn("reload routes after proxy error", "host", host, "error", loadErr)
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+		s.mu.RLock()
+		currentRoute, ok = s.routes[host]
+		s.mu.RUnlock()
+		if !ok || len(currentRoute.Backends) == 0 {
+			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			return
+		}
+		retried = true
+	}
+
+	if statusCaptured == 0 {
+		return
+	}
+	if !s.serverID.Valid || !projID.Valid || !depID.Valid {
+		return
+	}
+	// context.Background() is intentional: this is a fire-and-forget goroutine that
+	// records HTTP usage after the request completes; the request context may already be done.
+	go s.recordAppHTTPUsage(context.Background(), projID, depID, statusCaptured, inBytes, mw.n)
+}
+
+func (s *Service) proxyToBackend(w http.ResponseWriter, r *http.Request, targetURL string) (int, error) {
+	target, err := url.Parse(targetURL)
+	if err != nil {
+		return 0, err
+	}
 
 	clientIP := stripPort(r.RemoteAddr)
+	statusCaptured := 0
+	var proxyErr error
 	proxy := &httputil.ReverseProxy{
+		Transport: s.backendTransport(),
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
 			pr.Out.Host = r.Host
@@ -633,51 +688,28 @@ func (s *Service) reverseProxy(w http.ResponseWriter, r *http.Request, host stri
 			pr.Out.Header.Set("X-Forwarded-Proto", "https")
 			pr.Out.Header.Set("X-Real-IP", clientIP)
 		},
+		ModifyResponse: func(resp *http.Response) error {
+			statusCaptured = resp.StatusCode
+			resp.Header.Set("Server", "Kindling")
+			return nil
+		},
+		ErrorHandler: func(_ http.ResponseWriter, _ *http.Request, errorValue error) {
+			proxyErr = errorValue
+		},
 	}
-	projID := route.ProjectID
-	depID := route.DeploymentID
-	statusCaptured := 0
-	proxy.ModifyResponse = func(resp *http.Response) error {
-		statusCaptured = resp.StatusCode
-		resp.Header.Set("Server", "Kindling")
-		return nil
-	}
-	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		slog.Warn("proxy error", "host", host, "target", targetURL, "error", err)
-		if r.Context().Value(edgeProxyRetryKey{}) != nil {
-			http.Error(w, "Bad Gateway", http.StatusBadGateway)
-			return
-		}
-		// Stale route after redeploy / scale: DB already points at new backends but the in-memory
-		// map (or round-robin pick) may still target a dead port. Reload once and retry.
-		if loadErr := s.loadRoutes(r.Context()); loadErr != nil {
-			slog.Warn("reload routes after proxy error", "host", host, "error", loadErr)
-			http.Error(w, "Bad Gateway", http.StatusBadGateway)
-			return
-		}
-		s.mu.RLock()
-		newRoute, ok := s.routes[host]
-		s.mu.RUnlock()
-		if !ok || len(newRoute.Backends) == 0 {
-			http.Error(w, "Bad Gateway", http.StatusBadGateway)
-			return
-		}
-		ctx := context.WithValue(r.Context(), edgeProxyRetryKey{}, true)
-		s.reverseProxy(w, r.WithContext(ctx), host, newRoute)
-	}
+	proxy.ServeHTTP(w, r)
+	return statusCaptured, proxyErr
+}
 
-	s.recordRequestActivity(route.DeploymentKind, projID, depID)
-	proxy.ServeHTTP(mw, r)
-
-	if statusCaptured == 0 {
-		return // Retry path or abandoned request; inner reverseProxy records if applicable.
+func (s *Service) backendTransport() http.RoundTripper {
+	timeout := s.backendResponseHeaderTimeout
+	if timeout <= 0 {
+		timeout = defaultBackendResponseHeaderTimeout
 	}
-	if !s.serverID.Valid || !projID.Valid || !depID.Valid {
-		return
-	}
-	// context.Background() is intentional: this is a fire-and-forget goroutine that
-	// records HTTP usage after the request completes; the request context may already be done.
-	go s.recordAppHTTPUsage(context.Background(), projID, depID, statusCaptured, inBytes, mw.n)
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DisableKeepAlives = true
+	t.ResponseHeaderTimeout = timeout
+	return t
 }
 
 func (s *Service) recordRequestActivity(deploymentKind string, projectID, deploymentID pgtype.UUID) {

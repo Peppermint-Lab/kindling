@@ -72,6 +72,20 @@ func TestEffectiveReplicaCountUsesServiceDesiredCount(t *testing.T) {
 	}
 }
 
+func TestCountProvisionableInstancesIgnoresWarmPool(t *testing.T) {
+	t.Parallel()
+
+	d := &Deployer{}
+	instList := []queries.DeploymentInstance{
+		{Role: deploymentInstanceRoleActive},
+		{Role: deploymentInstanceRoleWarmPool},
+	}
+
+	if got := d.countProvisionableInstances(instList); got != 1 {
+		t.Fatalf("got %d want 1 active provisionable instance", got)
+	}
+}
+
 func TestRestartBudgetExceededSkipsHealthyRunningInstance(t *testing.T) {
 	t.Parallel()
 
