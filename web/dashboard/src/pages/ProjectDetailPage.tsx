@@ -168,16 +168,16 @@ function defaultCITriggerEvent(workflow: CIWorkflow): string {
 function MiniBars({ values, label }: { values: number[]; label?: string }) {
   const max = Math.max(1, ...values)
   return (
-    <div>
+    <div className="min-w-0 w-full">
       {label != null && label !== "" ? <p className="stat-label mb-2">{label}</p> : null}
-      <div className="flex items-end gap-px h-20 w-full border rounded-lg p-2 bg-muted/20">
+      <div className="flex min-w-0 w-full max-w-full items-end gap-0 h-20 overflow-hidden border rounded-lg p-2 bg-muted/20">
         {values.length === 0 ? (
           <p className="text-xs text-muted-foreground w-full text-center self-center">No data yet</p>
         ) : (
           values.map((v, i) => (
             <div
               key={i}
-              className="flex-1 min-w-[2px] bg-primary/70 rounded-t-sm transition-[height]"
+              className="min-w-0 flex-1 bg-primary/70 rounded-t-sm transition-[height]"
               style={{ height: `${Math.max(6, (v / max) * 100)}%` }}
               title={String(v)}
             />
@@ -2569,8 +2569,8 @@ export function ProjectDetailPage() {
                 )}
 
                 {usageHistory && (
-                  <div className="grid gap-4 lg:grid-cols-2">
-                    <Surface>
+                  <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+                    <Surface className="min-w-0">
                       <SurfaceHeader>
                         <SurfaceTitle>Memory (max / minute)</SurfaceTitle>
                         <SurfaceDescription>Window: {usageHistory.window}</SurfaceDescription>
@@ -2579,7 +2579,7 @@ export function ProjectDetailPage() {
                         <MiniBars label="RSS peak per bucket" values={(usageHistory.resource ?? []).map((x) => x.memory_rss_bytes_max)} />
                       </SurfaceBody>
                     </Surface>
-                    <Surface>
+                    <Surface className="min-w-0">
                       <SurfaceHeader>
                         <SurfaceTitle>HTTP requests / minute</SurfaceTitle>
                         <SurfaceDescription>Aggregated across Kindling edge servers</SurfaceDescription>
