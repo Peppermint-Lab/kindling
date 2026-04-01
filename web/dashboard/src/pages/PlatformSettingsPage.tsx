@@ -672,8 +672,8 @@ export function PlatformSettingsPage() {
               <SurfaceHeader>
                 <SurfaceTitle>Operator health</SurfaceTitle>
                 <SurfaceDescription>
-                  Live control-plane host telemetry across API and edge nodes. Auto-refreshes every 15 seconds and on
-                  server events.
+                  Live control-plane host telemetry across API and edge nodes, with workload instance counts on each
+                  host. Auto-refreshes every 15 seconds and on server events.
                 </SurfaceDescription>
               </SurfaceHeader>
               <SurfaceBody className="space-y-6 text-sm">
@@ -756,10 +756,10 @@ export function PlatformSettingsPage() {
                                 Host sample {formatAgeSeconds(hostMetrics?.sample_age_seconds)}
                               </Badge>
                               <Badge variant="outline" className="border-border bg-muted/30 text-foreground">
-                                {server.running_instance_count ?? 0} running
+                                {server.running_instance_count ?? 0} workload instances running
                               </Badge>
                               <Badge variant="outline" className="border-border bg-muted/30 text-foreground">
-                                {server.active_instance_count ?? 0} active / {server.instance_count ?? 0} total
+                                {server.active_instance_count ?? 0} active / {server.instance_count ?? 0} total workload instances
                               </Badge>
                             </div>
                           </div>

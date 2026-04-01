@@ -247,7 +247,7 @@ export function ServerDetailPage() {
                   </p>
                 </div>
               </MetadataItem>
-              <MetadataItem label="Instances">
+              <MetadataItem label="Workload instances on this host">
                 <span className="font-mono">
                   {server.running_instance_count ?? 0} running / {server.active_instance_count ?? 0} active /{" "}
                   {server.instance_count ?? 0} total
@@ -286,8 +286,10 @@ export function ServerDetailPage() {
         {server.host_metrics || server.traffic ? (
           <Surface>
             <SurfaceHeader>
-              <SurfaceTitle>Host Telemetry</SurfaceTitle>
-              <SurfaceDescription>Latest host-level resource snapshot and trailing 60-second traffic summary.</SurfaceDescription>
+              <SurfaceTitle>Control Plane Host</SurfaceTitle>
+              <SurfaceDescription>
+                Latest host-machine resource snapshot and trailing 60-second control-plane plus app traffic summary.
+              </SurfaceDescription>
             </SurfaceHeader>
             <SurfaceBody className="space-y-5 text-sm">
               <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
@@ -511,12 +513,12 @@ export function ServerDetailPage() {
 
         <Surface>
           <SurfaceHeader>
-            <SurfaceTitle>Instances</SurfaceTitle>
-            <SurfaceDescription>Latest per-instance resource snapshot on this server.</SurfaceDescription>
+            <SurfaceTitle>Workload Instances</SurfaceTitle>
+            <SurfaceDescription>Latest per-workload-instance resource snapshot on this host.</SurfaceDescription>
           </SurfaceHeader>
           <SurfaceBody className="overflow-x-auto">
             {detail.instances.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No deployment instances are currently attached to this server.</p>
+              <p className="text-sm text-muted-foreground">No workload instances are currently attached to this host.</p>
             ) : (
               <table className="w-full text-sm">
                 <thead>
