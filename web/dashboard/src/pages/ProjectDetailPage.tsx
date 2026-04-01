@@ -50,6 +50,8 @@ import {
   KeyRoundIcon,
   HardDriveIcon,
   PlayIcon,
+  LayoutDashboardIcon,
+  ScalingIcon,
 } from "lucide-react"
 import { DeploymentReachability } from "@/components/deployment-reachability"
 import { phaseLabel, phaseVariant } from "@/lib/deploy-badge"
@@ -1071,7 +1073,10 @@ export function ProjectDetailPage() {
 
         <Tabs value={mainTab} onValueChange={setMainTab} orientation="vertical" className="min-w-0 md:items-start gap-4 md:gap-6">
           <TabsList variant="line" className="w-full overflow-x-auto md:w-48 shrink-0 md:sticky md:top-6">
-            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="overview">
+              <LayoutDashboardIcon className="size-4" />
+              Overview
+            </TabsTrigger>
             <TabsTrigger value="github">
               <FolderGitIcon className="size-4" />
               GitHub
@@ -1083,6 +1088,10 @@ export function ProjectDetailPage() {
             <TabsTrigger value="deployments">
               <LayoutListIcon className="size-4" />
               Deployments
+            </TabsTrigger>
+            <TabsTrigger value="scaling">
+              <ScalingIcon className="size-4" />
+              Scaling
             </TabsTrigger>
             <TabsTrigger value="volume">
               <HardDriveIcon className="size-4" />
@@ -1179,12 +1188,67 @@ export function ProjectDetailPage() {
               <SurfaceSeparator />
               <SurfaceBody className="space-y-3">
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Horizontal scaling</p>
+                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Smart builds</p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Traffic autoscaling keeps the deployment between the configured minimum and maximum, with an
-                    optional idle path down to zero.
+                    When enabled, GitHub push deploys are skipped unless the push changes files under{" "}
+                    <span className="font-mono">{project.root_directory}</span>.
                   </p>
                 </div>
+                <label className="flex items-start gap-3 rounded-lg border p-3">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 size-4"
+                    checked={Boolean(project.build_only_on_root_changes)}
+                    disabled={buildRuleSaving}
+                    onChange={(e) => void handleBuildOnlyOnRootChangesChange(e.target.checked)}
+                  />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">Only build when root directory changes</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Useful for monorepos like this landing site: commits outside the hosted root directory will not
+                      trigger a production deploy.
+                    </p>
+                    {buildRuleSaving && <p className="text-xs text-muted-foreground mt-2">Saving…</p>}
+                  </div>
+                </label>
+              </SurfaceBody>
+            </Surface>
+
+            {latestRunningDeployment && (
+              <Surface>
+                <SurfaceHeader>
+                  <SurfaceTitle>Current reachability</SurfaceTitle>
+                  <SurfaceDescription>
+                    Latest running deployment:{" "}
+                    <span className="font-mono">
+                      {latestRunningDeployment.github_commit ? latestRunningDeployment.github_commit.slice(0, 8) : "manual"}
+                    </span>
+                  </SurfaceDescription>
+                </SurfaceHeader>
+                <SurfaceBody className="space-y-4">
+                  <DeploymentReachability reachable={latestRunningDeployment.reachable} />
+                  <Link
+                    to={`/deployments/${latestRunningDeployment.id}`}
+                    className="inline-flex text-sm text-primary underline-offset-4 hover:underline"
+                  >
+                    View deployment details
+                  </Link>
+                </SurfaceBody>
+              </Surface>
+            )}
+          </TabsContent>
+
+          {/* ── Scaling ─────────────────────────────────────── */}
+          <TabsContent value="scaling" className="space-y-4 min-w-0">
+            <Surface>
+              <SurfaceHeader>
+                <SurfaceTitle>Horizontal scaling</SurfaceTitle>
+                <SurfaceDescription>
+                  Traffic autoscaling keeps the deployment between the configured minimum and maximum, with an optional
+                  idle path down to zero.
+                </SurfaceDescription>
+              </SurfaceHeader>
+              <SurfaceBody className="space-y-3">
                 {latestRunningDeployment != null && (
                   <div className="space-y-1 text-sm">
                     <p>
@@ -1255,57 +1319,7 @@ export function ProjectDetailPage() {
                   </Button>
                 </div>
               </SurfaceBody>
-              <SurfaceSeparator />
-              <SurfaceBody className="space-y-3">
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Smart builds</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    When enabled, GitHub push deploys are skipped unless the push changes files under{" "}
-                    <span className="font-mono">{project.root_directory}</span>.
-                  </p>
-                </div>
-                <label className="flex items-start gap-3 rounded-lg border p-3">
-                  <input
-                    type="checkbox"
-                    className="mt-0.5 size-4"
-                    checked={Boolean(project.build_only_on_root_changes)}
-                    disabled={buildRuleSaving}
-                    onChange={(e) => void handleBuildOnlyOnRootChangesChange(e.target.checked)}
-                  />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">Only build when root directory changes</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Useful for monorepos like this landing site: commits outside the hosted root directory will not
-                      trigger a production deploy.
-                    </p>
-                    {buildRuleSaving && <p className="text-xs text-muted-foreground mt-2">Saving…</p>}
-                  </div>
-                </label>
-              </SurfaceBody>
             </Surface>
-
-            {latestRunningDeployment && (
-              <Surface>
-                <SurfaceHeader>
-                  <SurfaceTitle>Current reachability</SurfaceTitle>
-                  <SurfaceDescription>
-                    Latest running deployment:{" "}
-                    <span className="font-mono">
-                      {latestRunningDeployment.github_commit ? latestRunningDeployment.github_commit.slice(0, 8) : "manual"}
-                    </span>
-                  </SurfaceDescription>
-                </SurfaceHeader>
-                <SurfaceBody className="space-y-4">
-                  <DeploymentReachability reachable={latestRunningDeployment.reachable} />
-                  <Link
-                    to={`/deployments/${latestRunningDeployment.id}`}
-                    className="inline-flex text-sm text-primary underline-offset-4 hover:underline"
-                  >
-                    View deployment details
-                  </Link>
-                </SurfaceBody>
-              </Surface>
-            )}
           </TabsContent>
 
           {/* ── Persistent volume ───────────────────────────── */}
