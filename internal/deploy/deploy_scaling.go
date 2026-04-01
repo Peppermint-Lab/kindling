@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -78,7 +79,7 @@ func (d *Deployer) scaleDownInstances(ctx context.Context, instList []queries.De
 	if err != nil {
 		return fmt.Errorf("list instances after scale down: %w", err)
 	}
-	return d.pruneWarmPoolInstances(ctx, refreshed, d.retainedWarmPoolBudget())
+	return d.pruneWarmPoolInstances(ctx, refreshed, d.retainedWarmPoolBudget(ctx, instList[0].DeploymentID))
 }
 
 func (d *Deployer) ensureInstanceCountUp(ctx context.Context, deploymentID pgtype.UUID, desired int32) error {
@@ -146,7 +147,11 @@ func (d *Deployer) countInstancesReady(ctx context.Context, instList []queries.D
 		if vm.Port.Valid {
 			port = int(vm.Port.Int32)
 		}
-		if requiresExternalHealthCheck(d.rt.Name()) && !d.healthCheckVMFromHost(vm, port) {
+		hostHealthCheckOK := true
+		if requiresExternalHealthCheck(d.rt.Name()) {
+			hostHealthCheckOK = d.healthCheckVMFromHost(vm, port)
+		}
+		if !shouldTreatRunningInstanceAsHealthy(inst, vm, d.rt.Name(), hostHealthCheckOK, d.serverID, d.localRuntimeHealthy(ctx, inst)) {
 			continue
 		}
 		n++
@@ -155,18 +160,41 @@ func (d *Deployer) countInstancesReady(ctx context.Context, instList []queries.D
 }
 
 func (d *Deployer) countActiveInstances(instList []queries.DeploymentInstance) int {
-	n := 0
-	for _, inst := range instList {
-		if isActiveInstance(inst) {
-			n++
-		}
-	}
-	return n
+	return activeInstanceCount(instList)
 }
 
 func (d *Deployer) countProvisionableInstances(instList []queries.DeploymentInstance) int {
 	n := 0
 	for _, inst := range instList {
+		if isActiveInstance(inst) || isWarmPoolInstance(inst) {
+			n++
+		}
+	}
+	return n
+}
+
+func warmPoolPromotionCandidates(instList []queries.DeploymentInstance, desired int) []pgtype.UUID {
+	deficit := desired - activeInstanceCount(instList)
+	if deficit <= 0 {
+		return nil
+	}
+	candidates := make([]pgtype.UUID, 0, deficit)
+	for _, inst := range instList {
+		if deficit == 0 {
+			break
+		}
+		if !isWarmPoolInstance(inst) {
+			continue
+		}
+		candidates = append(candidates, inst.ID)
+		deficit--
+	}
+	return candidates
+}
+
+func activeInstanceCount(instList []queries.DeploymentInstance) int {
+	n := 0
+	for _, inst := range instList {
 		if isActiveInstance(inst) {
 			n++
 		}
@@ -174,11 +202,62 @@ func (d *Deployer) countProvisionableInstances(instList []queries.DeploymentInst
 	return n
 }
 
-func (d *Deployer) retainedWarmPoolBudget() int {
+func (d *Deployer) activateWarmPoolInstances(ctx context.Context, instList []queries.DeploymentInstance, desired int) ([]queries.DeploymentInstance, error) {
+	candidates := warmPoolPromotionCandidates(instList, desired)
+	if len(candidates) == 0 {
+		return instList, nil
+	}
+	updated := make(map[pgtype.UUID]queries.DeploymentInstance, len(candidates))
+	for _, instID := range candidates {
+		inst, err := d.q.DeploymentInstanceUpdateRole(ctx, queries.DeploymentInstanceUpdateRoleParams{
+			ID:   instID,
+			Role: deploymentInstanceRoleActive,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("promote warm pool instance: %w", err)
+		}
+		updated[instID] = inst
+	}
+	refreshed := slices.Clone(instList)
+	for i, inst := range refreshed {
+		if next, ok := updated[inst.ID]; ok {
+			refreshed[i] = next
+		}
+	}
+	return refreshed, nil
+}
+
+const warmPoolExtraRetentionAfterTraffic = 15 * time.Minute
+
+func (d *Deployer) retainedWarmPoolBudgetBase() int {
 	if d.rt != nil && d.rt.Supports(runtime.CapabilitySuspendResume) {
 		return 1
 	}
 	return 0
+}
+
+func (d *Deployer) retainedWarmPoolBudget(ctx context.Context, deploymentID pgtype.UUID) int {
+	base := d.retainedWarmPoolBudgetBase()
+	if base == 0 || !deploymentID.Valid {
+		return base
+	}
+	dep, err := d.q.DeploymentFirstByID(ctx, deploymentID)
+	if err != nil {
+		return base
+	}
+	proj, err := d.q.ProjectFirstByID(ctx, dep.ProjectID)
+	if err != nil {
+		return base
+	}
+	if proj.LastRequestAt.Valid && warmPoolExtraRetentionEligible(proj.LastRequestAt.Time.UTC(), time.Now().UTC()) {
+		return base + 1
+	}
+	return base
+}
+
+func warmPoolExtraRetentionEligible(lastRequestAt, now time.Time) bool {
+	age := now.Sub(lastRequestAt)
+	return age >= 0 && age < warmPoolExtraRetentionAfterTraffic
 }
 
 func (d *Deployer) pruneWarmPoolInstances(ctx context.Context, instList []queries.DeploymentInstance, keep int) error {

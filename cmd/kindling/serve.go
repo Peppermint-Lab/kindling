@@ -30,7 +30,10 @@ const usagePollerInterval = 15 * time.Second        // resource usage polling in
 const walBackoffMax = 30 * time.Second              // max backoff for WAL listener reconnects
 const shutdownGracePeriod = 15 * time.Second        // graceful shutdown timeout for edge proxy
 const volumeRecoveryInterval = 1 * time.Minute      // volume operation recovery sweep interval
-const periodicReconcileInterval = 30 * time.Second  // interval for idle scale-down, preview cleanup, etc.
+const periodicReconcileInterval = 30 * time.Second // interval for idle scale-down, preview cleanup, slow autoscale, etc.
+
+// projectAutoscaleFastInterval is the burst scale-up autoscale tick (HTTP short window only; no scale-down).
+const projectAutoscaleFastInterval = 5 * time.Second
 
 func serveCmd() *cobra.Command {
 	var (
@@ -336,7 +339,8 @@ func runServe(ctx context.Context, databaseURL, replicationDSN string, opts serv
 	}
 
 	if components.worker {
-		go runProjectAutoscaleLoop(ctx, replicationDSN, q, recs.deployment)
+		go runProjectAutoscaleSlowLoop(ctx, replicationDSN, q, recs.deployment)
+		go runProjectAutoscaleFastLoop(ctx, replicationDSN, recs.deployment)
 		go runIdleScaleDownLoop(ctx, databaseURL, q, recs.deployment, cfgMgr)
 		go runPreviewCleanupLoop(ctx, databaseURL, q, recs.deployment)
 		go runPreviewIdleScaleDownLoop(ctx, databaseURL, q, recs.deployment, cfgMgr)

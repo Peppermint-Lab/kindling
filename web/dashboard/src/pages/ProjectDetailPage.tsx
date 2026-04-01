@@ -227,7 +227,7 @@ export function ProjectDetailPage() {
   const [projectVolume, setProjectVolume] = useState<ProjectVolume | null>(null)
   const [volumeBackups, setVolumeBackups] = useState<ProjectVolumeBackup[]>([])
   const [volumeMountPath, setVolumeMountPath] = useState("/data")
-  const [volumeSizeGB, setVolumeSizeGB] = useState(10)
+  const [volumeSizeGB, setVolumeSizeGB] = useState(5)
   const [volumeBackupSchedule, setVolumeBackupSchedule] = useState<"off" | "manual" | "daily" | "weekly">("manual")
   const [volumeBackupRetentionCount, setVolumeBackupRetentionCount] = useState(7)
   const [volumePreDeleteBackupEnabled, setVolumePreDeleteBackupEnabled] = useState(false)
@@ -502,7 +502,7 @@ export function ProjectDetailPage() {
           setVolumeBackups(backups)
           setServers(serverList)
           setVolumeMountPath(v?.mount_path || "/data")
-          setVolumeSizeGB(v?.size_gb ?? 10)
+          setVolumeSizeGB(v?.size_gb ?? 5)
           setVolumeBackupSchedule(v?.backup_policy?.schedule ?? "manual")
           setVolumeBackupRetentionCount(v?.backup_policy?.retention_count ?? 7)
           setVolumePreDeleteBackupEnabled(Boolean(v?.backup_policy?.pre_delete_backup_enabled))
@@ -540,7 +540,7 @@ export function ProjectDetailPage() {
     setProjectVolume(null)
     setVolumeBackups([])
     setVolumeMountPath("/data")
-    setVolumeSizeGB(10)
+    setVolumeSizeGB(5)
     setVolumeBackupSchedule("manual")
     setVolumeBackupRetentionCount(7)
     setVolumePreDeleteBackupEnabled(false)
@@ -763,7 +763,7 @@ export function ProjectDetailPage() {
     try {
       const volume = await api.putProjectVolume(id, {
         mount_path: volumeMountPath.trim() || "/data",
-        size_gb: Math.max(1, Math.floor(Number(volumeSizeGB)) || 10),
+        size_gb: Math.max(1, Math.floor(Number(volumeSizeGB)) || 5),
         backup_schedule: volumeBackupSchedule,
         backup_retention_count: Math.max(1, Math.floor(Number(volumeBackupRetentionCount)) || 7),
         pre_delete_backup_enabled: volumePreDeleteBackupEnabled,
@@ -1084,6 +1084,10 @@ export function ProjectDetailPage() {
               <LayoutListIcon className="size-4" />
               Deployments
             </TabsTrigger>
+            <TabsTrigger value="volume">
+              <HardDriveIcon className="size-4" />
+              Volume
+            </TabsTrigger>
             <TabsTrigger value="ci">
               <GitBranchIcon className="size-4" />
               CI
@@ -1252,19 +1256,70 @@ export function ProjectDetailPage() {
                 </div>
               </SurfaceBody>
               <SurfaceSeparator />
-              <SurfaceBody className="space-y-4">
-                <div className="flex items-start gap-3">
-                  <div className="rounded-md border bg-muted/40 p-2 shrink-0">
-                    <HardDriveIcon className="size-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Persistent volume</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Attach one durable block volume at a mount path like <span className="font-mono">/data</span>.
-                      Volume-backed projects run as a single active instance on one Cloud Hypervisor worker, and redeploys may briefly stop the old VM before the new one starts.
-                    </p>
-                  </div>
+              <SurfaceBody className="space-y-3">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Smart builds</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    When enabled, GitHub push deploys are skipped unless the push changes files under{" "}
+                    <span className="font-mono">{project.root_directory}</span>.
+                  </p>
                 </div>
+                <label className="flex items-start gap-3 rounded-lg border p-3">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 size-4"
+                    checked={Boolean(project.build_only_on_root_changes)}
+                    disabled={buildRuleSaving}
+                    onChange={(e) => void handleBuildOnlyOnRootChangesChange(e.target.checked)}
+                  />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">Only build when root directory changes</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Useful for monorepos like this landing site: commits outside the hosted root directory will not
+                      trigger a production deploy.
+                    </p>
+                    {buildRuleSaving && <p className="text-xs text-muted-foreground mt-2">Saving…</p>}
+                  </div>
+                </label>
+              </SurfaceBody>
+            </Surface>
+
+            {latestRunningDeployment && (
+              <Surface>
+                <SurfaceHeader>
+                  <SurfaceTitle>Current reachability</SurfaceTitle>
+                  <SurfaceDescription>
+                    Latest running deployment:{" "}
+                    <span className="font-mono">
+                      {latestRunningDeployment.github_commit ? latestRunningDeployment.github_commit.slice(0, 8) : "manual"}
+                    </span>
+                  </SurfaceDescription>
+                </SurfaceHeader>
+                <SurfaceBody className="space-y-4">
+                  <DeploymentReachability reachable={latestRunningDeployment.reachable} />
+                  <Link
+                    to={`/deployments/${latestRunningDeployment.id}`}
+                    className="inline-flex text-sm text-primary underline-offset-4 hover:underline"
+                  >
+                    View deployment details
+                  </Link>
+                </SurfaceBody>
+              </Surface>
+            )}
+          </TabsContent>
+
+          {/* ── Persistent volume ───────────────────────────── */}
+          <TabsContent value="volume" className="space-y-4 min-w-0">
+            <Surface>
+              <SurfaceHeader>
+                <SurfaceTitle>Persistent volume</SurfaceTitle>
+                <SurfaceDescription>
+                  Attach one durable block volume at a mount path like <span className="font-mono">/data</span>.
+                  Volume-backed projects run as a single active instance on one Cloud Hypervisor worker, and redeploys may
+                  briefly stop the old VM before the new one starts.
+                </SurfaceDescription>
+              </SurfaceHeader>
+              <SurfaceBody className="space-y-4">
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">Mount path</Label>
@@ -1488,57 +1543,7 @@ export function ProjectDetailPage() {
                   </>
                 ) : null}
               </SurfaceBody>
-              <SurfaceSeparator />
-              <SurfaceBody className="space-y-3">
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Smart builds</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    When enabled, GitHub push deploys are skipped unless the push changes files under{" "}
-                    <span className="font-mono">{project.root_directory}</span>.
-                  </p>
-                </div>
-                <label className="flex items-start gap-3 rounded-lg border p-3">
-                  <input
-                    type="checkbox"
-                    className="mt-0.5 size-4"
-                    checked={Boolean(project.build_only_on_root_changes)}
-                    disabled={buildRuleSaving}
-                    onChange={(e) => void handleBuildOnlyOnRootChangesChange(e.target.checked)}
-                  />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">Only build when root directory changes</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Useful for monorepos like this landing site: commits outside the hosted root directory will not
-                      trigger a production deploy.
-                    </p>
-                    {buildRuleSaving && <p className="text-xs text-muted-foreground mt-2">Saving…</p>}
-                  </div>
-                </label>
-              </SurfaceBody>
             </Surface>
-
-            {latestRunningDeployment && (
-              <Surface>
-                <SurfaceHeader>
-                  <SurfaceTitle>Current reachability</SurfaceTitle>
-                  <SurfaceDescription>
-                    Latest running deployment:{" "}
-                    <span className="font-mono">
-                      {latestRunningDeployment.github_commit ? latestRunningDeployment.github_commit.slice(0, 8) : "manual"}
-                    </span>
-                  </SurfaceDescription>
-                </SurfaceHeader>
-                <SurfaceBody className="space-y-4">
-                  <DeploymentReachability reachable={latestRunningDeployment.reachable} />
-                  <Link
-                    to={`/deployments/${latestRunningDeployment.id}`}
-                    className="inline-flex text-sm text-primary underline-offset-4 hover:underline"
-                  >
-                    View deployment details
-                  </Link>
-                </SurfaceBody>
-              </Surface>
-            )}
           </TabsContent>
 
           {/* ── Domains ─────────────────────────────────────── */}

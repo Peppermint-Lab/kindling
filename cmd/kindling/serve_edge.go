@@ -134,14 +134,15 @@ func startEdgeProxy(
 		slog.Info("edge control plane proxy", "hosts", cpHosts, "api", apiBackend.String())
 	}
 	edgeSvc, err := edgeproxy.New(edgeproxy.Config{
-		HTTPAddr:          edgeHTTP,
-		HTTPSAddr:         snap.EdgeHTTPSAddr,
-		ACMEEmail:         snap.ACMEEmail,
-		ACMEStaging:       snap.ACMEStaging,
-		Pool:              db.Pool,
-		RouteChangeNotify: routeChangeCh,
-		WakeDeployment:    wakeDeployment,
-		ColdStartTimeout:  coldStart,
+		HTTPAddr:             edgeHTTP,
+		HTTPSAddr:            snap.EdgeHTTPSAddr,
+		ACMEEmail:            snap.ACMEEmail,
+		ACMEStaging:          snap.ACMEStaging,
+		Pool:                 db.Pool,
+		RouteChangeNotify:    routeChangeCh,
+		WakeDeployment:       wakeDeployment,
+		ScaleHintDeployment:  wakeDeployment,
+		ColdStartTimeout:     coldStart,
 		ControlPlaneHosts: cpHosts,
 		APIBackend:        apiBackend,
 		ServerID:          serverID,

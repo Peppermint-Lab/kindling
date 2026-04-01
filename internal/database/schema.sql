@@ -1071,7 +1071,7 @@ CREATE TABLE IF NOT EXISTS project_volumes (
     server_id       UUID REFERENCES servers(id) ON DELETE SET NULL,
     attached_vm_id  UUID REFERENCES vms(id) ON DELETE SET NULL,
     mount_path      TEXT NOT NULL DEFAULT '/data',
-    size_gb         INT NOT NULL DEFAULT 10 CHECK (size_gb > 0),
+    size_gb         INT NOT NULL DEFAULT 5 CHECK (size_gb > 0),
     filesystem      TEXT NOT NULL DEFAULT 'ext4'
         CHECK (filesystem IN ('ext4')),
     status          TEXT NOT NULL DEFAULT 'detached'
@@ -1106,6 +1106,8 @@ WHERE pv.service_id IS NULL
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_project_volumes_service_id
     ON project_volumes(service_id) WHERE deleted_at IS NULL AND service_id IS NOT NULL;
+
+ALTER TABLE project_volumes ALTER COLUMN size_gb SET DEFAULT 5;
 
 DO $$ BEGIN
     IF NOT EXISTS (

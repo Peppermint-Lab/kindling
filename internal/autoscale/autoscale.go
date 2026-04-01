@@ -16,6 +16,7 @@ import (
 
 const (
 	httpWindowMinutes              = 3
+	httpBurstWindowMinutes         = 1
 	httpScaleUpRequestsPerMinute   = 60.0
 	cpuScaleUpPercentTotal         = 65.0
 	httpScaleDownRequestsPerMinute = 25.0
@@ -142,13 +143,30 @@ func scheduleDeploymentNow(deploymentReconciler *reconciler.Scheduler, dep queri
 }
 
 func runAutoscaleSweep(ctx context.Context, q autoscaleStore, deploymentReconciler *reconciler.Scheduler, now time.Time) {
+	runAutoscaleSweepWithWindow(ctx, q, deploymentReconciler, now, httpWindowMinutes, false, "slow")
+}
+
+// runAutoscaleFastSweep scales up from a short HTTP window only; it skips CPU and never lowers desired count.
+func runAutoscaleFastSweep(ctx context.Context, q autoscaleStore, deploymentReconciler *reconciler.Scheduler, now time.Time) {
+	runAutoscaleSweepWithWindow(ctx, q, deploymentReconciler, now, httpBurstWindowMinutes, true, "fast")
+}
+
+func runAutoscaleSweepWithWindow(ctx context.Context, q autoscaleStore, deploymentReconciler *reconciler.Scheduler, now time.Time, windowMinutes int, scaleUpOnly bool, sweepKind string) {
 	if q == nil {
 		return
 	}
 	now = now.UTC()
-	httpWindowEnd := now.Truncate(time.Minute)
-	httpWindowStart := httpWindowEnd.Add(-httpWindowMinutes * time.Minute)
-	httpWindowInclusiveEnd := httpWindowEnd.Add(-time.Nanosecond)
+	// Fast sweep includes the current minute bucket and uses wall-clock elapsed for RPM;
+	// slow sweep uses completed buckets only (historical behavior).
+	bucketMinute := now.Truncate(time.Minute)
+	var httpWindowStart, httpWindowInclusiveEnd time.Time
+	if scaleUpOnly {
+		httpWindowInclusiveEnd = bucketMinute
+		httpWindowStart = bucketMinute.Add(-time.Duration(windowMinutes) * time.Minute)
+	} else {
+		httpWindowStart = bucketMinute.Add(-time.Duration(windowMinutes) * time.Minute)
+		httpWindowInclusiveEnd = bucketMinute.Add(-time.Nanosecond)
+	}
 	cpuSince := now.Add(-cpuLookback)
 
 	projects, err := q.ProjectFindAll(ctx)
@@ -190,23 +208,33 @@ func runAutoscaleSweep(ctx context.Context, q autoscaleStore, deploymentReconcil
 			for _, row := range httpRows {
 				requestCount += row.RequestCount
 			}
-			avgRPM := float64(requestCount) / float64(httpWindowMinutes)
-
-			cpuRows, err := q.InstanceUsageLatestPerInstanceByDeployment(ctx, queries.InstanceUsageLatestPerInstanceByDeploymentParams{
-				ProjectID: proj.ID,
-				ID:        dep.ID,
-				SampledAt: pgtype.Timestamptz{Time: cpuSince, Valid: true},
-			})
-			if err != nil {
-				slog.Warn("project autoscaler: cpu usage", "project_id", proj.ID, "service_id", svc.ID, "error", err)
-				continue
+			avgRPM := float64(requestCount) / float64(windowMinutes)
+			if scaleUpOnly {
+				elapsedMin := now.Sub(httpWindowStart).Minutes()
+				const minElapsedMin = 1.0 / 60.0
+				if elapsedMin < minElapsedMin {
+					elapsedMin = minElapsedMin
+				}
+				avgRPM = float64(requestCount) / elapsedMin
 			}
+
 			var totalCPU float64
 			hasCPU := false
-			for _, row := range cpuRows {
-				if row.CpuPercent.Valid {
-					totalCPU += row.CpuPercent.Float64
-					hasCPU = true
+			if !scaleUpOnly {
+				cpuRows, err := q.InstanceUsageLatestPerInstanceByDeployment(ctx, queries.InstanceUsageLatestPerInstanceByDeploymentParams{
+					ProjectID: proj.ID,
+					ID:        dep.ID,
+					SampledAt: pgtype.Timestamptz{Time: cpuSince, Valid: true},
+				})
+				if err != nil {
+					slog.Warn("project autoscaler: cpu usage", "project_id", proj.ID, "service_id", svc.ID, "error", err)
+					continue
+				}
+				for _, row := range cpuRows {
+					if row.CpuPercent.Valid {
+						totalCPU += row.CpuPercent.Float64
+						hasCPU = true
+					}
 				}
 			}
 			if shouldSkipAutoscale(svc, avgRPM, hasCPU) {
@@ -215,7 +243,10 @@ func runAutoscaleSweep(ctx context.Context, q autoscaleStore, deploymentReconcil
 
 			current := clampCurrentTarget(proj, svc)
 			next := ComputeDesiredInstanceCount(proj, svc, avgRPM, totalCPU, hasCPU)
-			if next < current && shouldHoldScaleDown(proj, now) {
+			if scaleUpOnly && next <= current {
+				continue
+			}
+			if !scaleUpOnly && next < current && shouldHoldScaleDown(proj, now) {
 				continue
 			}
 			if next == current {
@@ -230,14 +261,15 @@ func runAutoscaleSweep(ctx context.Context, q autoscaleStore, deploymentReconcil
 				continue
 			}
 			scheduleDeploymentNow(deploymentReconciler, dep)
-			slog.Info(
-				"service autoscaled",
+			slog.Info("service autoscaled",
+				"sweep", sweepKind,
 				"project_id", proj.ID,
 				"service_id", svc.ID,
 				"deployment_id", dep.ID,
 				"from", current,
 				"to", next,
 				"avg_rpm", avgRPM,
+				"http_window_minutes", windowMinutes,
 				"total_cpu_percent", totalCPU,
 			)
 		}
@@ -263,4 +295,26 @@ func RunOnce(ctx context.Context, databaseURL string, deploymentReconciler *reco
 	}
 
 	runAutoscaleSweep(ctx, qLeader, deploymentReconciler, time.Now())
+}
+
+// RunFastOnce is like RunOnce but only considers a short HTTP window and only scales up.
+func RunFastOnce(ctx context.Context, databaseURL string, deploymentReconciler *reconciler.Scheduler) {
+	leaderConn, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		slog.Debug("project autoscaler fast: db connect", "error", err)
+		return
+	}
+	defer leaderConn.Close(context.Background())
+
+	qLeader := queries.New(leaderConn)
+	acquired, err := qLeader.TrySessionAdvisoryLock(ctx, "kindling_project_autoscaler")
+	if err != nil {
+		slog.Warn("project autoscaler fast: advisory lock", "error", err)
+		return
+	}
+	if !acquired {
+		return
+	}
+
+	runAutoscaleFastSweep(ctx, qLeader, deploymentReconciler, time.Now())
 }

@@ -166,7 +166,7 @@ func (d *Deployer) tryResumeFromSuspended(
 	logger *slog.Logger,
 ) (bool, error) {
 	vm, err := d.q.VMFirstByID(ctx, inst.VmID)
-	if err != nil || vm.Status != vmStatusSuspended || (!isActiveInstance(inst) && !isWarmPoolInstance(inst)) {
+	if err != nil || vm.Status != vmStatusSuspended || !suspendedResumeEligible(inst) {
 		return false, nil
 	}
 	if pguuid.FromPgtype(inst.ServerID) != d.serverID {
@@ -238,6 +238,10 @@ func (d *Deployer) tryResumeFromSuspended(
 	return true, nil
 }
 
+func suspendedResumeEligible(inst queries.DeploymentInstance) bool {
+	return isActiveInstance(inst)
+}
+
 // isRunningInstanceHealthy checks if a running instance is still healthy.
 func (d *Deployer) isRunningInstanceHealthy(ctx context.Context, inst queries.DeploymentInstance) bool {
 	vm, err := d.q.VMFirstByID(ctx, inst.VmID)
@@ -252,7 +256,7 @@ func (d *Deployer) isRunningInstanceHealthy(ctx context.Context, inst queries.De
 	if d.rt != nil && requiresExternalHealthCheck(d.rt.Name()) {
 		hostHealthCheckOK = d.healthCheckVMFromHost(vm, port)
 	}
-	return shouldKeepRunningVM(vm, d.rt.Name(), hostHealthCheckOK)
+	return shouldTreatRunningInstanceAsHealthy(inst, vm, d.rt.Name(), hostHealthCheckOK, d.serverID, d.localRuntimeHealthy(ctx, inst))
 }
 
 // resetStaleInstance cleans up a stale VM/instance and prepares it for retry.
@@ -335,13 +339,6 @@ func (d *Deployer) startNewInstance(
 	persistentVolume *runtime.PersistentVolumeMount,
 	logger *slog.Logger,
 ) error {
-	if _, err := d.q.DeploymentInstanceUpdateStatus(ctx, queries.DeploymentInstanceUpdateStatusParams{
-		ID:     inst.ID,
-		Status: "starting",
-	}); err != nil {
-		return fmt.Errorf("mark starting: %w", err)
-	}
-
 	instID := pguuid.FromPgtype(inst.ID)
 	startInst := runtime.Instance{
 		ID:               instID,
@@ -354,7 +351,21 @@ func (d *Deployer) startNewInstance(
 	}
 	mode, shouldLaunch := selectLaunchMode(inst, queries.Vm{}, templateRef)
 	if !shouldLaunch {
+		if isWarmPoolInstance(inst) && inst.Status != "stopped" {
+			if _, err := d.q.DeploymentInstanceUpdateStatus(ctx, queries.DeploymentInstanceUpdateStatusParams{
+				ID:     inst.ID,
+				Status: "stopped",
+			}); err != nil {
+				return fmt.Errorf("normalize warm pool status: %w", err)
+			}
+		}
 		return nil
+	}
+	if _, err := d.q.DeploymentInstanceUpdateStatus(ctx, queries.DeploymentInstanceUpdateStatusParams{
+		ID:     inst.ID,
+		Status: "starting",
+	}); err != nil {
+		return fmt.Errorf("mark starting: %w", err)
 	}
 	startedAt := time.Now()
 	logger.Info("starting instance", "instance_id", instID, "image", imageRef, "runtime", d.rt.Name(), "mode", mode)

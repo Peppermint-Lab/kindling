@@ -39,6 +39,13 @@ const chAPIReadyTimeout = 10 * time.Second            // max wait for cloud-hype
 const chAPIReadyPollInterval = 100 * time.Millisecond // poll interval when waiting for API/TCP
 const chAPIClientTimeout = 30 * time.Second           // HTTP client timeout for API socket calls
 const chTCPDialTimeout = 200 * time.Millisecond       // per-attempt TCP dial timeout when waiting for port
+const chTCPBridgeAutoPortAttempts = 3
+
+var (
+	pickFreeTCPPortFunc                  = pickFreeTCPPort
+	startCloudHypervisorBridgeHelperFunc = startCloudHypervisorBridgeHelper
+	waitForTCPPortFunc                   = waitForTCPPort
+)
 
 type CloudHypervisorRuntime struct {
 	mu        sync.Mutex
@@ -190,7 +197,7 @@ func (r *CloudHypervisorRuntime) startVM(ctx context.Context, inst Instance) (st
 		workDisk = sharedDisk
 	}
 	_ = os.Remove(workDisk)
-	if out, err := exec.CommandContext(ctx, "virt-make-fs", "--format=qcow2", "--type=ext4", "--size=+2G", rootfsDir, workDisk).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, "virt-make-fs", "--format=qcow2", "--type=ext4", "--size=+5G", rootfsDir, workDisk).CombinedOutput(); err != nil {
 		_ = os.RemoveAll(workDir)
 		return "", fmt.Errorf("virt-make-fs: %s: %w", string(out), err)
 	}
@@ -278,7 +285,6 @@ func (r *CloudHypervisorRuntime) launchCHProcess(runCtx context.Context, ai *clo
 
 // setupHostBridge allocates a host port and starts the TCP bridge helper.
 func (r *CloudHypervisorRuntime) setupHostBridge(ctx context.Context, ai *cloudHypervisorInstance, requestedHostPort int) error {
-	var err error
 	if requestedHostPort > 0 {
 		ai.hostPort = requestedHostPort
 		if err := r.startHostBridgeForPort(ctx, ai, ai.hostPort); err == nil {
@@ -291,11 +297,28 @@ func (r *CloudHypervisorRuntime) setupHostBridge(ctx context.Context, ai *cloudH
 			)
 		}
 	}
-	ai.hostPort, err = pickFreeTCPPort()
-	if err != nil {
-		return fmt.Errorf("allocate host tcp forward port: %w", err)
+	var lastErr error
+	for attempt := 1; attempt <= chTCPBridgeAutoPortAttempts; attempt++ {
+		hostPort, err := pickFreeTCPPortFunc()
+		if err != nil {
+			return fmt.Errorf("allocate host tcp forward port: %w", err)
+		}
+		ai.hostPort = hostPort
+		if err := r.startHostBridgeForPort(ctx, ai, hostPort); err == nil {
+			return nil
+		} else {
+			lastErr = err
+			if attempt < chTCPBridgeAutoPortAttempts {
+				slog.Warn("allocated host port unavailable for cloud-hypervisor VM, retrying with a new port",
+					"id", ai.inst.ID,
+					"attempt", attempt,
+					"host_port", hostPort,
+					"error", err,
+				)
+			}
+		}
 	}
-	return r.startHostBridgeForPort(ctx, ai, ai.hostPort)
+	return lastErr
 }
 
 func (r *CloudHypervisorRuntime) startHostBridgeForPort(ctx context.Context, ai *cloudHypervisorInstance, hostPort int) error {
@@ -303,7 +326,7 @@ func (r *CloudHypervisorRuntime) startHostBridgeForPort(ctx context.Context, ai 
 	if err != nil {
 		return err
 	}
-	bridgeCmd, err := startCloudHypervisorBridgeHelper(hostPort, ai.socketBase)
+	bridgeCmd, err := startCloudHypervisorBridgeHelperFunc(hostPort, ai.socketBase)
 	if err != nil {
 		return fmt.Errorf("start host tcp bridge: %w", err)
 	}
@@ -311,7 +334,7 @@ func (r *CloudHypervisorRuntime) startHostBridgeForPort(ctx context.Context, ai 
 		_ = terminatePID(bridgeCmd.Process.Pid)
 		return fmt.Errorf("write bridge pid: %w", err)
 	}
-	if err := waitForTCPPort(ctx, net.JoinHostPort("127.0.0.1", strconv.Itoa(hostPort)), chTCPBridgeTimeout); err != nil {
+	if err := waitForTCPPortFunc(ctx, net.JoinHostPort("127.0.0.1", strconv.Itoa(hostPort)), chTCPBridgeTimeout); err != nil {
 		_ = terminatePID(bridgeCmd.Process.Pid)
 		return fmt.Errorf("wait for host tcp bridge: %w", err)
 	}

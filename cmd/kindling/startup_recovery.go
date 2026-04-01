@@ -15,6 +15,8 @@ import (
 type startupRecoveryQuery interface {
 	DeploymentFindRecoverableByServerID(context.Context, pgtype.UUID) ([]queries.Deployment, error)
 	DeploymentInstanceRetainedStateByServerID(context.Context, pgtype.UUID) ([]queries.DeploymentInstanceRetainedStateByServerIDRow, error)
+	VMFirstByID(context.Context, pgtype.UUID) (queries.Vm, error)
+	VMUpdateStatus(context.Context, queries.VMUpdateStatusParams) (queries.Vm, error)
 }
 
 type startupRecoveryScheduler interface {
@@ -53,6 +55,22 @@ func recoverWorkerRetainedState(ctx context.Context, q startupRecoveryQuery, ser
 		"template_dirs_kept", result.TemplateDirsKept,
 		"template_dirs_pruned", result.TemplateDirsPruned,
 	)
+
+	for _, row := range rows {
+		if !row.VmID.Valid {
+			continue
+		}
+		vm, err := q.VMFirstByID(ctx, row.VmID)
+		if err != nil || vm.Status != "suspending" {
+			continue
+		}
+		if _, err := q.VMUpdateStatus(ctx, queries.VMUpdateStatusParams{
+			ID:     row.VmID,
+			Status: "suspended",
+		}); err != nil {
+			return fmt.Errorf("normalize retained vm %s to suspended: %w", uuid.UUID(row.VmID.Bytes), err)
+		}
+	}
 	return nil
 }
 

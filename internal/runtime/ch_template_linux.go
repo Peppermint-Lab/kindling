@@ -5,6 +5,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -55,9 +56,11 @@ func (r *CloudHypervisorRuntime) StartClone(ctx context.Context, inst Instance, 
 		workDisk = sharedDisk
 	}
 	_ = os.Remove(workDisk)
-	if err := copyFile(tmpl.workDisk, workDisk); err != nil {
+	cloneStrategy, err := materializeCloudHypervisorCloneDisk(ctx, tmpl.workDisk, workDisk)
+	if err != nil {
 		return "", StartMetadata{}, err
 	}
+	slog.Info("cloud_hypervisor clone disk materialized", "strategy", cloneStrategy, "instance_id", inst.ID.String(), "work_disk", workDisk)
 	ip, err := r.startPreparedVM(ctx, inst, workDir, workDisk, 0)
 	if err != nil {
 		return "", StartMetadata{}, err

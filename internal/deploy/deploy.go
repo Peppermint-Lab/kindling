@@ -24,6 +24,8 @@ const buildPollRetryInterval = 10 * time.Second        // retry delay while a bu
 const reconcileRetryInterval = 5 * time.Second         // default retry for instance/volume/ready waits
 const healthCheckTimeout = 90 * time.Second            // max wait for workload health check after start/resume
 const healthCheckClientTimeout = 10 * time.Second      // per-probe HTTP client timeout
+const healthCheckRetryDelay = 100 * time.Millisecond   // brief backoff for transient reset/EOF health probe errors
+const healthCheckRetryAttempts = 5                     // tolerate a short burst of transient health probe failures
 const healthCheckPollInterval = 100 * time.Millisecond // sleep between successive health check probes
 
 // Deployer orchestrates deployments via reconciliation.
@@ -350,6 +352,10 @@ func (d *Deployer) surgeAndReconcile(
 	instList, err = d.q.DeploymentInstanceFindByDeploymentID(ctx, rc.dep.ID)
 	if err != nil {
 		return nil, fmt.Errorf("list deployment instances: %w", err)
+	}
+	instList, err = d.activateWarmPoolInstances(ctx, instList, int(rc.desired))
+	if err != nil {
+		return nil, fmt.Errorf("activate warm pool instances: %w", err)
 	}
 	templateRef, templateSourceVMID := d.templateSourceForDeployment(ctx, instList, rc.dep.ImageID)
 	if rc.persistentVolume != nil {

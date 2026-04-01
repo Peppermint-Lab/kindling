@@ -309,7 +309,7 @@ func (a *API) putProjectVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sizeGB := int32(10)
+	sizeGB := int32(5)
 	if req.SizeGB != nil {
 		sizeGB = *req.SizeGB
 	}
@@ -477,7 +477,7 @@ func (a *API) putServiceVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sizeGB := int32(10)
+	sizeGB := int32(5)
 	if req.SizeGB != nil {
 		sizeGB = *req.SizeGB
 	}

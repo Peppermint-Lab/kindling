@@ -83,7 +83,9 @@ func (r *CloudHypervisorRuntime) waitCH(id uuid.UUID, ai *cloudHypervisorInstanc
 	_ = os.RemoveAll(ai.runtimeDir)
 	removeCHTap(ai.tapName)
 	r.mu.Lock()
-	delete(r.instances, id)
+	if current, ok := r.instances[id]; ok && current == ai {
+		delete(r.instances, id)
+	}
 	retain := ai.retain
 	if !retain {
 		delete(r.templates, r.templateStateDir(id))

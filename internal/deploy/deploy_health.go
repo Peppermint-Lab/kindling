@@ -1,11 +1,16 @@
 package deploy
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
@@ -19,12 +24,23 @@ func (d *Deployer) healthCheck(addr string, port int) bool {
 	if !strings.HasPrefix(url, "http") {
 		url = "http://" + url
 	}
-	resp, err := client.Get(url)
-	if err != nil {
-		return false
+	for attempt := 0; attempt < healthCheckRetryAttempts; attempt++ {
+		resp, err := client.Get(url)
+		if err != nil {
+			if !isRetryableHealthCheckError(err) || attempt == healthCheckRetryAttempts-1 {
+				return false
+			}
+			time.Sleep(healthCheckRetryDelay)
+			continue
+		}
+		resp.Body.Close()
+		return resp.StatusCode >= 200 && resp.StatusCode < 400
 	}
-	resp.Body.Close()
-	return resp.StatusCode >= 200 && resp.StatusCode < 400
+	return false
+}
+
+func isRetryableHealthCheckError(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET)
 }
 
 // healthCheckVMFromHost probes a VM row. Workloads on this kindling server
@@ -70,8 +86,25 @@ func shouldKeepRunningVM(vm queries.Vm, runtimeName string, hostHealthCheckOK bo
 	if vm.DeletedAt.Valid || vm.Status != "running" {
 		return false
 	}
+	if runtimeName == "cloud-hypervisor" {
+		return true
+	}
 	if requiresExternalHealthCheck(runtimeName) && !hostHealthCheckOK {
 		return false
 	}
 	return true
+}
+
+func shouldTreatRunningInstanceAsHealthy(inst queries.DeploymentInstance, vm queries.Vm, runtimeName string, hostHealthCheckOK bool, localServerID uuid.UUID, localRuntimeHealthy bool) bool {
+	if inst.ServerID.Valid && pguuid.FromPgtype(inst.ServerID) == localServerID && !localRuntimeHealthy {
+		return false
+	}
+	return shouldKeepRunningVM(vm, runtimeName, hostHealthCheckOK)
+}
+
+func (d *Deployer) localRuntimeHealthy(ctx context.Context, inst queries.DeploymentInstance) bool {
+	if d.rt == nil || !inst.ServerID.Valid || pguuid.FromPgtype(inst.ServerID) != d.serverID {
+		return true
+	}
+	return d.rt.Healthy(ctx, pguuid.FromPgtype(inst.ID))
 }

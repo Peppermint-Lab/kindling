@@ -196,7 +196,8 @@ func runIdleScaleDownLoop(ctx context.Context, databaseURL string, q *queries.Qu
 	}
 }
 
-func runProjectAutoscaleLoop(ctx context.Context, databaseURL string, _ *queries.Queries, deploymentReconciler *reconciler.Scheduler) {
+// runProjectAutoscaleSlowLoop runs the full autoscaler (3m HTTP window, CPU, scale-down guards).
+func runProjectAutoscaleSlowLoop(ctx context.Context, databaseURL string, _ *queries.Queries, deploymentReconciler *reconciler.Scheduler) {
 	ticker := time.NewTicker(periodicReconcileInterval)
 	defer ticker.Stop()
 	for {
@@ -205,6 +206,20 @@ func runProjectAutoscaleLoop(ctx context.Context, databaseURL string, _ *queries
 			return
 		case <-ticker.C:
 			autoscale.RunOnce(ctx, databaseURL, deploymentReconciler)
+		}
+	}
+}
+
+// runProjectAutoscaleFastLoop reacts quickly to traffic bursts (1m HTTP window, scale-up only).
+func runProjectAutoscaleFastLoop(ctx context.Context, databaseURL string, deploymentReconciler *reconciler.Scheduler) {
+	ticker := time.NewTicker(projectAutoscaleFastInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			autoscale.RunFastOnce(ctx, databaseURL, deploymentReconciler)
 		}
 	}
 }

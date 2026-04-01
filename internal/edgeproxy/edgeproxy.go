@@ -63,6 +63,9 @@ type Config struct {
 	// when the edge requests a cold start.
 	WakeDeployment func(uuid.UUID)
 
+	// ScaleHintDeployment schedules deployment reconciliation during steady 2xx traffic (rate-limited per deployment).
+	ScaleHintDeployment func(uuid.UUID)
+
 	// ColdStartTimeout is how long the edge waits for backends after waking a
 	// scaled-to-zero deployment (default 2m). The HTTPS server write timeout is
 	// sized from this.
@@ -115,19 +118,22 @@ func normalizeControlPlaneHosts(hosts []string) []string {
 
 // Service is the edge proxy.
 type Service struct {
-	cfg               Config
-	q                 *queries.Queries
-	httpServer        *http.Server
-	httpsServer       *http.Server
-	certConfig        *certmagic.Config
-	routes            map[string]Route
-	mu                sync.RWMutex
-	backendRR         atomic.Uint64
-	cancel            context.CancelFunc
-	coldStartTimeout  time.Duration
-	httpsWriteTimeout time.Duration
+	cfg                          Config
+	q                            *queries.Queries
+	httpServer                   *http.Server
+	httpsServer                  *http.Server
+	certConfig                   *certmagic.Config
+	routes                       map[string]Route
+	mu                           sync.RWMutex
+	backendRR                    atomic.Uint64
+	cancel                       context.CancelFunc
+	coldStartTimeout             time.Duration
+	httpsWriteTimeout            time.Duration
 	backendResponseHeaderTimeout time.Duration
-	serverID          pgtype.UUID
+	serverID                     pgtype.UUID
+
+	scaleHintMinInterval time.Duration
+	scaleHintLast        sync.Map
 }
 
 // HTTPSWriteTimeout returns the computed HTTPS write timeout for this service.
@@ -200,14 +206,15 @@ func New(cfg Config) (*Service, error) {
 	cfg.ControlPlaneHosts = cpHosts
 	sid := pgtype.UUID{Bytes: cfg.ServerID, Valid: cfg.ServerID != uuid.Nil}
 	s := &Service{
-		cfg:               cfg,
-		q:                 q,
-		certConfig:        certConfig,
-		routes:            make(map[string]Route),
-		coldStartTimeout:  cold,
-		httpsWriteTimeout: httpsWT,
+		cfg:                          cfg,
+		q:                            q,
+		certConfig:                   certConfig,
+		routes:                       make(map[string]Route),
+		coldStartTimeout:             cold,
+		httpsWriteTimeout:            httpsWT,
 		backendResponseHeaderTimeout: defaultBackendResponseHeaderTimeout,
-		serverID:          sid,
+		serverID:                     sid,
+		scaleHintMinInterval:         2 * time.Second,
 	}
 
 	s.httpServer = &http.Server{
@@ -314,8 +321,12 @@ func (s *Service) loadRoutes(ctx context.Context) error {
 			}
 			proxySeen[row.DomainName][vmKey] = struct{}{}
 		}
+		backendIP := row.VmIp.String()
+		if row.ServerID.Valid && s.serverID.Valid && row.ServerID == s.serverID {
+			backendIP = "127.0.0.1"
+		}
 		proxyBackends[row.DomainName] = append(proxyBackends[row.DomainName], Backend{
-			IP:   row.VmIp.String(),
+			IP:   backendIP,
 			Port: row.VmPort.Int32,
 		})
 		proxyProjectID[row.DomainName] = row.ProjectID
@@ -659,12 +670,15 @@ func (s *Service) reverseProxy(w http.ResponseWriter, r *http.Request, host stri
 	if statusCaptured == 0 {
 		return
 	}
-	if !s.serverID.Valid || !projID.Valid || !depID.Valid {
-		return
+	if statusCaptured >= 200 && statusCaptured < 300 && len(currentRoute.Backends) > 0 && depID.Valid &&
+		!strings.EqualFold(currentRoute.DeploymentKind, "preview") {
+		s.maybeDeploymentScaleHint(uuid.UUID(depID.Bytes))
 	}
 	// context.Background() is intentional: this is a fire-and-forget goroutine that
 	// records HTTP usage after the request completes; the request context may already be done.
-	go s.recordAppHTTPUsage(context.Background(), projID, depID, statusCaptured, inBytes, mw.n)
+	if s.serverID.Valid && projID.Valid && depID.Valid {
+		go s.recordAppHTTPUsage(context.Background(), projID, depID, statusCaptured, inBytes, mw.n)
+	}
 }
 
 func (s *Service) proxyToBackend(w http.ResponseWriter, r *http.Request, targetURL string) (int, error) {
@@ -710,6 +724,19 @@ func (s *Service) backendTransport() http.RoundTripper {
 	t.DisableKeepAlives = true
 	t.ResponseHeaderTimeout = timeout
 	return t
+}
+
+func (s *Service) maybeDeploymentScaleHint(deploymentID uuid.UUID) {
+	if s.cfg.ScaleHintDeployment == nil || deploymentID == uuid.Nil {
+		return
+	}
+	key := deploymentID.String()
+	now := time.Now()
+	if v, ok := s.scaleHintLast.Load(key); ok && now.Sub(v.(time.Time)) < s.scaleHintMinInterval {
+		return
+	}
+	s.scaleHintLast.Store(key, now)
+	s.cfg.ScaleHintDeployment(deploymentID)
 }
 
 func (s *Service) recordRequestActivity(deploymentKind string, projectID, deploymentID pgtype.UUID) {

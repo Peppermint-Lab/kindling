@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -120,6 +121,65 @@ func TestEnsurePersistentVolumeDiskRejectsMissingManagedDisk(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "does not exist") {
 		t.Fatalf("missing volume error = %v", err)
+	}
+}
+
+func TestMaterializeCloudHypervisorCloneDiskUsesQemuImgOverlay(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "qemu-img.log")
+	writeRuntimeExecutable(t, filepath.Join(tmp, "qemu-img"), "#!/bin/sh\nif [ \"$1\" = \"create\" ]; then\n  printf '%s\n' \"$*\" >> \""+logPath+"\"\n  exit 0\nfi\nexit 1\n")
+	t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	tmpl := filepath.Join(tmp, "template.qcow2")
+	work := filepath.Join(tmp, "work.qcow2")
+	if err := os.WriteFile(tmpl, []byte("qcow2"), 0o644); err != nil {
+		t.Fatalf("template: %v", err)
+	}
+
+	strategy, err := materializeCloudHypervisorCloneDisk(context.Background(), tmpl, work)
+	if err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
+	if strategy != "overlay" {
+		t.Fatalf("strategy=%q want overlay", strategy)
+	}
+	got, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(got), "create") || !strings.Contains(string(got), filepath.Base(tmpl)) {
+		t.Fatalf("unexpected qemu-img log: %q", string(got))
+	}
+}
+
+func TestMaterializeCloudHypervisorCloneDiskFallsBackToFullCopy(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	writeRuntimeExecutable(t, filepath.Join(tmp, "qemu-img"), "#!/bin/sh\nexit 1\n")
+	t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	tmpl := filepath.Join(tmp, "template.qcow2")
+	work := filepath.Join(tmp, "work.qcow2")
+	if err := os.WriteFile(tmpl, []byte("template-bytes"), 0o644); err != nil {
+		t.Fatalf("template: %v", err)
+	}
+
+	strategy, err := materializeCloudHypervisorCloneDisk(context.Background(), tmpl, work)
+	if err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
+	if strategy != "full_copy" {
+		t.Fatalf("strategy=%q want full_copy", strategy)
+	}
+	got, err := os.ReadFile(work)
+	if err != nil {
+		t.Fatalf("read work: %v", err)
+	}
+	if string(got) != "template-bytes" {
+		t.Fatalf("work content=%q", string(got))
 	}
 }
 
@@ -366,6 +426,77 @@ func TestCloudHypervisorExecGuestAttachesToExistingSocket(t *testing.T) {
 	}
 	if err := <-done; err != nil {
 		t.Fatalf("socket server: %v", err)
+	}
+}
+
+func TestSetupHostBridgeRetriesWhenAllocatedPortDoesNotOpen(t *testing.T) {
+	runtimeDir := t.TempDir()
+	socketBase := filepath.Join(t.TempDir(), "kindling-vsock.sock")
+	ai := &cloudHypervisorInstance{
+		runtimeDir: runtimeDir,
+		socketBase: socketBase,
+		inst:       Instance{ID: uuid.New()},
+	}
+
+	origPick := pickFreeTCPPortFunc
+	origStart := startCloudHypervisorBridgeHelperFunc
+	origWait := waitForTCPPortFunc
+	defer func() {
+		pickFreeTCPPortFunc = origPick
+		startCloudHypervisorBridgeHelperFunc = origStart
+		waitForTCPPortFunc = origWait
+	}()
+
+	ports := []int{41001, 41002}
+	var (
+		pickCalls  int
+		waited     []string
+		startedPIDs []int
+	)
+	pickFreeTCPPortFunc = func() (int, error) {
+		if pickCalls >= len(ports) {
+			return 0, fmt.Errorf("unexpected extra port allocation")
+		}
+		port := ports[pickCalls]
+		pickCalls++
+		return port, nil
+	}
+	startCloudHypervisorBridgeHelperFunc = func(hostPort int, vsockUDS string) (*exec.Cmd, error) {
+		cmd := exec.Command("sleep", "60")
+		if err := cmd.Start(); err != nil {
+			return nil, err
+		}
+		startedPIDs = append(startedPIDs, cmd.Process.Pid)
+		return cmd, nil
+	}
+	waitForTCPPortFunc = func(ctx context.Context, addr string, timeout time.Duration) error {
+		waited = append(waited, addr)
+		if len(waited) == 1 {
+			return fmt.Errorf("timed out waiting for %s", addr)
+		}
+		return nil
+	}
+	t.Cleanup(func() {
+		for _, pid := range startedPIDs {
+			_ = terminatePID(pid)
+		}
+	})
+
+	rt := &CloudHypervisorRuntime{}
+	if err := rt.setupHostBridge(context.Background(), ai, 0); err != nil {
+		t.Fatalf("setupHostBridge: %v", err)
+	}
+	if pickCalls != 2 {
+		t.Fatalf("pickFreeTCPPort calls = %d, want 2", pickCalls)
+	}
+	if len(waited) != 2 {
+		t.Fatalf("waitForTCPPort calls = %d, want 2", len(waited))
+	}
+	if ai.hostPort != ports[1] {
+		t.Fatalf("hostPort = %d, want %d", ai.hostPort, ports[1])
+	}
+	if ai.bridgeCmd == nil || ai.bridgeCmd.Process == nil {
+		t.Fatal("expected bridge command to remain attached after retry")
 	}
 }
 

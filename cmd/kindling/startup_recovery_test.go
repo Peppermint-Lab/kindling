@@ -14,6 +14,8 @@ import (
 type startupRecoveryQueryStub struct {
 	rows         []queries.Deployment
 	retainedRows []queries.DeploymentInstanceRetainedStateByServerIDRow
+	vms          map[uuid.UUID]queries.Vm
+	updatedVMs   []queries.VMUpdateStatusParams
 	err          error
 }
 
@@ -29,6 +31,28 @@ func (s startupRecoveryQueryStub) DeploymentInstanceRetainedStateByServerID(_ co
 		return nil, s.err
 	}
 	return s.retainedRows, nil
+}
+
+func (s startupRecoveryQueryStub) VMFirstByID(_ context.Context, id pgtype.UUID) (queries.Vm, error) {
+	if s.err != nil {
+		return queries.Vm{}, s.err
+	}
+	vm, ok := s.vms[uuid.UUID(id.Bytes)]
+	if !ok {
+		return queries.Vm{}, errors.New("vm not found")
+	}
+	return vm, nil
+}
+
+func (s *startupRecoveryQueryStub) VMUpdateStatus(_ context.Context, arg queries.VMUpdateStatusParams) (queries.Vm, error) {
+	if s.err != nil {
+		return queries.Vm{}, s.err
+	}
+	s.updatedVMs = append(s.updatedVMs, arg)
+	vm := s.vms[uuid.UUID(arg.ID.Bytes)]
+	vm.Status = arg.Status
+	s.vms[uuid.UUID(arg.ID.Bytes)] = vm
+	return vm, nil
 }
 
 type startupRecoverySchedulerStub struct {
@@ -67,7 +91,7 @@ func TestQueueStartupRecoverySchedulesRecoverableDeployments(t *testing.T) {
 
 	queued, err := queueStartupRecovery(
 		context.Background(),
-		startupRecoveryQueryStub{
+		&startupRecoveryQueryStub{
 			rows: []queries.Deployment{
 				{ID: pgtype.UUID{Bytes: first, Valid: true}},
 				{ID: pgtype.UUID{Bytes: second, Valid: true}},
@@ -101,7 +125,7 @@ func TestQueueStartupRecoveryReturnsQueryErrors(t *testing.T) {
 
 	queued, err := queueStartupRecovery(
 		context.Background(),
-		startupRecoveryQueryStub{err: wantErr},
+		&startupRecoveryQueryStub{err: wantErr},
 		uuid.New(),
 		scheduler,
 		nil,
@@ -123,7 +147,7 @@ func TestQueueStartupRecoveryReturnsQueryErrors(t *testing.T) {
 func TestQueueStartupRecoveryNoopsWithoutServerOrScheduler(t *testing.T) {
 	queued, err := queueStartupRecovery(
 		context.Background(),
-		startupRecoveryQueryStub{
+		&startupRecoveryQueryStub{
 			rows: []queries.Deployment{{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}}},
 		},
 		uuid.Nil,
@@ -146,7 +170,7 @@ func TestRecoverWorkerRetainedStatePassesExpectedReferences(t *testing.T) {
 	}
 	keepTemplateDir := "/data/kindling-runtime/cloud-hypervisor/templates/template-1"
 
-	err := recoverWorkerRetainedState(context.Background(), startupRecoveryQueryStub{
+	err := recoverWorkerRetainedState(context.Background(), &startupRecoveryQueryStub{
 		retainedRows: []queries.DeploymentInstanceRetainedStateByServerIDRow{
 			{
 				DeploymentInstanceID: pgtype.UUID{Bytes: keepInstance, Valid: true},
@@ -162,5 +186,38 @@ func TestRecoverWorkerRetainedStatePassesExpectedReferences(t *testing.T) {
 	}
 	if len(rt.gotTemplateRefs) != 1 || rt.gotTemplateRefs[0] != keepTemplateDir {
 		t.Fatalf("gotTemplateRefs = %v, want [%s]", rt.gotTemplateRefs, keepTemplateDir)
+	}
+}
+
+func TestRecoverWorkerRetainedStateNormalizesStaleSuspendingVMs(t *testing.T) {
+	serverID := uuid.New()
+	keepInstance := uuid.New()
+	keepVM := uuid.New()
+	q := &startupRecoveryQueryStub{
+		retainedRows: []queries.DeploymentInstanceRetainedStateByServerIDRow{
+			{
+				DeploymentInstanceID: pgtype.UUID{Bytes: keepInstance, Valid: true},
+				VmID:                 pgtype.UUID{Bytes: keepVM, Valid: true},
+			},
+		},
+		vms: map[uuid.UUID]queries.Vm{
+			keepVM: {
+				ID:     pgtype.UUID{Bytes: keepVM, Valid: true},
+				Status: "suspending",
+			},
+		},
+	}
+	rt := &retainedStateRuntimeStub{
+		stateDir: "/data/kindling-runtime/cloud-hypervisor",
+	}
+
+	if err := recoverWorkerRetainedState(context.Background(), q, serverID, rt); err != nil {
+		t.Fatalf("recoverWorkerRetainedState: %v", err)
+	}
+	if len(q.updatedVMs) != 1 {
+		t.Fatalf("updatedVMs = %d, want 1", len(q.updatedVMs))
+	}
+	if got := q.updatedVMs[0].Status; got != "suspended" {
+		t.Fatalf("updated status = %q, want suspended", got)
 	}
 }

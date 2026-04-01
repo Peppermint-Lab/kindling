@@ -95,6 +95,145 @@ func TestRunAutoscaleSweepScalesBusyService(t *testing.T) {
 	}
 }
 
+func TestRunAutoscaleFastSweepScalesUpFromShortWindow(t *testing.T) {
+	t.Parallel()
+
+	projectID := uuid.New()
+	serviceID := uuid.New()
+	deploymentID := uuid.New()
+	store := &fakeAutoscaleStore{
+		projects: []queries.Project{
+			{
+				ID:                   pgtype.UUID{Bytes: projectID, Valid: true},
+				DesiredInstanceCount: 1,
+				MinInstanceCount:     1,
+				MaxInstanceCount:     5,
+			},
+		},
+		services: map[uuid.UUID][]queries.Service{
+			projectID: {
+				{
+					ID:                   pgtype.UUID{Bytes: serviceID, Valid: true},
+					ProjectID:            pgtype.UUID{Bytes: projectID, Valid: true},
+					DesiredInstanceCount: 1,
+				},
+			},
+		},
+		deploys: map[uuid.UUID]queries.Deployment{
+			serviceID: {
+				ID:        pgtype.UUID{Bytes: deploymentID, Valid: true},
+				ProjectID: pgtype.UUID{Bytes: projectID, Valid: true},
+				ServiceID: pgtype.UUID{Bytes: serviceID, Valid: true},
+			},
+		},
+		httpRows: map[uuid.UUID][]queries.ProjectHTTPUsageRollupsAggregatedByDeploymentRow{
+			deploymentID: {{RequestCount: 125}}, // 125 rpm in a 1-minute window => target 3
+		},
+		cpuRows: map[uuid.UUID][]queries.InstanceUsageLatestPerInstanceByDeploymentRow{},
+	}
+
+	runAutoscaleFastSweep(context.Background(), store, nil, time.Date(2026, time.March, 31, 23, 30, 0, 0, time.UTC))
+
+	if store.updatedID != serviceID {
+		t.Fatalf("updated service %s want %s", store.updatedID, serviceID)
+	}
+	if store.updatedTo != 3 {
+		t.Fatalf("updated target %d want 3", store.updatedTo)
+	}
+}
+
+func TestRunAutoscaleFastSweepUsesWallClockForRPM(t *testing.T) {
+	t.Parallel()
+	// Window start 23:29:00, now 23:30:45 => 1.75 min elapsed; 175 requests => 100 rpm => ceil(100/60)=2 replicas from floor 1.
+	projectID := uuid.New()
+	serviceID := uuid.New()
+	deploymentID := uuid.New()
+	store := &fakeAutoscaleStore{
+		projects: []queries.Project{
+			{
+				ID:                   pgtype.UUID{Bytes: projectID, Valid: true},
+				DesiredInstanceCount: 1,
+				MinInstanceCount:     1,
+				MaxInstanceCount:     5,
+			},
+		},
+		services: map[uuid.UUID][]queries.Service{
+			projectID: {
+				{
+					ID:                   pgtype.UUID{Bytes: serviceID, Valid: true},
+					ProjectID:            pgtype.UUID{Bytes: projectID, Valid: true},
+					DesiredInstanceCount: 1,
+				},
+			},
+		},
+		deploys: map[uuid.UUID]queries.Deployment{
+			serviceID: {
+				ID:        pgtype.UUID{Bytes: deploymentID, Valid: true},
+				ProjectID: pgtype.UUID{Bytes: projectID, Valid: true},
+				ServiceID: pgtype.UUID{Bytes: serviceID, Valid: true},
+			},
+		},
+		httpRows: map[uuid.UUID][]queries.ProjectHTTPUsageRollupsAggregatedByDeploymentRow{
+			deploymentID: {{RequestCount: 175}},
+		},
+		cpuRows: map[uuid.UUID][]queries.InstanceUsageLatestPerInstanceByDeploymentRow{},
+	}
+
+	runAutoscaleFastSweep(context.Background(), store, nil, time.Date(2026, time.March, 31, 23, 30, 45, 0, time.UTC))
+
+	if store.updatedID != serviceID {
+		t.Fatalf("updated service %s want %s", store.updatedID, serviceID)
+	}
+	if store.updatedTo != 2 {
+		t.Fatalf("updated target %d want 2", store.updatedTo)
+	}
+}
+
+func TestRunAutoscaleFastSweepDoesNotScaleDown(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.March, 31, 23, 30, 0, 0, time.UTC)
+	projectID := uuid.New()
+	serviceID := uuid.New()
+	deploymentID := uuid.New()
+	store := &fakeAutoscaleStore{
+		projects: []queries.Project{
+			{
+				ID:                   pgtype.UUID{Bytes: projectID, Valid: true},
+				DesiredInstanceCount: 3,
+				MinInstanceCount:     1,
+				MaxInstanceCount:     5,
+			},
+		},
+		services: map[uuid.UUID][]queries.Service{
+			projectID: {
+				{
+					ID:                   pgtype.UUID{Bytes: serviceID, Valid: true},
+					ProjectID:            pgtype.UUID{Bytes: projectID, Valid: true},
+					DesiredInstanceCount: 5,
+				},
+			},
+		},
+		deploys: map[uuid.UUID]queries.Deployment{
+			serviceID: {
+				ID:        pgtype.UUID{Bytes: deploymentID, Valid: true},
+				ProjectID: pgtype.UUID{Bytes: projectID, Valid: true},
+				ServiceID: pgtype.UUID{Bytes: serviceID, Valid: true},
+			},
+		},
+		httpRows: map[uuid.UUID][]queries.ProjectHTTPUsageRollupsAggregatedByDeploymentRow{
+			deploymentID: {}, // idle in the last minute
+		},
+		cpuRows: map[uuid.UUID][]queries.InstanceUsageLatestPerInstanceByDeploymentRow{},
+	}
+
+	runAutoscaleFastSweep(context.Background(), store, nil, now)
+
+	if store.updatedID != uuid.Nil {
+		t.Fatalf("expected no fast scale-down update, got service %s target %d", store.updatedID, store.updatedTo)
+	}
+}
+
 func TestRunAutoscaleSweepHoldsScaleDownAfterRecentTraffic(t *testing.T) {
 	t.Parallel()
 

@@ -12,11 +12,104 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 )
+
+func TestMaybeDeploymentScaleHintRateLimited(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+	dep := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	s := &Service{
+		cfg: Config{
+			ScaleHintDeployment: func(uuid.UUID) { calls.Add(1) },
+		},
+		scaleHintMinInterval: 100 * time.Millisecond,
+	}
+	s.maybeDeploymentScaleHint(dep)
+	s.maybeDeploymentScaleHint(dep)
+	if calls.Load() != 1 {
+		t.Fatalf("calls=%d want 1", calls.Load())
+	}
+	time.Sleep(120 * time.Millisecond)
+	s.maybeDeploymentScaleHint(dep)
+	if calls.Load() != 2 {
+		t.Fatalf("calls=%d want 2", calls.Load())
+	}
+}
+
+func TestLoadRoutesUsesLoopbackForLocalBackends(t *testing.T) {
+	t.Parallel()
+
+	serverID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	vmIP := netip.MustParseAddr("145.239.71.199")
+	host := "kindling.systems"
+	svc := &Service{
+		q:        queries.New(fakeRouteDBTX{rows: []fakeRouteRow{{
+			domainName:     host,
+			deploymentKind: "production",
+			vmIP:           &vmIP,
+			vmPort:         pgtype.Int4{Int32: 44115, Valid: true},
+			serverID:       pgtype.UUID{Bytes: serverID, Valid: true},
+			vmID:           pgtype.UUID{Bytes: uuid.MustParse("22222222-2222-2222-2222-222222222222"), Valid: true},
+		}}}),
+		routes:   make(map[string]Route),
+		serverID: pgtype.UUID{Bytes: serverID, Valid: true},
+	}
+
+	if err := svc.loadRoutes(context.Background()); err != nil {
+		t.Fatalf("loadRoutes: %v", err)
+	}
+	route, ok := svc.routes[host]
+	if !ok {
+		t.Fatalf("missing route for %s", host)
+	}
+	if len(route.Backends) != 1 {
+		t.Fatalf("backends=%d want 1", len(route.Backends))
+	}
+	if route.Backends[0].IP != "127.0.0.1" {
+		t.Fatalf("backend IP=%q want 127.0.0.1 for same-host VM", route.Backends[0].IP)
+	}
+}
+
+func TestLoadRoutesKeepsAdvertisedIPForRemoteBackends(t *testing.T) {
+	t.Parallel()
+
+	localServerID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	remoteServerID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	vmIP := netip.MustParseAddr("145.239.71.199")
+	host := "kindling.systems"
+	svc := &Service{
+		q: queries.New(fakeRouteDBTX{rows: []fakeRouteRow{{
+			domainName:     host,
+			deploymentKind: "production",
+			vmIP:           &vmIP,
+			vmPort:         pgtype.Int4{Int32: 44115, Valid: true},
+			serverID:       pgtype.UUID{Bytes: remoteServerID, Valid: true},
+			vmID:           pgtype.UUID{Bytes: uuid.MustParse("44444444-4444-4444-4444-444444444444"), Valid: true},
+		}}}),
+		routes:   make(map[string]Route),
+		serverID: pgtype.UUID{Bytes: localServerID, Valid: true},
+	}
+
+	if err := svc.loadRoutes(context.Background()); err != nil {
+		t.Fatalf("loadRoutes: %v", err)
+	}
+	route, ok := svc.routes[host]
+	if !ok {
+		t.Fatalf("missing route for %s", host)
+	}
+	if len(route.Backends) != 1 {
+		t.Fatalf("backends=%d want 1", len(route.Backends))
+	}
+	if route.Backends[0].IP != "145.239.71.199" {
+		t.Fatalf("backend IP=%q want advertised remote IP", route.Backends[0].IP)
+	}
+}
 
 func TestPickBackend_empty(t *testing.T) {
 	var s Service

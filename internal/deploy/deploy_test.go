@@ -1,13 +1,24 @@
 package deploy
 
 import (
+	"context"
+	"errors"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
 	"github.com/kindlingvm/kindling/internal/runtime"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 func TestEffectiveReplicaCount(t *testing.T) {
@@ -72,7 +83,7 @@ func TestEffectiveReplicaCountUsesServiceDesiredCount(t *testing.T) {
 	}
 }
 
-func TestCountProvisionableInstancesIgnoresWarmPool(t *testing.T) {
+func TestCountProvisionableInstancesIncludesWarmPool(t *testing.T) {
 	t.Parallel()
 
 	d := &Deployer{}
@@ -81,8 +92,200 @@ func TestCountProvisionableInstancesIgnoresWarmPool(t *testing.T) {
 		{Role: deploymentInstanceRoleWarmPool},
 	}
 
-	if got := d.countProvisionableInstances(instList); got != 1 {
-		t.Fatalf("got %d want 1 active provisionable instance", got)
+	if got := d.countProvisionableInstances(instList); got != 2 {
+		t.Fatalf("got %d want active + warm_pool provisionable instances", got)
+	}
+}
+
+func TestWarmPoolExtraRetentionEligible(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name string
+		last time.Time
+		want bool
+	}{
+		{
+			name: "recent request",
+			last: now.Add(-5 * time.Minute),
+			want: true,
+		},
+		{
+			name: "expired request",
+			last: now.Add(-20 * time.Minute),
+			want: false,
+		},
+		{
+			name: "future timestamp does not count as recent traffic",
+			last: now.Add(2 * time.Minute),
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := warmPoolExtraRetentionEligible(tt.last, now); got != tt.want {
+				t.Fatalf("warmPoolExtraRetentionEligible(%v, %v) = %v want %v", tt.last, now, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWarmPoolPromotionCandidates(t *testing.T) {
+	t.Parallel()
+
+	firstWarm := pguuid.ToPgtype(uuid.MustParse("11111111-1111-1111-1111-111111111111"))
+	secondWarm := pguuid.ToPgtype(uuid.MustParse("22222222-2222-2222-2222-222222222222"))
+	activeID := pguuid.ToPgtype(uuid.MustParse("33333333-3333-3333-3333-333333333333"))
+
+	tests := []struct {
+		name    string
+		desired int
+		insts   []queries.DeploymentInstance
+		want    []pgtype.UUID
+	}{
+		{
+			name:    "no deficit leaves warm pool dormant",
+			desired: 1,
+			insts: []queries.DeploymentInstance{
+				{ID: activeID, Role: deploymentInstanceRoleActive},
+				{ID: firstWarm, Role: deploymentInstanceRoleWarmPool},
+				{ID: secondWarm, Role: deploymentInstanceRoleWarmPool},
+			},
+			want: nil,
+		},
+		{
+			name:    "promotes oldest warm pool when active deficit exists",
+			desired: 1,
+			insts: []queries.DeploymentInstance{
+				{ID: firstWarm, Role: deploymentInstanceRoleWarmPool},
+				{ID: secondWarm, Role: deploymentInstanceRoleWarmPool},
+			},
+			want: []pgtype.UUID{firstWarm},
+		},
+		{
+			name:    "promotes only deficit count",
+			desired: 2,
+			insts: []queries.DeploymentInstance{
+				{ID: activeID, Role: deploymentInstanceRoleActive},
+				{ID: firstWarm, Role: deploymentInstanceRoleWarmPool},
+				{ID: secondWarm, Role: deploymentInstanceRoleWarmPool},
+			},
+			want: []pgtype.UUID{firstWarm},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := warmPoolPromotionCandidates(tt.insts, tt.desired)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %d candidates want %d", len(got), len(tt.want))
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("candidate[%d] = %v want %v", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestSuspendedResumeRequiresActiveRole(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		inst queries.DeploymentInstance
+		want bool
+	}{
+		{
+			name: "active instance resumes",
+			inst: queries.DeploymentInstance{Role: deploymentInstanceRoleActive},
+			want: true,
+		},
+		{
+			name: "legacy empty role resumes",
+			inst: queries.DeploymentInstance{},
+			want: true,
+		},
+		{
+			name: "warm pool stays dormant until promoted",
+			inst: queries.DeploymentInstance{Role: deploymentInstanceRoleWarmPool},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := suspendedResumeEligible(tt.inst); got != tt.want {
+				t.Fatalf("suspendedResumeEligible(%q) = %v want %v", tt.inst.Role, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStartNewInstanceSkipsStoppedWarmPoolWithoutTouchingDB(t *testing.T) {
+	t.Parallel()
+
+	d := &Deployer{
+		q: queries.New(fakeUnexpectedDBTX{}),
+	}
+	err := d.startNewInstance(
+		context.Background(),
+		queries.Deployment{},
+		queries.DeploymentInstance{
+			ID:   pgtype.UUID{Bytes: uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), Valid: true},
+			Role: deploymentInstanceRoleWarmPool,
+			Status: "stopped",
+		},
+		"kindling/peppermint-lab/kindling:test",
+		nil,
+		"",
+		pgtype.UUID{},
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("startNewInstance() error = %v, want nil for warm_pool no-op", err)
+	}
+}
+
+func TestStartNewInstanceNormalizesWarmPoolStartingBackToStopped(t *testing.T) {
+	t.Parallel()
+
+	inst := queries.DeploymentInstance{
+		ID:           pgtype.UUID{Bytes: uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"), Valid: true},
+		DeploymentID: pgtype.UUID{Bytes: uuid.MustParse("cccccccc-cccc-cccc-cccc-cccccccccccc"), Valid: true},
+		Role:         deploymentInstanceRoleWarmPool,
+		Status:       "starting",
+	}
+	db := &fakeDeploymentInstanceStatusDBTX{inst: inst}
+	d := &Deployer{
+		q: queries.New(db),
+	}
+	if err := d.startNewInstance(
+		context.Background(),
+		queries.Deployment{},
+		inst,
+		"kindling/peppermint-lab/kindling:test",
+		nil,
+		"",
+		pgtype.UUID{},
+		nil,
+		nil,
+	); err != nil {
+		t.Fatalf("startNewInstance() error = %v, want nil", err)
+	}
+	if !db.called {
+		t.Fatal("expected warm_pool starting instance to be normalized to stopped")
+	}
+	if db.status != "stopped" {
+		t.Fatalf("updated status = %q want stopped", db.status)
 	}
 }
 
@@ -135,8 +338,12 @@ func TestShouldKeepRunningVM(t *testing.T) {
 		Status: "running",
 	}
 
-	if shouldKeepRunningVM(vm, "cloud-hypervisor", false) {
-		t.Fatal("expected unhealthy external runtime VM to be recycled")
+	if !shouldKeepRunningVM(vm, "cloud-hypervisor", false) {
+		t.Fatal("expected running cloud-hypervisor VM to stay in service despite a transient host health probe failure")
+	}
+
+	if shouldKeepRunningVM(vm, "crun", false) {
+		t.Fatal("expected unhealthy crun VM to be recycled")
 	}
 
 	if !shouldKeepRunningVM(vm, "cloud-hypervisor", true) {
@@ -150,6 +357,77 @@ func TestShouldKeepRunningVM(t *testing.T) {
 	vm.DeletedAt = pgtype.Timestamptz{Valid: true, Time: time.Now()}
 	if shouldKeepRunningVM(vm, "cloud-hypervisor", true) {
 		t.Fatal("expected deleted VM to be recycled")
+	}
+}
+
+func TestShouldTreatRunningInstanceAsHealthy(t *testing.T) {
+	t.Parallel()
+
+	vm := queries.Vm{Status: "running"}
+	localInst := queries.DeploymentInstance{
+		Role:     deploymentInstanceRoleActive,
+		ServerID: pguuid.ToPgtype(uuid.MustParse("11111111-1111-1111-1111-111111111111")),
+	}
+	remoteInst := queries.DeploymentInstance{
+		Role:     deploymentInstanceRoleActive,
+		ServerID: pguuid.ToPgtype(uuid.MustParse("22222222-2222-2222-2222-222222222222")),
+	}
+	localServerID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+
+	if shouldTreatRunningInstanceAsHealthy(localInst, vm, "cloud-hypervisor", false, localServerID, false) {
+		t.Fatal("expected local cloud-hypervisor instance with exited runtime to be unhealthy")
+	}
+	if !shouldTreatRunningInstanceAsHealthy(localInst, vm, "cloud-hypervisor", false, localServerID, true) {
+		t.Fatal("expected local cloud-hypervisor instance with live runtime to stay healthy despite transient host probe failure")
+	}
+	if !shouldTreatRunningInstanceAsHealthy(remoteInst, vm, "cloud-hypervisor", false, localServerID, false) {
+		t.Fatal("expected remote cloud-hypervisor instance to rely on database + external signals, not local runtime state")
+	}
+	if shouldTreatRunningInstanceAsHealthy(localInst, vm, "crun", false, localServerID, true) {
+		t.Fatal("expected unhealthy crun instance to fail host health check")
+	}
+}
+
+func TestHealthCheckRetriesTransientConnectionResets(t *testing.T) {
+	t.Parallel()
+
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) <= 2 {
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatal("expected hijacker")
+			}
+			conn, _, err := hj.Hijack()
+			if err != nil {
+				t.Fatalf("hijack: %v", err)
+			}
+			_ = conn.Close()
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	parsed, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse test server URL: %v", err)
+	}
+	host, portText, err := net.SplitHostPort(parsed.Host)
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatalf("atoi port: %v", err)
+	}
+
+	d := &Deployer{}
+	if !d.healthCheck(host, port) {
+		t.Fatal("expected health check to tolerate transient connection resets")
+	}
+	if got := attempts.Load(); got < 3 {
+		t.Fatalf("got %d attempts want at least 3", got)
 	}
 }
 
@@ -219,6 +497,88 @@ func TestSelectLaunchModePrefersResumeThenCloneThenCold(t *testing.T) {
 			}
 		})
 	}
+}
+
+type fakeUnexpectedDBTX struct{}
+
+func (fakeUnexpectedDBTX) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, errors.New("unexpected Exec")
+}
+
+func (fakeUnexpectedDBTX) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("unexpected Query")
+}
+
+func (fakeUnexpectedDBTX) QueryRow(context.Context, string, ...interface{}) pgx.Row {
+	return errRow{err: errors.New("unexpected QueryRow")}
+}
+
+type errRow struct {
+	err error
+}
+
+func (r errRow) Scan(...any) error { return r.err }
+
+type fakeDeploymentInstanceStatusDBTX struct {
+	inst   queries.DeploymentInstance
+	called bool
+	status string
+}
+
+func (f *fakeDeploymentInstanceStatusDBTX) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, errors.New("unexpected Exec")
+}
+
+func (f *fakeDeploymentInstanceStatusDBTX) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("unexpected Query")
+}
+
+func (f *fakeDeploymentInstanceStatusDBTX) QueryRow(_ context.Context, _ string, args ...interface{}) pgx.Row {
+	f.called = true
+	if len(args) >= 2 {
+		if status, ok := args[1].(string); ok {
+			f.status = status
+		}
+	}
+	updated := f.inst
+	updated.Status = f.status
+	return deploymentInstanceRow{inst: updated}
+}
+
+type deploymentInstanceRow struct {
+	inst queries.DeploymentInstance
+}
+
+func (r deploymentInstanceRow) Scan(dest ...any) error {
+	values := []any{
+		r.inst.ID,
+		r.inst.DeploymentID,
+		r.inst.ServerID,
+		r.inst.VmID,
+		r.inst.Role,
+		r.inst.CloneSourceInstanceID,
+		r.inst.Status,
+		r.inst.RestartCount,
+		r.inst.LastRestartAt,
+		r.inst.DeletedAt,
+		r.inst.CreatedAt,
+		r.inst.UpdatedAt,
+	}
+	for i, d := range dest {
+		switch out := d.(type) {
+		case *pgtype.UUID:
+			*out = values[i].(pgtype.UUID)
+		case *string:
+			*out = values[i].(string)
+		case *int32:
+			*out = values[i].(int32)
+		case *pgtype.Timestamptz:
+			*out = values[i].(pgtype.Timestamptz)
+		default:
+			return errors.New("unexpected scan type")
+		}
+	}
+	return nil
 }
 
 func TestPersistentVolumeMountFromRow(t *testing.T) {

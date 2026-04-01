@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+var dialGuestOverUDS = DialGuestOverUDS
+
 // ListenAndServe listens on addr and forwards accepted TCP connections to the
 // Cloud Hypervisor guest bridge vsock exposed via the Unix domain socket.
 func ListenAndServe(ctx context.Context, addr, vsockUDS string, guestPort uint32) error {
@@ -43,7 +45,7 @@ func ListenAndServe(ctx context.Context, addr, vsockUDS string, guestPort uint32
 func Relay(client net.Conn, vsockUDS string, guestPort uint32) {
 	defer client.Close()
 
-	back, err := DialGuestOverUDS(vsockUDS, guestPort)
+	back, err := dialGuestOverUDS(vsockUDS, guestPort)
 	if err != nil {
 		return
 	}
@@ -53,11 +55,11 @@ func Relay(client net.Conn, vsockUDS string, guestPort uint32) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_, _ = ioCopyClose(back, client)
+		_, _ = copyAndCloseWrite(back, client)
 	}()
 	go func() {
 		defer wg.Done()
-		_, _ = ioCopyClose(client, back)
+		_, _ = copyAndCloseWrite(client, back)
 	}()
 	wg.Wait()
 }
@@ -99,11 +101,17 @@ type bridgedConn struct {
 
 func (v *bridgedConn) Read(b []byte) (int, error) { return v.br.Read(b) }
 
-func ioCopyClose(dst io.Writer, src interface {
-	io.Reader
-	Close() error
-}) (int64, error) {
+func (v *bridgedConn) CloseWrite() error {
+	if cw, ok := v.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return nil
+}
+
+func copyAndCloseWrite(dst net.Conn, src net.Conn) (int64, error) {
 	n, err := io.Copy(dst, src)
-	_ = src.Close()
+	if cw, ok := dst.(interface{ CloseWrite() error }); ok {
+		_ = cw.CloseWrite()
+	}
 	return n, err
 }

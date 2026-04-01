@@ -131,7 +131,7 @@ func (d *Deployer) scaleDownExcess(ctx context.Context, deploymentID pgtype.UUID
 		}
 		statusMap = nil
 	}
-	if err := d.pruneWarmPoolInstances(ctx, list, d.retainedWarmPoolBudget()); err != nil {
+	if err := d.pruneWarmPoolInstances(ctx, list, d.retainedWarmPoolBudget(ctx, deploymentID)); err != nil {
 		return nil, err
 	}
 	list, err = d.q.DeploymentInstanceFindByDeploymentID(ctx, deploymentID)

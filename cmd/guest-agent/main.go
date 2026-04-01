@@ -390,16 +390,26 @@ func bridgeGuestConnToApp(guest net.Conn, appAddr string) {
 		return
 	}
 	defer back.Close()
+
 	done := make(chan struct{}, 2)
 	go func() {
-		_, _ = io.Copy(back, guest)
+		_, _ = copyAndCloseWrite(back, guest)
 		done <- struct{}{}
 	}()
 	go func() {
-		_, _ = io.Copy(guest, back)
+		_, _ = copyAndCloseWrite(guest, back)
 		done <- struct{}{}
 	}()
 	<-done
+	<-done
+}
+
+func copyAndCloseWrite(dst net.Conn, src net.Conn) (int64, error) {
+	n, err := io.Copy(dst, src)
+	if cw, ok := dst.(interface{ CloseWrite() error }); ok {
+		_ = cw.CloseWrite()
+	}
+	return n, err
 }
 
 func startApp(env []string, logWriter io.Writer) *exec.Cmd {
