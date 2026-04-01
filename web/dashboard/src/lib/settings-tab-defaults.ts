@@ -13,6 +13,8 @@ export function resolveOrgSettingsDefaultTab(opts: {
   return "authentication"
 }
 
-export function resolvePlatformSettingsDefaultTab(tab: string | null): "public-url" | "sign-in-providers" {
-  return tab === "sign-in-providers" ? "sign-in-providers" : "public-url"
+export function resolvePlatformSettingsDefaultTab(tab: string | null): "public-url" | "sign-in-providers" | "health" {
+  if (tab === "sign-in-providers") return "sign-in-providers"
+  if (tab === "health") return "health"
+  return "public-url"
 }

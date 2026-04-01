@@ -933,6 +933,13 @@ WHERE server_id = $1
   AND deleted_at IS NULL
   AND role = 'active';
 
+-- name: DeploymentInstanceRunningActiveOnServerCount :one
+SELECT COUNT(*)::bigint AS count FROM deployment_instances
+WHERE server_id = $1
+  AND deleted_at IS NULL
+  AND role = 'active'
+  AND status = 'running';
+
 -- name: DeploymentInstanceCountByServerIDForOrg :one
 SELECT COUNT(*)::bigint AS count FROM deployment_instances di
 INNER JOIN deployments d ON d.id = di.deployment_id AND d.deleted_at IS NULL

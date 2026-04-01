@@ -1,6 +1,14 @@
-import { useCallback, useEffect, useState } from "react"
-import { Navigate, useSearchParams } from "react-router-dom"
-import { api, type APIMeta, type AuthAdminProvider, APIError } from "@/lib/api"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { Link, Navigate, useSearchParams } from "react-router-dom"
+import {
+  api,
+  type APIMeta,
+  type AuthAdminProvider,
+  type Server,
+  APIError,
+  dashboardEventTopics,
+  subscribeDashboardEvents,
+} from "@/lib/api"
 import { useAuth } from "@/contexts/AuthContext"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -8,7 +16,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { GlobeIcon, PlugIcon } from "lucide-react"
+import { GlobeIcon, HeartPulseIcon, PlugIcon } from "lucide-react"
+import { componentLabel, formatAgeSeconds, healthChipClass } from "@/lib/server-observability"
 import {
   PageContainer,
   PageTitle,
@@ -23,6 +32,14 @@ import {
   SurfaceDescription,
 } from "@/components/page-surface"
 import { resolvePlatformSettingsDefaultTab } from "@/lib/settings-tab-defaults"
+
+function apiErrorMessage(e: unknown): string {
+  return e instanceof APIError ? e.message : String(e)
+}
+
+function displayServerName(server: Server): string {
+  return server.hostname || server.id
+}
 
 type AuthProviderForm = {
   display_name: string
@@ -92,8 +109,37 @@ export function PlatformSettingsPage() {
   const [authProviders, setAuthProviders] = useState<AuthAdminProvider[]>([])
   const [authSavingProvider, setAuthSavingProvider] = useState<"github" | "oidc" | null>(null)
   const [authForms, setAuthForms] = useState(() => formsFromProviders([]))
+  const [platformServers, setPlatformServers] = useState<Server[]>([])
+  const [healthError, setHealthError] = useState<string | null>(null)
+  const [serverActionId, setServerActionId] = useState<string | null>(null)
 
   const isPlatformAdmin = session != null && session.authenticated === true && session.platform_admin
+
+  const refreshPlatformHealth = useCallback(async () => {
+    try {
+      const servers = await api.listPlatformServers()
+      setPlatformServers(servers)
+      setHealthError(null)
+    } catch (e) {
+      setHealthError(apiErrorMessage(e))
+    }
+  }, [])
+
+  const runPlatformServerAction = useCallback(
+    async (serverId: string, action: () => Promise<unknown>) => {
+      setServerActionId(serverId)
+      setError(null)
+      try {
+        await action()
+        await refreshPlatformHealth()
+      } catch (e) {
+        setError(apiErrorMessage(e))
+      } finally {
+        setServerActionId(null)
+      }
+    },
+    [refreshPlatformHealth],
+  )
 
   const load = useCallback(async () => {
     const [m, adminProviders] = await Promise.all([api.getMeta(), api.listAdminAuthProviders()])
@@ -108,7 +154,8 @@ export function PlatformSettingsPage() {
     setColdStartTimeoutInput(String(m.cold_start_timeout_seconds ?? 120))
     setAuthProviders(adminProviders)
     setAuthForms(formsFromProviders(adminProviders))
-  }, [])
+    await refreshPlatformHealth()
+  }, [refreshPlatformHealth])
 
   useEffect(() => {
     if (!isPlatformAdmin) {
@@ -119,6 +166,56 @@ export function PlatformSettingsPage() {
       .catch((e) => setError(e instanceof APIError ? e.message : String(e)))
       .finally(() => setLoading(false))
   }, [load, isPlatformAdmin])
+
+  useEffect(() => {
+    if (!isPlatformAdmin) {
+      return
+    }
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+    const scheduleReload = () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null
+        void refreshPlatformHealth()
+      }, 400)
+    }
+    const unsub = subscribeDashboardEvents({
+      topics: [dashboardEventTopics.servers],
+      onInvalidate: scheduleReload,
+    })
+    const timer = setInterval(() => {
+      void refreshPlatformHealth()
+    }, 15000)
+    return () => {
+      if (debounceTimer != null) clearTimeout(debounceTimer)
+      unsub()
+      clearInterval(timer)
+    }
+  }, [isPlatformAdmin, refreshPlatformHealth])
+
+  const healthStats = useMemo(() => {
+    let healthy = 0
+    let degraded = 0
+    let stale = 0
+    let unknown = 0
+    let draining = 0
+    for (const s of platformServers) {
+      const h = s.health ?? "unknown"
+      if (h === "healthy") healthy++
+      else if (h === "degraded") degraded++
+      else if (h === "stale") stale++
+      else unknown++
+      if (s.status === "draining" || s.status === "drained") draining++
+    }
+    return {
+      total: platformServers.length,
+      healthy,
+      degraded,
+      stale,
+      unknown,
+      draining,
+    }
+  }, [platformServers])
 
   const tabDefault = resolvePlatformSettingsDefaultTab(searchParams.get("tab"))
 
@@ -198,8 +295,7 @@ export function PlatformSettingsPage() {
       <PageSection>
         <PageTitle>Control plane</PageTitle>
         <p className="text-sm text-muted-foreground mb-4">
-          Cluster-wide URLs and sign-in provider configuration. Only platform administrators can change these
-          settings.
+          Cluster-wide URLs, sign-in providers, and system health. Only platform administrators can open this page.
         </p>
 
         {error && <PageErrorBanner message={error} />}
@@ -211,6 +307,9 @@ export function PlatformSettingsPage() {
             </TabsTrigger>
             <TabsTrigger value="sign-in-providers">
               <PlugIcon className="size-4" /> Sign-in providers
+            </TabsTrigger>
+            <TabsTrigger value="health">
+              <HeartPulseIcon className="size-4" /> Health
             </TabsTrigger>
           </TabsList>
 
@@ -520,6 +619,137 @@ export function PlatformSettingsPage() {
                     </div>
                   )
                 })}
+              </SurfaceBody>
+            </Surface>
+          </TabsContent>
+
+          <TabsContent value="health" className="min-w-0 space-y-6">
+            {healthError ? <PageErrorBanner message={healthError} /> : null}
+            <Surface>
+              <SurfaceHeader>
+                <SurfaceTitle>System health</SurfaceTitle>
+                <SurfaceDescription>
+                  All registered workers in the cluster (not limited to the current organization). Auto-refreshes every
+                  15 seconds and on server events.
+                </SurfaceDescription>
+              </SurfaceHeader>
+              <SurfaceBody className="space-y-6 text-sm">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+                  <div className="rounded-xl border border-border/80 bg-muted/20 px-3 py-3">
+                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Total</p>
+                    <p className="text-2xl font-semibold tabular-nums">{healthStats.total}</p>
+                  </div>
+                  <div className="rounded-xl border border-border/80 bg-muted/20 px-3 py-3">
+                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Healthy</p>
+                    <p className="text-2xl font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+                      {healthStats.healthy}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-border/80 bg-muted/20 px-3 py-3">
+                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Degraded</p>
+                    <p className="text-2xl font-semibold tabular-nums text-amber-600 dark:text-amber-400">
+                      {healthStats.degraded}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-border/80 bg-muted/20 px-3 py-3">
+                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Stale</p>
+                    <p className="text-2xl font-semibold tabular-nums text-rose-600 dark:text-rose-400">{healthStats.stale}</p>
+                  </div>
+                  <div className="rounded-xl border border-border/80 bg-muted/20 px-3 py-3">
+                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Unknown</p>
+                    <p className="text-2xl font-semibold tabular-nums text-muted-foreground">{healthStats.unknown}</p>
+                  </div>
+                  <div className="rounded-xl border border-border/80 bg-muted/20 px-3 py-3">
+                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Draining / drained</p>
+                    <p className="text-2xl font-semibold tabular-nums">{healthStats.draining}</p>
+                  </div>
+                </div>
+
+                {platformServers.length === 0 && !healthError ? (
+                  <p className="text-sm text-muted-foreground py-2 text-center">No servers registered yet.</p>
+                ) : null}
+
+                {platformServers.length > 0 ? (
+                  <div className="space-y-3">
+                    {platformServers.map((server) => (
+                      <div key={server.id} className="rounded-xl border p-4 space-y-4">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="min-w-0 space-y-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="font-mono text-sm font-medium truncate">{displayServerName(server)}</p>
+                              <Badge variant="outline" className={healthChipClass(server.health)}>
+                                {server.health || "unknown"}
+                              </Badge>
+                              <Badge variant={server.status === "active" ? "default" : "secondary"}>{server.status}</Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {server.internal_ip || "No IP"}
+                              {server.runtime ? ` · ${server.runtime}` : ""}
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              <Badge variant="outline" className="border-border bg-muted/30 text-foreground">
+                                Heartbeat {formatAgeSeconds(server.heartbeat_age_seconds)}
+                              </Badge>
+                              <Badge variant="outline" className="border-border bg-muted/30 text-foreground">
+                                {server.running_instance_count ?? 0} running
+                              </Badge>
+                              <Badge variant="outline" className="border-border bg-muted/30 text-foreground">
+                                {server.active_instance_count ?? 0} active
+                              </Badge>
+                              <Badge variant="outline" className="border-border bg-muted/30 text-foreground">
+                                {server.instance_count ?? 0} total
+                              </Badge>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              render={<Link to={`/settings/servers/${server.id}?from=platform`} />}
+                            >
+                              View details
+                            </Button>
+                            {server.status === "active" ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={serverActionId === server.id}
+                                onClick={() =>
+                                  void runPlatformServerAction(server.id, () => api.drainServer(server.id))
+                                }
+                              >
+                                Drain
+                              </Button>
+                            ) : null}
+                            {server.status === "draining" || server.status === "drained" ? (
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                disabled={serverActionId === server.id}
+                                onClick={() =>
+                                  void runPlatformServerAction(server.id, () => api.activateServer(server.id))
+                                }
+                              >
+                                Activate
+                              </Button>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {(server.components ?? []).map((component) => (
+                            <Badge
+                              key={component.component}
+                              variant="outline"
+                              className={healthChipClass(component.health, component.enabled ? "" : "opacity-70")}
+                            >
+                              {componentLabel(component.component)} · {component.enabled ? component.health : "off"}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </SurfaceBody>
             </Surface>
           </TabsContent>

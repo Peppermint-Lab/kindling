@@ -33,6 +33,8 @@ type Handler struct {
 
 // RegisterRoutes mounts server management routes on the given mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/platform/servers", h.listPlatformServers)
+	mux.HandleFunc("GET /api/platform/servers/{id}/details", h.getPlatformServerDetails)
 	mux.HandleFunc("GET /api/servers", h.listServers)
 	mux.HandleFunc("GET /api/servers/{id}/details", h.getServerDetails)
 	mux.HandleFunc("POST /api/servers/{id}/drain", h.postServerDrain)
@@ -212,6 +214,58 @@ func (h *Handler) overviewRowsForOrg(ctx context.Context, orgID pgtype.UUID) ([]
 	return out, nil
 }
 
+// overviewRowsClusterWide lists every server with cluster-wide instance counts (ignores org scope).
+func (h *Handler) overviewRowsClusterWide(ctx context.Context) ([]serverSummaryOut, error) {
+	serverRows, err := h.Q.ServerFindAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	statuses, err := h.Q.ServerComponentStatusFindAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byServer := make(map[string][]queries.ServerComponentStatus, len(serverRows))
+	for _, status := range statuses {
+		sid := pguuid.ToString(status.ServerID)
+		byServer[sid] = append(byServer[sid], status)
+	}
+
+	now := time.Now().UTC()
+	out := make([]serverSummaryOut, 0, len(serverRows))
+	for _, server := range serverRows {
+		instanceCount, err := h.Q.DeploymentInstanceCountByServerID(ctx, server.ID)
+		if err != nil {
+			return nil, err
+		}
+		activeCount, err := h.Q.DeploymentInstanceActiveCountByServerID(ctx, server.ID)
+		if err != nil {
+			return nil, err
+		}
+		runningCount, err := h.Q.DeploymentInstanceRunningActiveOnServerCount(ctx, server.ID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, buildServerSummary(server, instanceCount, activeCount, runningCount, byServer[pguuid.ToString(server.ID)], now))
+	}
+	return out, nil
+}
+
+func (h *Handler) listPlatformServers(w http.ResponseWriter, r *http.Request) {
+	p, ok := rpcutil.MustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !rpcutil.RequirePlatformAdmin(w, p) {
+		return
+	}
+	out, err := h.overviewRowsClusterWide(r.Context())
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "list_platform_servers", err)
+		return
+	}
+	rpcutil.WriteJSON(w, http.StatusOK, out)
+}
+
 func (h *Handler) listServers(w http.ResponseWriter, r *http.Request) {
 	p, ok := rpcutil.MustPrincipal(w, r)
 	if !ok {
@@ -314,6 +368,21 @@ func (h *Handler) getServerDetails(w http.ResponseWriter, r *http.Request) {
 	if !rpcutil.RequireOrgAdmin(w, p) {
 		return
 	}
+	h.writeServerDetails(w, r, false, p.OrganizationID, true)
+}
+
+func (h *Handler) getPlatformServerDetails(w http.ResponseWriter, r *http.Request) {
+	p, ok := rpcutil.MustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !rpcutil.RequirePlatformAdmin(w, p) {
+		return
+	}
+	h.writeServerDetails(w, r, true, pgtype.UUID{}, false)
+}
+
+func (h *Handler) writeServerDetails(w http.ResponseWriter, r *http.Request, clusterWide bool, orgID pgtype.UUID, redact bool) {
 	id, err := rpcutil.ParseUUID(r.PathValue("id"))
 	if err != nil {
 		rpcutil.WriteAPIError(w, http.StatusBadRequest, "invalid_id", "invalid server id")
@@ -327,109 +396,90 @@ func (h *Handler) getServerDetails(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	hasWorkload, err := h.orgHasWorkloadOnServer(ctx, id, p.OrganizationID)
-	if err != nil {
-		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
-		return
-	}
-	if !hasWorkload {
-		rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "server not found")
-		return
+	if !clusterWide {
+		hasWorkload, wErr := h.orgHasWorkloadOnServer(ctx, id, orgID)
+		if wErr != nil {
+			rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", wErr)
+			return
+		}
+		if !hasWorkload {
+			rpcutil.WriteAPIError(w, http.StatusNotFound, "not_found", "server not found")
+			return
+		}
 	}
 
-	instanceCount, err := h.Q.DeploymentInstanceCountByServerIDForOrg(ctx, queries.DeploymentInstanceCountByServerIDForOrgParams{
-		ServerID: id,
-		OrgID:    p.OrganizationID,
-	})
-	if err != nil {
-		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
-		return
+	var (
+		instanceCount   int64
+		activeCount     int64
+		usageRows       []queries.ServerInstanceUsageLatestRow
+		volumesByServer []queries.ProjectVolume
+	)
+	if clusterWide {
+		instanceCount, err = h.Q.DeploymentInstanceCountByServerID(ctx, id)
+		if err != nil {
+			rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
+			return
+		}
+		activeCount, err = h.Q.DeploymentInstanceActiveCountByServerID(ctx, id)
+		if err != nil {
+			rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
+			return
+		}
+		usageRows, err = h.Q.ServerInstanceUsageLatest(ctx, id)
+		if err != nil {
+			rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
+			return
+		}
+		volumesByServer, err = h.Q.ProjectVolumeFindByServerID(ctx, id)
+		if err != nil {
+			rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
+			return
+		}
+	} else {
+		instanceCount, err = h.Q.DeploymentInstanceCountByServerIDForOrg(ctx, queries.DeploymentInstanceCountByServerIDForOrgParams{
+			ServerID: id,
+			OrgID:    orgID,
+		})
+		if err != nil {
+			rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
+			return
+		}
+		activeCount, err = h.Q.DeploymentInstanceActiveCountByServerIDForOrg(ctx, queries.DeploymentInstanceActiveCountByServerIDForOrgParams{
+			ServerID: id,
+			OrgID:    orgID,
+		})
+		if err != nil {
+			rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
+			return
+		}
+		var rowsOrg []queries.ServerInstanceUsageLatestForOrgRow
+		rowsOrg, err = h.Q.ServerInstanceUsageLatestForOrg(ctx, queries.ServerInstanceUsageLatestForOrgParams{
+			ServerID: id,
+			OrgID:    orgID,
+		})
+		if err != nil {
+			rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
+			return
+		}
+		usageRows = usageLatestForOrgRowsToLatest(rowsOrg)
+		volumesByServer, err = h.Q.ProjectVolumeFindByServerIDForOrg(ctx, queries.ProjectVolumeFindByServerIDForOrgParams{
+			ServerID: id,
+			OrgID:    orgID,
+		})
+		if err != nil {
+			rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
+			return
+		}
 	}
-	activeCount, err := h.Q.DeploymentInstanceActiveCountByServerIDForOrg(ctx, queries.DeploymentInstanceActiveCountByServerIDForOrgParams{
-		ServerID: id,
-		OrgID:    p.OrganizationID,
-	})
-	if err != nil {
-		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
-		return
-	}
+
 	statuses, err := h.Q.ServerComponentStatusFindByServerID(ctx, id)
-	if err != nil {
-		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
-		return
-	}
-	rows, err := h.Q.ServerInstanceUsageLatestForOrg(ctx, queries.ServerInstanceUsageLatestForOrgParams{
-		ServerID: id,
-		OrgID:    p.OrganizationID,
-	})
-	if err != nil {
-		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
-		return
-	}
-	volumesByServer, err := h.Q.ProjectVolumeFindByServerIDForOrg(ctx, queries.ProjectVolumeFindByServerIDForOrgParams{
-		ServerID: id,
-		OrgID:    p.OrganizationID,
-	})
 	if err != nil {
 		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
 		return
 	}
 
 	now := time.Now().UTC()
-	instances := make([]serverInstanceOut, 0, len(rows))
-	runningCount := int64(0)
-	for _, row := range rows {
-		if row.Role == "active" && row.Status == "running" {
-			runningCount++
-		}
-		var cpu *float64
-		if row.CpuPercent.Valid {
-			v := row.CpuPercent.Float64
-			cpu = &v
-		}
-		var vmID *string
-		if row.VmID.Valid {
-			s := pguuid.ToString(row.VmID)
-			vmID = &s
-		}
-		var migrationID *string
-		if row.MigrationID.Valid {
-			s := pguuid.ToString(row.MigrationID)
-			migrationID = &s
-		}
-		resourceHealth := "missing"
-		var sampleAgeSeconds *int64
-		if row.SampledAt.Valid {
-			age := ageSeconds(now, row.SampledAt.Time)
-			sampleAgeSeconds = &age
-			resourceHealth = "fresh"
-			if now.Sub(row.SampledAt.Time) > 2*usagePollerEvery {
-				resourceHealth = "stale"
-			}
-		}
-		instances = append(instances, serverInstanceOut{
-			DeploymentInstanceID: pguuid.ToString(row.DeploymentInstanceID),
-			DeploymentID:         pguuid.ToString(row.DeploymentID),
-			ProjectID:            pguuid.ToString(row.ProjectID),
-			ProjectName:          row.ProjectName,
-			VmID:                 vmID,
-			Role:                 row.Role,
-			Status:               row.Status,
-			CreatedAt:            rpcutil.FormatTS(row.CreatedAt),
-			UpdatedAt:            rpcutil.FormatTS(row.UpdatedAt),
-			SampledAt:            rpcutil.FormatTS(row.SampledAt),
-			SampleAgeSeconds:     sampleAgeSeconds,
-			ResourceHealth:       resourceHealth,
-			CPUPercent:           cpu,
-			MemoryRssBytes:       row.MemoryRssBytes,
-			DiskReadBytes:        row.DiskReadBytes,
-			DiskWriteBytes:       row.DiskWriteBytes,
-			Source:               row.Source,
-			MigrationID:          migrationID,
-			MigrationState:       row.MigrationState,
-			MigrationFailure:     row.MigrationFailureMessage,
-		})
-	}
+	instances, runningCount := buildServerInstancesFromUsageLatest(usageRows, now)
 
 	slices.SortFunc(instances, func(a, b serverInstanceOut) int {
 		if x := compareResourceHealth(a.ResourceHealth, b.ResourceHealth); x != 0 {
@@ -492,7 +542,7 @@ func (h *Handler) getServerDetails(w http.ResponseWriter, r *http.Request) {
 	})
 
 	summary := buildServerSummary(server, instanceCount, activeCount, runningCount, statuses, now)
-	if !p.PlatformAdmin {
+	if redact {
 		summary = redactServerSummary(summary)
 	}
 
@@ -501,6 +551,92 @@ func (h *Handler) getServerDetails(w http.ResponseWriter, r *http.Request) {
 		Instances: instances,
 		Volumes:   volumes,
 	})
+}
+
+func usageLatestForOrgRowsToLatest(rows []queries.ServerInstanceUsageLatestForOrgRow) []queries.ServerInstanceUsageLatestRow {
+	out := make([]queries.ServerInstanceUsageLatestRow, len(rows))
+	for i, r := range rows {
+		out[i] = queries.ServerInstanceUsageLatestRow{
+			DeploymentInstanceID:         r.DeploymentInstanceID,
+			DeploymentID:                 r.DeploymentID,
+			ProjectID:                    r.ProjectID,
+			ProjectName:                  r.ProjectName,
+			VmID:                         r.VmID,
+			Role:                         r.Role,
+			Status:                       r.Status,
+			CreatedAt:                    r.CreatedAt,
+			UpdatedAt:                    r.UpdatedAt,
+			MigrationID:                  r.MigrationID,
+			MigrationState:               r.MigrationState,
+			MigrationDestinationServerID: r.MigrationDestinationServerID,
+			MigrationFailureMessage:      r.MigrationFailureMessage,
+			SampledAt:                    r.SampledAt,
+			CpuPercent:                   r.CpuPercent,
+			MemoryRssBytes:               r.MemoryRssBytes,
+			DiskReadBytes:                r.DiskReadBytes,
+			DiskWriteBytes:               r.DiskWriteBytes,
+			Source:                       r.Source,
+		}
+	}
+	return out
+}
+
+func buildServerInstancesFromUsageLatest(rows []queries.ServerInstanceUsageLatestRow, now time.Time) ([]serverInstanceOut, int64) {
+	instances := make([]serverInstanceOut, 0, len(rows))
+	runningCount := int64(0)
+	for _, row := range rows {
+		if row.Role == "active" && row.Status == "running" {
+			runningCount++
+		}
+		var cpu *float64
+		if row.CpuPercent.Valid {
+			v := row.CpuPercent.Float64
+			cpu = &v
+		}
+		var vmID *string
+		if row.VmID.Valid {
+			s := pguuid.ToString(row.VmID)
+			vmID = &s
+		}
+		var migrationID *string
+		if row.MigrationID.Valid {
+			s := pguuid.ToString(row.MigrationID)
+			migrationID = &s
+		}
+		resourceHealth := "missing"
+		var sampleAgeSeconds *int64
+		if row.SampledAt.Valid {
+			age := ageSeconds(now, row.SampledAt.Time)
+			sampleAgeSeconds = &age
+			resourceHealth = "fresh"
+			if now.Sub(row.SampledAt.Time) > 2*usagePollerEvery {
+				resourceHealth = "stale"
+			}
+		}
+		instances = append(instances, serverInstanceOut{
+			DeploymentInstanceID: pguuid.ToString(row.DeploymentInstanceID),
+			DeploymentID:         pguuid.ToString(row.DeploymentID),
+			ProjectID:            pguuid.ToString(row.ProjectID),
+			ProjectName:          row.ProjectName,
+			VmID:                 vmID,
+			Role:                 row.Role,
+			Status:               row.Status,
+			CreatedAt:            rpcutil.FormatTS(row.CreatedAt),
+			UpdatedAt:            rpcutil.FormatTS(row.UpdatedAt),
+			SampledAt:            rpcutil.FormatTS(row.SampledAt),
+			SampleAgeSeconds:     sampleAgeSeconds,
+			ResourceHealth:       resourceHealth,
+			CPUPercent:           cpu,
+			MemoryRssBytes:       row.MemoryRssBytes,
+			DiskReadBytes:        row.DiskReadBytes,
+			DiskWriteBytes:       row.DiskWriteBytes,
+			Source:               row.Source,
+			MigrationID:          migrationID,
+			MigrationState:       row.MigrationState,
+			MigrationFailure:     row.MigrationFailureMessage,
+		})
+	}
+	return instances, runningCount
 }
 
 func buildServerSummary(server queries.Server, instanceCount, activeCount, runningCount int64, rows []queries.ServerComponentStatus, now time.Time) serverSummaryOut {

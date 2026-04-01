@@ -74,4 +74,8 @@ describe("resolvePlatformSettingsDefaultTab", () => {
     expect(resolvePlatformSettingsDefaultTab(null)).toBe("public-url")
     expect(resolvePlatformSettingsDefaultTab("bogus")).toBe("public-url")
   })
+
+  it("returns health tab when requested", () => {
+    expect(resolvePlatformSettingsDefaultTab("health")).toBe("health")
+  })
 })

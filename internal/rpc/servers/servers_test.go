@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/shared/pguuid"
 )
 
 func TestBuildServerVolumeOut(t *testing.T) {
@@ -141,4 +142,60 @@ func TestBuildServerSummaryUnknownWithoutSnapshots(t *testing.T) {
 
 func ts(v time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: v, Valid: true}
+}
+
+func TestBuildServerInstancesFromUsageLatest_RunningCount(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	instID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	depID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	projID := uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	rows := []queries.ServerInstanceUsageLatestRow{
+		{
+			DeploymentInstanceID: pgtype.UUID{Bytes: instID, Valid: true},
+			DeploymentID:         pgtype.UUID{Bytes: depID, Valid: true},
+			ProjectID:            pgtype.UUID{Bytes: projID, Valid: true},
+			ProjectName:          "p1",
+			Role:                 "active",
+			Status:               "running",
+			MemoryRssBytes:       1024,
+		},
+		{
+			DeploymentInstanceID: pgtype.UUID{Bytes: uuid.MustParse("44444444-4444-4444-4444-444444444444"), Valid: true},
+			DeploymentID:         pgtype.UUID{Bytes: depID, Valid: true},
+			ProjectID:            pgtype.UUID{Bytes: projID, Valid: true},
+			ProjectName:          "p1",
+			Role:                 "active",
+			Status:               "stopped",
+			MemoryRssBytes:       0,
+		},
+	}
+	instances, running := buildServerInstancesFromUsageLatest(rows, now)
+	if running != 1 {
+		t.Fatalf("running = %d, want 1", running)
+	}
+	if len(instances) != 2 {
+		t.Fatalf("len(instances) = %d", len(instances))
+	}
+}
+
+func TestUsageLatestForOrgRowsToLatestPreservesFields(t *testing.T) {
+	t.Parallel()
+	instID := uuid.MustParse("55555555-5555-5555-5555-555555555555")
+	orgRow := queries.ServerInstanceUsageLatestForOrgRow{
+		DeploymentInstanceID: pgtype.UUID{Bytes: instID, Valid: true},
+		ProjectName:          "roundtrip",
+		Role:                 "active",
+		Status:               "running",
+	}
+	out := usageLatestForOrgRowsToLatest([]queries.ServerInstanceUsageLatestForOrgRow{orgRow})
+	if len(out) != 1 {
+		t.Fatalf("len = %d", len(out))
+	}
+	if out[0].ProjectName != "roundtrip" || out[0].Role != "active" {
+		t.Fatalf("unexpected %+v", out[0])
+	}
+	if pguuid.ToString(out[0].DeploymentInstanceID) != instID.String() {
+		t.Fatalf("id mismatch")
+	}
 }

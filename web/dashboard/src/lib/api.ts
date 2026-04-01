@@ -891,6 +891,10 @@ export const api = {
 
   listServers: () => request<Server[]>("/api/servers"),
 
+  listPlatformServers: () => request<Server[]>("/api/platform/servers"),
+
+  getPlatformServerDetails: (id: string) => request<ServerDetail>(`/api/platform/servers/${id}/details`),
+
   getServerDetails: (id: string) => request<ServerDetail>(`/api/servers/${id}/details`),
 
   drainServer: (id: string) =>

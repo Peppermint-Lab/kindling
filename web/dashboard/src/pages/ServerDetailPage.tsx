@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { useParams } from "react-router-dom"
+import { useParams, useSearchParams } from "react-router-dom"
 import { api, type Server, type ServerComponent, type ServerDetail, APIError } from "@/lib/api"
 import { useAuth } from "@/contexts/AuthContext"
 import { Badge } from "@/components/ui/badge"
@@ -52,6 +52,8 @@ function renderLastSeen(component: ServerComponent): string {
 
 export function ServerDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const [searchParams] = useSearchParams()
+  const fromPlatform = searchParams.get("from") === "platform"
   const { session } = useAuth()
   const [detail, setDetail] = useState<ServerDetail | null>(null)
   const [loading, setLoading] = useState(true)
@@ -62,12 +64,13 @@ export function ServerDetailPage() {
   const canManageServers =
     session?.authenticated && (session.role === "owner" || session.role === "admin")
   const isPlatformAdmin = session?.authenticated === true && session.platform_admin
+  const platformView = fromPlatform && isPlatformAdmin
 
   const load = useCallback(async () => {
     if (!id) return
-    const next = await api.getServerDetails(id)
+    const next = platformView ? await api.getPlatformServerDetails(id) : await api.getServerDetails(id)
     setDetail(next)
-  }, [id])
+  }, [id, platformView])
 
   useEffect(() => {
     let cancelled = false
@@ -157,7 +160,9 @@ export function ServerDetailPage() {
     <PageContainer size="wide">
       <PageSection>
         <div>
-          <PageBackLink to="/settings?tab=cluster">Back to workers</PageBackLink>
+          <PageBackLink to={platformView ? "/platform-settings?tab=health" : "/settings?tab=cluster"}>
+            {platformView ? "Back to control plane health" : "Back to workers"}
+          </PageBackLink>
           <PageHeader>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
@@ -426,7 +431,11 @@ export function ServerDetailPage() {
                       </td>
                       <td className="py-3 pr-4 text-xs text-muted-foreground">{instance.source || "—"}</td>
                       <td className="py-3 pr-4">
-                        {canManageServers && server.status === "active" && instance.role === "active" && instance.status === "running" ? (
+                        {!platformView &&
+                        canManageServers &&
+                        server.status === "active" &&
+                        instance.role === "active" &&
+                        instance.status === "running" ? (
                           <Button
                             size="sm"
                             variant="outline"

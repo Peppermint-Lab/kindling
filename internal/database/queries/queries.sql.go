@@ -2552,6 +2552,21 @@ func (q *Queries) DeploymentInstanceRetainedStateByServerID(ctx context.Context,
 	return items, nil
 }
 
+const deploymentInstanceRunningActiveOnServerCount = `-- name: DeploymentInstanceRunningActiveOnServerCount :one
+SELECT COUNT(*)::bigint AS count FROM deployment_instances
+WHERE server_id = $1
+  AND deleted_at IS NULL
+  AND role = 'active'
+  AND status = 'running'
+`
+
+func (q *Queries) DeploymentInstanceRunningActiveOnServerCount(ctx context.Context, serverID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, deploymentInstanceRunningActiveOnServerCount, serverID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deploymentInstanceSetCloneSource = `-- name: DeploymentInstanceSetCloneSource :one
 UPDATE deployment_instances SET clone_source_instance_id = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
