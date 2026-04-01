@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/kindlingvm/kindling/internal/deploy"
 	"github.com/kindlingvm/kindling/internal/rpc"
 	crunrt "github.com/kindlingvm/kindling/internal/runtime"
+	"github.com/kindlingvm/kindling/internal/usage"
 	"github.com/kindlingvm/kindling/internal/wgmesh"
 	"github.com/spf13/cobra"
 )
@@ -30,7 +32,7 @@ const usagePollerInterval = 15 * time.Second        // resource usage polling in
 const walBackoffMax = 30 * time.Second              // max backoff for WAL listener reconnects
 const shutdownGracePeriod = 15 * time.Second        // graceful shutdown timeout for edge proxy
 const volumeRecoveryInterval = 1 * time.Minute      // volume operation recovery sweep interval
-const periodicReconcileInterval = 30 * time.Second // interval for idle scale-down, preview cleanup, slow autoscale, etc.
+const periodicReconcileInterval = 30 * time.Second  // interval for idle scale-down, preview cleanup, slow autoscale, etc.
 
 // projectAutoscaleFastInterval is the burst scale-up autoscale tick (HTTP short window only; no scale-down).
 const projectAutoscaleFastInterval = 5 * time.Second
@@ -204,6 +206,21 @@ func runServe(ctx context.Context, databaseURL, replicationDSN string, opts serv
 			slog.Error("config listen ended", "error", err)
 		}
 	}()
+	if components.api || components.edge {
+		go usage.RunHostMetricsPoller(ctx, q, serverID, componentHeartbeatInterval, func() string {
+			snap := cfgMgr.Snapshot()
+			if snap != nil && strings.TrimSpace(snap.ServerCloudHypervisorStateDir) != "" {
+				return snap.ServerCloudHypervisorStateDir
+			}
+			if v := strings.TrimSpace(os.Getenv("KINDLING_CH_STATE_DIR")); v != "" {
+				return v
+			}
+			if _, err := os.Stat("/data"); err == nil {
+				return "/data/kindling-runtime/cloud-hypervisor"
+			}
+			return ""
+		})
+	}
 
 	routeChangeCh := make(chan struct{}, 1)
 	notifyRouteChange := func() {
@@ -358,10 +375,10 @@ func runServe(ctx context.Context, databaseURL, replicationDSN string, opts serv
 	// handlers on an adjacent internal port so the public API can proxy guest
 	// traffic without sharing in-memory runtime state.
 	if shouldServeHTTP(components) {
-		return startAPIServer(ctx, q, cfgMgr, dashboardEvents, recs.deployment, recs.ciJob, ciSvc, listenAddr)
+		return startAPIServer(ctx, q, serverID, cfgMgr, dashboardEvents, recs.deployment, recs.ciJob, ciSvc, listenAddr)
 	}
 	if components.worker {
-		return startAPIServer(ctx, q, cfgMgr, dashboardEvents, recs.deployment, recs.ciJob, ciSvc, internalAPIAddr)
+		return startAPIServer(ctx, q, serverID, cfgMgr, dashboardEvents, recs.deployment, recs.ciJob, ciSvc, internalAPIAddr)
 	}
 
 	<-ctx.Done()

@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/kindlingvm/kindling/internal/database/queries"
+	"github.com/kindlingvm/kindling/internal/usage"
 )
 
 // Edge proxy duration constants.
@@ -623,6 +624,23 @@ func (s *Service) reverseProxy(w http.ResponseWriter, r *http.Request, host stri
 		r.Body = &countReadCloser{ReadCloser: r.Body, n: &inBytes}
 	}
 	mw := &meteredResponseWriter{ResponseWriter: w}
+	if s.serverID.Valid {
+		defer func() {
+			statusCode := mw.StatusCode()
+			if statusCode == 0 {
+				return
+			}
+			go usage.IncrementServerHTTPUsageRollup(
+				context.Background(),
+				s.q,
+				s.serverID,
+				usage.TrafficKindAppEdge,
+				statusCode,
+				inBytes,
+				mw.n,
+			)
+		}()
+	}
 	projID := route.ProjectID
 	depID := route.DeploymentID
 
@@ -760,13 +778,26 @@ func (s *Service) recordRequestActivity(deploymentKind string, projectID, deploy
 
 type meteredResponseWriter struct {
 	http.ResponseWriter
-	n int64
+	n          int64
+	statusCode int
+}
+
+func (m *meteredResponseWriter) WriteHeader(statusCode int) {
+	m.statusCode = statusCode
+	m.ResponseWriter.WriteHeader(statusCode)
 }
 
 func (m *meteredResponseWriter) Write(b []byte) (int, error) {
+	if m.statusCode == 0 {
+		m.statusCode = http.StatusOK
+	}
 	nn, err := m.ResponseWriter.Write(b)
 	m.n += int64(nn)
 	return nn, err
+}
+
+func (m *meteredResponseWriter) StatusCode() int {
+	return m.statusCode
 }
 
 func (m *meteredResponseWriter) Unwrap() http.ResponseWriter {

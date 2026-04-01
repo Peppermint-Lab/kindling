@@ -4,6 +4,7 @@ import {
   api,
   type APIMeta,
   type AuthAdminProvider,
+  type ControlPlaneHealthOverview,
   type Server,
   APIError,
   dashboardEventTopics,
@@ -17,7 +18,16 @@ import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { GlobeIcon, HeartPulseIcon, PlugIcon } from "lucide-react"
-import { componentLabel, formatAgeSeconds, healthChipClass } from "@/lib/server-observability"
+import {
+  componentLabel,
+  formatAgeSeconds,
+  formatBytes,
+  formatPercent,
+  formatRPS,
+  healthChipClass,
+  ratioPercent,
+  sortControlPlaneHosts,
+} from "@/lib/server-observability"
 import {
   PageContainer,
   PageTitle,
@@ -91,6 +101,60 @@ function formsFromProviders(providers: AuthAdminProvider[]) {
   return next
 }
 
+function KPIStatCard({
+  label,
+  value,
+  detail,
+}: {
+  label: string
+  value: string
+  detail?: string
+}) {
+  return (
+    <div className="rounded-xl border border-border/80 bg-muted/20 px-3 py-3">
+      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
+      <p className="text-2xl font-semibold tabular-nums">{value}</p>
+      {detail ? <p className="mt-1 text-xs text-muted-foreground">{detail}</p> : null}
+    </div>
+  )
+}
+
+function usageMeterFillClass(tone: "sky" | "amber" | "emerald"): string {
+  switch (tone) {
+    case "amber":
+      return "bg-amber-500/70"
+    case "emerald":
+      return "bg-emerald-500/70"
+    default:
+      return "bg-sky-500/70"
+  }
+}
+
+function UsageMeter({
+  label,
+  value,
+  percent,
+  tone = "sky",
+}: {
+  label: string
+  value: string
+  percent: number
+  tone?: "sky" | "amber" | "emerald"
+}) {
+  const fillClass = usageMeterFillClass(tone)
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
+        <p className="text-sm font-medium tabular-nums">{value}</p>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-muted/70">
+        <div className={`h-full rounded-full transition-[width] ${fillClass}`} style={{ width: `${percent}%` }} />
+      </div>
+    </div>
+  )
+}
+
 export function PlatformSettingsPage() {
   const { session } = useAuth()
   const [searchParams] = useSearchParams()
@@ -109,7 +173,7 @@ export function PlatformSettingsPage() {
   const [authProviders, setAuthProviders] = useState<AuthAdminProvider[]>([])
   const [authSavingProvider, setAuthSavingProvider] = useState<"github" | "oidc" | null>(null)
   const [authForms, setAuthForms] = useState(() => formsFromProviders([]))
-  const [platformServers, setPlatformServers] = useState<Server[]>([])
+  const [healthOverview, setHealthOverview] = useState<ControlPlaneHealthOverview | null>(null)
   const [healthError, setHealthError] = useState<string | null>(null)
   const [serverActionId, setServerActionId] = useState<string | null>(null)
 
@@ -117,8 +181,8 @@ export function PlatformSettingsPage() {
 
   const refreshPlatformHealth = useCallback(async () => {
     try {
-      const servers = await api.listPlatformServers()
-      setPlatformServers(servers)
+      const overview = await api.getPlatformHealthOverview()
+      setHealthOverview(overview)
       setHealthError(null)
     } catch (e) {
       setHealthError(apiErrorMessage(e))
@@ -193,31 +257,10 @@ export function PlatformSettingsPage() {
     }
   }, [isPlatformAdmin, refreshPlatformHealth])
 
-  const healthStats = useMemo(() => {
-    let healthy = 0
-    let degraded = 0
-    let stale = 0
-    let unknown = 0
-    let draining = 0
-    for (const s of platformServers) {
-      const h = s.health ?? "unknown"
-      if (h === "healthy") healthy++
-      else if (h === "degraded") degraded++
-      else if (h === "stale") stale++
-      else unknown++
-      if (s.status === "draining" || s.status === "drained") draining++
-    }
-    return {
-      total: platformServers.length,
-      healthy,
-      degraded,
-      stale,
-      unknown,
-      draining,
-    }
-  }, [platformServers])
+  const sortedHosts = useMemo(() => sortControlPlaneHosts(healthOverview?.hosts ?? []), [healthOverview])
 
   const tabDefault = resolvePlatformSettingsDefaultTab(searchParams.get("tab"))
+  const healthSummary = healthOverview?.summary
 
   const handleSavePublicURL = async () => {
     setSaving(true)
@@ -627,51 +670,70 @@ export function PlatformSettingsPage() {
             {healthError ? <PageErrorBanner message={healthError} /> : null}
             <Surface>
               <SurfaceHeader>
-                <SurfaceTitle>System health</SurfaceTitle>
+                <SurfaceTitle>Operator health</SurfaceTitle>
                 <SurfaceDescription>
-                  All registered workers in the cluster (not limited to the current organization). Auto-refreshes every
-                  15 seconds and on server events.
+                  Live control-plane host telemetry across API and edge nodes. Auto-refreshes every 15 seconds and on
+                  server events.
                 </SurfaceDescription>
               </SurfaceHeader>
               <SurfaceBody className="space-y-6 text-sm">
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-                  <div className="rounded-xl border border-border/80 bg-muted/20 px-3 py-3">
-                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Total</p>
-                    <p className="text-2xl font-semibold tabular-nums">{healthStats.total}</p>
-                  </div>
-                  <div className="rounded-xl border border-border/80 bg-muted/20 px-3 py-3">
-                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Healthy</p>
-                    <p className="text-2xl font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
-                      {healthStats.healthy}
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-border/80 bg-muted/20 px-3 py-3">
-                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Degraded</p>
-                    <p className="text-2xl font-semibold tabular-nums text-amber-600 dark:text-amber-400">
-                      {healthStats.degraded}
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-border/80 bg-muted/20 px-3 py-3">
-                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Stale</p>
-                    <p className="text-2xl font-semibold tabular-nums text-rose-600 dark:text-rose-400">{healthStats.stale}</p>
-                  </div>
-                  <div className="rounded-xl border border-border/80 bg-muted/20 px-3 py-3">
-                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Unknown</p>
-                    <p className="text-2xl font-semibold tabular-nums text-muted-foreground">{healthStats.unknown}</p>
-                  </div>
-                  <div className="rounded-xl border border-border/80 bg-muted/20 px-3 py-3">
-                    <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Draining / drained</p>
-                    <p className="text-2xl font-semibold tabular-nums">{healthStats.draining}</p>
-                  </div>
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+                  <KPIStatCard
+                    label="Total RPS"
+                    value={formatRPS(healthSummary?.total_requests_per_second)}
+                    detail={`${healthSummary?.host_count ?? 0} host(s)`}
+                  />
+                  <KPIStatCard
+                    label="API RPS"
+                    value={formatRPS(healthSummary?.control_plane_requests_per_second)}
+                    detail="control-plane traffic"
+                  />
+                  <KPIStatCard
+                    label="App RPS"
+                    value={formatRPS(healthSummary?.app_requests_per_second)}
+                    detail="edge traffic"
+                  />
+                  <KPIStatCard
+                    label="CPU Pressure"
+                    value={formatPercent(healthSummary?.cpu_pressure_percent, 0)}
+                    detail="highest host CPU"
+                  />
+                  <KPIStatCard
+                    label="RAM Usage"
+                    value={formatPercent(
+                      ratioPercent(healthSummary?.memory_used_bytes, healthSummary?.memory_total_bytes),
+                      0,
+                    )}
+                    detail={`${formatBytes(healthSummary?.memory_used_bytes ?? 0)} / ${formatBytes(healthSummary?.memory_total_bytes ?? 0)}`}
+                  />
+                  <KPIStatCard
+                    label="Disk Usage"
+                    value={formatPercent(
+                      ratioPercent(healthSummary?.disk_used_bytes, healthSummary?.disk_total_bytes),
+                      0,
+                    )}
+                    detail={`${formatBytes(healthSummary?.disk_used_bytes ?? 0)} / ${formatBytes(healthSummary?.disk_total_bytes ?? 0)}`}
+                  />
                 </div>
 
-                {platformServers.length === 0 && !healthError ? (
-                  <p className="text-sm text-muted-foreground py-2 text-center">No servers registered yet.</p>
+                {sortedHosts.length === 0 && !healthError ? (
+                  <p className="py-2 text-center text-sm text-muted-foreground">
+                    No control-plane hosts are reporting API or edge heartbeats yet.
+                  </p>
                 ) : null}
 
-                {platformServers.length > 0 ? (
+                {sortedHosts.length > 0 ? (
                   <div className="space-y-3">
-                    {platformServers.map((server) => (
+                    {sortedHosts.map((server) => {
+                      const hostMetrics = server.host_metrics
+                      const traffic = server.traffic
+                      const memoryPercent = ratioPercent(hostMetrics?.memory_used_bytes, hostMetrics?.memory_total_bytes)
+                      const diskPercent = ratioPercent(hostMetrics?.disk_used_bytes, hostMetrics?.disk_total_bytes)
+                      const stateDiskPercent = ratioPercent(
+                        hostMetrics?.state_disk_used_bytes,
+                        hostMetrics?.state_disk_total_bytes,
+                      )
+                      return (
                       <div key={server.id} className="rounded-xl border p-4 space-y-4">
                         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                           <div className="min-w-0 space-y-2">
@@ -691,13 +753,13 @@ export function PlatformSettingsPage() {
                                 Heartbeat {formatAgeSeconds(server.heartbeat_age_seconds)}
                               </Badge>
                               <Badge variant="outline" className="border-border bg-muted/30 text-foreground">
+                                Host sample {formatAgeSeconds(hostMetrics?.sample_age_seconds)}
+                              </Badge>
+                              <Badge variant="outline" className="border-border bg-muted/30 text-foreground">
                                 {server.running_instance_count ?? 0} running
                               </Badge>
                               <Badge variant="outline" className="border-border bg-muted/30 text-foreground">
-                                {server.active_instance_count ?? 0} active
-                              </Badge>
-                              <Badge variant="outline" className="border-border bg-muted/30 text-foreground">
-                                {server.instance_count ?? 0} total
+                                {server.active_instance_count ?? 0} active / {server.instance_count ?? 0} total
                               </Badge>
                             </div>
                           </div>
@@ -735,19 +797,134 @@ export function PlatformSettingsPage() {
                             ) : null}
                           </div>
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          {(server.components ?? []).map((component) => (
-                            <Badge
-                              key={component.component}
-                              variant="outline"
-                              className={healthChipClass(component.health, component.enabled ? "" : "opacity-70")}
-                            >
-                              {componentLabel(component.component)} · {component.enabled ? component.health : "off"}
-                            </Badge>
-                          ))}
+
+                        <div className="grid gap-4 lg:grid-cols-[1.2fr_0.9fr]">
+                          <div className="rounded-xl border border-border/80 bg-muted/10 p-4 space-y-4">
+                            <div className="grid gap-4 md:grid-cols-2">
+                              <UsageMeter
+                                label="CPU"
+                                value={formatPercent(hostMetrics?.cpu_percent, 1)}
+                                percent={Math.max(0, Math.min(100, hostMetrics?.cpu_percent ?? 0))}
+                                tone="amber"
+                              />
+                              <div className="space-y-2">
+                                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Load</p>
+                                <p className="text-sm font-medium tabular-nums">
+                                  {(hostMetrics?.load_avg_1m ?? 0).toFixed(2)} / {(hostMetrics?.load_avg_5m ?? 0).toFixed(2)} /{" "}
+                                  {(hostMetrics?.load_avg_15m ?? 0).toFixed(2)}
+                                </p>
+                                <p className="text-xs text-muted-foreground">1m / 5m / 15m</p>
+                              </div>
+                            </div>
+
+                            <UsageMeter
+                              label="RAM"
+                              value={`${formatBytes(hostMetrics?.memory_used_bytes ?? 0)} / ${formatBytes(hostMetrics?.memory_total_bytes ?? 0)}`}
+                              percent={memoryPercent}
+                              tone="sky"
+                            />
+
+                            <UsageMeter
+                              label="Root disk"
+                              value={`${formatBytes(hostMetrics?.disk_used_bytes ?? 0)} / ${formatBytes(hostMetrics?.disk_total_bytes ?? 0)}`}
+                              percent={diskPercent}
+                              tone="emerald"
+                            />
+
+                            {hostMetrics?.state_disk_path ? (
+                              <UsageMeter
+                                label={`State disk · ${hostMetrics.state_disk_path}`}
+                                value={`${formatBytes(hostMetrics.state_disk_used_bytes)} / ${formatBytes(hostMetrics.state_disk_total_bytes)}`}
+                                percent={stateDiskPercent}
+                                tone="emerald"
+                              />
+                            ) : null}
+
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <div className="rounded-lg border border-border/70 bg-background/40 px-3 py-3">
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                                  Disk read
+                                </p>
+                                <p className="text-lg font-semibold tabular-nums">
+                                  {formatBytes(hostMetrics?.disk_read_bytes_per_sec ?? 0)}/s
+                                </p>
+                              </div>
+                              <div className="rounded-lg border border-border/70 bg-background/40 px-3 py-3">
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                                  Disk write
+                                </p>
+                                <p className="text-lg font-semibold tabular-nums">
+                                  {formatBytes(hostMetrics?.disk_write_bytes_per_sec ?? 0)}/s
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="rounded-xl border border-border/80 bg-muted/10 p-4 space-y-4">
+                            <div className="grid gap-3 sm:grid-cols-3">
+                              <div className="rounded-lg border border-border/70 bg-background/40 px-3 py-3">
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                                  Total RPS
+                                </p>
+                                <p className="text-lg font-semibold tabular-nums">{formatRPS(traffic?.requests_per_second)}</p>
+                              </div>
+                              <div className="rounded-lg border border-border/70 bg-background/40 px-3 py-3">
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                                  API RPS
+                                </p>
+                                <p className="text-lg font-semibold tabular-nums">
+                                  {formatRPS(traffic?.control_plane_requests_per_second)}
+                                </p>
+                              </div>
+                              <div className="rounded-lg border border-border/70 bg-background/40 px-3 py-3">
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                                  App RPS
+                                </p>
+                                <p className="text-lg font-semibold tabular-nums">
+                                  {formatRPS(traffic?.app_requests_per_second)}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <div className="rounded-lg border border-border/70 bg-background/40 px-3 py-3">
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                                  Recent requests
+                                </p>
+                                <p className="text-lg font-semibold tabular-nums">{traffic?.request_count_recent ?? 0}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  trailing {traffic?.window_seconds ?? 60}s average window
+                                </p>
+                              </div>
+                              <div className="rounded-lg border border-border/70 bg-background/40 px-3 py-3">
+                                <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                                  Recent 4xx / 5xx
+                                </p>
+                                <p className="text-lg font-semibold tabular-nums">
+                                  {traffic?.status_4xx_recent ?? 0} / {traffic?.status_5xx_recent ?? 0}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {formatBytes(traffic?.bytes_in_recent ?? 0)} in · {formatBytes(traffic?.bytes_out_recent ?? 0)} out
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap gap-2">
+                              {(server.components ?? []).map((component) => (
+                                <Badge
+                                  key={component.component}
+                                  variant="outline"
+                                  className={healthChipClass(component.health, component.enabled ? "" : "opacity-70")}
+                                >
+                                  {componentLabel(component.component)} · {component.enabled ? component.health : "off"}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 ) : null}
               </SurfaceBody>

@@ -199,3 +199,74 @@ func TestUsageLatestForOrgRowsToLatestPreservesFields(t *testing.T) {
 		t.Fatalf("id mismatch")
 	}
 }
+
+func TestBuildServerTrafficMapWeightedWindow(t *testing.T) {
+	t.Parallel()
+
+	serverID := uuid.MustParse("aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb")
+	now := time.Date(2026, 4, 1, 12, 0, 30, 0, time.UTC)
+	rows := []queries.ServerHTTPUsageRollupsAggregatedRecentRow{
+		{
+			ServerID:     pgtype.UUID{Bytes: serverID, Valid: true},
+			TrafficKind:  "app_edge",
+			BucketStart:  ts(now.Add(-30 * time.Second).Truncate(time.Minute)),
+			RequestCount: 60,
+			Status4xx:    6,
+			Status5xx:    3,
+			BytesIn:      600,
+			BytesOut:     1200,
+		},
+		{
+			ServerID:     pgtype.UUID{Bytes: serverID, Valid: true},
+			TrafficKind:  "control_plane_api",
+			BucketStart:  ts(now.Truncate(time.Minute)),
+			RequestCount: 30,
+			Status4xx:    3,
+			Status5xx:    1,
+			BytesIn:      300,
+			BytesOut:     600,
+		},
+	}
+
+	out := buildServerTrafficMap(rows, now)
+	got, ok := out[serverID.String()]
+	if !ok {
+		t.Fatal("missing server traffic")
+	}
+	if got.RequestCountRecent != 45 {
+		t.Fatalf("request_count_recent = %d, want 45", got.RequestCountRecent)
+	}
+	if got.Status4xxRecent != 5 || got.Status5xxRecent != 2 {
+		t.Fatalf("status counts = %+v", got)
+	}
+	if got.AppRequestsPerSecond != 0.5 {
+		t.Fatalf("app rps = %v, want 0.5", got.AppRequestsPerSecond)
+	}
+	if got.ControlPlaneRequestsPerSec != 0.25 {
+		t.Fatalf("control plane rps = %v, want 0.25", got.ControlPlaneRequestsPerSec)
+	}
+	if got.RequestsPerSecond != 0.75 {
+		t.Fatalf("total rps = %v, want 0.75", got.RequestsPerSecond)
+	}
+}
+
+func TestBuildServerHostMetricsOutStale(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	row := queries.ServerHostMetric{
+		ServerID:         pgtype.UUID{Bytes: uuid.New(), Valid: true},
+		SampledAt:        ts(now.Add(-30 * time.Second)),
+		CpuPercent:       42.5,
+		MemoryUsedBytes:  1024,
+		MemoryTotalBytes: 2048,
+	}
+
+	out := buildServerHostMetricsOut(row, now)
+	if out.SampleHealth != "stale" {
+		t.Fatalf("sample_health = %q, want stale", out.SampleHealth)
+	}
+	if out.CPUPercent != 42.5 {
+		t.Fatalf("cpu_percent = %v", out.CPUPercent)
+	}
+}

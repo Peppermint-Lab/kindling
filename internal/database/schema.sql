@@ -1547,6 +1547,29 @@ CREATE TABLE IF NOT EXISTS server_component_statuses (
     PRIMARY KEY (server_id, component)
 );
 
+-- Latest host-level telemetry snapshot per server.
+CREATE TABLE IF NOT EXISTS server_host_metrics (
+    server_id                UUID PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
+    sampled_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    cpu_percent              DOUBLE PRECISION NOT NULL DEFAULT 0,
+    load_avg_1m              DOUBLE PRECISION NOT NULL DEFAULT 0,
+    load_avg_5m              DOUBLE PRECISION NOT NULL DEFAULT 0,
+    load_avg_15m             DOUBLE PRECISION NOT NULL DEFAULT 0,
+    memory_total_bytes       BIGINT NOT NULL DEFAULT 0,
+    memory_available_bytes   BIGINT NOT NULL DEFAULT 0,
+    memory_used_bytes        BIGINT NOT NULL DEFAULT 0,
+    disk_total_bytes         BIGINT NOT NULL DEFAULT 0,
+    disk_free_bytes          BIGINT NOT NULL DEFAULT 0,
+    disk_used_bytes          BIGINT NOT NULL DEFAULT 0,
+    disk_read_bytes_per_sec  DOUBLE PRECISION NOT NULL DEFAULT 0,
+    disk_write_bytes_per_sec DOUBLE PRECISION NOT NULL DEFAULT 0,
+    state_disk_path          TEXT NOT NULL DEFAULT '',
+    state_disk_total_bytes   BIGINT NOT NULL DEFAULT 0,
+    state_disk_free_bytes    BIGINT NOT NULL DEFAULT 0,
+    state_disk_used_bytes    BIGINT NOT NULL DEFAULT 0,
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Cluster-wide secrets (AES-GCM ciphertext, see internal/config/crypto.go)
 CREATE TABLE IF NOT EXISTS cluster_secrets (
     key         TEXT PRIMARY KEY,
@@ -1637,6 +1660,25 @@ CREATE TABLE IF NOT EXISTS project_http_usage_rollups (
 
 CREATE INDEX IF NOT EXISTS idx_http_rollups_project_bucket
     ON project_http_usage_rollups (project_id, bucket_start DESC);
+
+-- Server-level HTTP traffic rollups for operator health (one row per server × traffic kind × minute).
+CREATE TABLE IF NOT EXISTS server_http_usage_rollups (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    server_id       UUID NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    traffic_kind    TEXT NOT NULL CHECK (traffic_kind IN ('app_edge', 'control_plane_api')),
+    bucket_start    TIMESTAMPTZ NOT NULL,
+    request_count   BIGINT NOT NULL DEFAULT 0,
+    status_2xx      BIGINT NOT NULL DEFAULT 0,
+    status_4xx      BIGINT NOT NULL DEFAULT 0,
+    status_5xx      BIGINT NOT NULL DEFAULT 0,
+    bytes_in        BIGINT NOT NULL DEFAULT 0,
+    bytes_out       BIGINT NOT NULL DEFAULT 0,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (server_id, traffic_kind, bucket_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_server_http_rollups_server_bucket
+    ON server_http_usage_rollups (server_id, bucket_start DESC);
 CREATE INDEX IF NOT EXISTS idx_server_component_statuses_server
     ON server_component_statuses (server_id, component);
 

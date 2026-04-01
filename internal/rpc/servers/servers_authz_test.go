@@ -125,6 +125,17 @@ func TestListPlatformServers_RequiresPlatformAdmin(t *testing.T) {
 	assertHTTPForbidden(t, rr, "listPlatformServers")
 }
 
+func TestGetPlatformHealthOverview_RequiresPlatformAdmin(t *testing.T) {
+	t.Parallel()
+	h := &Handler{Q: nil}
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/platform/health/overview", nil)
+	p := testOrgAdminPrincipal()
+	req = req.WithContext(auth.WithPrincipal(req.Context(), p))
+	h.getPlatformHealthOverview(rr, req)
+	assertHTTPForbidden(t, rr, "getPlatformHealthOverview")
+}
+
 func TestGetServerDetails_PlatformAdminStillRequiresOrgAdmin(t *testing.T) {
 	t.Parallel()
 	h := &Handler{Q: nil}
@@ -165,6 +176,15 @@ func TestPlatformServerHandlers_PlatformAdminPassesAuthThenPanicsWithoutQ(t *tes
 			},
 			run: func(h *Handler, rr *httptest.ResponseRecorder, req *http.Request) {
 				h.listPlatformServers(rr, req)
+			},
+		},
+		{
+			name: "getPlatformHealthOverview",
+			newReq: func() *http.Request {
+				return httptest.NewRequest(http.MethodGet, "/api/platform/health/overview", nil)
+			},
+			run: func(h *Handler, rr *httptest.ResponseRecorder, req *http.Request) {
+				h.getPlatformHealthOverview(rr, req)
 			},
 		},
 	}

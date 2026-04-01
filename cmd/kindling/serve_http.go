@@ -144,6 +144,7 @@ func corsMiddleware(allow []string, next http.Handler) http.Handler {
 func startAPIServer(
 	ctx context.Context,
 	q *queries.Queries,
+	serverID uuid.UUID,
 	cfgMgr *config.Manager,
 	dashboardEvents *rpc.DashboardEventBroker,
 	deploymentReconciler *reconciler.Scheduler,
@@ -202,11 +203,13 @@ func startAPIServer(
 	// Security response headers applied early so ALL responses (including
 	// 401, 403, 413, 429 errors from inner middleware) include them.
 	securedAPI := rpc.SecurityHeadersMiddleware(sizeLimitedAPI)
+	observedAPI := controlPlaneTrafficMiddleware(q, serverID, securedAPI)
 	var handler http.Handler
 	if dashHostStr != "" {
-		handler = hostBasedHandler(corsMiddleware(corsOrigins, securedAPI), dashboardSPAHandler(distDir), dashHostStr)
+		observedDashboard := controlPlaneTrafficMiddleware(q, serverID, dashboardSPAHandler(distDir))
+		handler = hostBasedHandler(corsMiddleware(corsOrigins, observedAPI), observedDashboard, dashHostStr)
 	} else {
-		handler = corsMiddleware(corsOrigins, securedAPI)
+		handler = corsMiddleware(corsOrigins, observedAPI)
 	}
 
 	srv := &http.Server{Addr: listenAddr, Handler: handler}

@@ -361,6 +361,59 @@ export type Server = {
   runtime?: string
   enabled_components?: string[]
   components?: ServerComponent[]
+  host_metrics?: ControlPlaneHostMetrics | null
+  traffic?: ControlPlaneHostTraffic | null
+}
+
+export type ControlPlaneHostMetrics = {
+  sampled_at?: string
+  sample_age_seconds?: number
+  sample_health: "fresh" | "stale" | "missing"
+  cpu_percent: number
+  load_avg_1m: number
+  load_avg_5m: number
+  load_avg_15m: number
+  memory_total_bytes: number
+  memory_available_bytes: number
+  memory_used_bytes: number
+  disk_total_bytes: number
+  disk_free_bytes: number
+  disk_used_bytes: number
+  disk_read_bytes_per_sec: number
+  disk_write_bytes_per_sec: number
+  state_disk_path?: string
+  state_disk_total_bytes: number
+  state_disk_free_bytes: number
+  state_disk_used_bytes: number
+}
+
+export type ControlPlaneHostTraffic = {
+  window_seconds: number
+  request_count_recent: number
+  status_4xx_recent: number
+  status_5xx_recent: number
+  bytes_in_recent: number
+  bytes_out_recent: number
+  requests_per_second: number
+  app_requests_per_second: number
+  control_plane_requests_per_second: number
+}
+
+export type ControlPlaneHealthOverview = {
+  summary: {
+    host_count: number
+    unhealthy_host_count: number
+    total_requests_per_second: number
+    app_requests_per_second: number
+    control_plane_requests_per_second: number
+    status_5xx_recent: number
+    memory_used_bytes: number
+    memory_total_bytes: number
+    disk_used_bytes: number
+    disk_total_bytes: number
+    cpu_pressure_percent: number
+  }
+  hosts: Server[]
 }
 
 export type ServerComponent = {
@@ -890,6 +943,8 @@ export const api = {
     request<void>(`/api/deployments/${id}/cancel`, { method: "POST" }),
 
   listServers: () => request<Server[]>("/api/servers"),
+
+  getPlatformHealthOverview: () => request<ControlPlaneHealthOverview>("/api/platform/health/overview"),
 
   listPlatformServers: () => request<Server[]>("/api/platform/servers"),
 

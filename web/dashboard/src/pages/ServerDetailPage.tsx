@@ -23,7 +23,15 @@ import {
   SurfaceHeader,
   SurfaceTitle,
 } from "@/components/page-surface"
-import { componentLabel, formatAgeSeconds, formatBytes, healthChipClass } from "@/lib/server-observability"
+import {
+  componentLabel,
+  formatAgeSeconds,
+  formatBytes,
+  formatPercent,
+  formatRPS,
+  healthChipClass,
+  ratioPercent,
+} from "@/lib/server-observability"
 
 function displayServerName(server: Server): string {
   return server.hostname || server.id
@@ -37,6 +45,17 @@ function resourceHealthLabel(health: string): string {
       return "Stale"
     default:
       return "Missing"
+  }
+}
+
+function sampleHealthChipClass(sampleHealth?: string): string {
+  switch (sampleHealth) {
+    case "fresh":
+      return "healthy"
+    case "stale":
+      return "stale"
+    default:
+      return "unknown"
   }
 }
 
@@ -263,6 +282,139 @@ export function ServerDetailPage() {
             </div>
           </SurfaceBody>
         </Surface>
+
+        {server.host_metrics || server.traffic ? (
+          <Surface>
+            <SurfaceHeader>
+              <SurfaceTitle>Host Telemetry</SurfaceTitle>
+              <SurfaceDescription>Latest host-level resource snapshot and trailing 60-second traffic summary.</SurfaceDescription>
+            </SurfaceHeader>
+            <SurfaceBody className="space-y-5 text-sm">
+              <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+                <div className="rounded-xl border border-border/80 bg-muted/10 p-4 space-y-4">
+                  <MetadataGrid className="gap-3 sm:grid-cols-2">
+                    <MetadataItem label="Sample">
+                      <div className="space-y-1">
+                        <Badge variant="outline" className={healthChipClass(sampleHealthChipClass(server.host_metrics?.sample_health))}>
+                          {server.host_metrics?.sample_health || "missing"}
+                        </Badge>
+                        <p className="text-xs text-muted-foreground">
+                          {server.host_metrics?.sampled_at
+                            ? new Date(server.host_metrics.sampled_at).toLocaleString()
+                            : "No host sample yet"}
+                        </p>
+                        <p className="text-xs text-muted-foreground">{formatAgeSeconds(server.host_metrics?.sample_age_seconds)}</p>
+                      </div>
+                    </MetadataItem>
+                    <MetadataItem label="CPU">{formatPercent(server.host_metrics?.cpu_percent, 1)}</MetadataItem>
+                    <MetadataItem label="Load">
+                      <span className="font-mono text-xs">
+                        {(server.host_metrics?.load_avg_1m ?? 0).toFixed(2)} / {(server.host_metrics?.load_avg_5m ?? 0).toFixed(2)} /{" "}
+                        {(server.host_metrics?.load_avg_15m ?? 0).toFixed(2)}
+                      </span>
+                    </MetadataItem>
+                    <MetadataItem label="Disk throughput">
+                      <span className="font-mono text-xs">
+                        {formatBytes(server.host_metrics?.disk_read_bytes_per_sec ?? 0)}/s read ·{" "}
+                        {formatBytes(server.host_metrics?.disk_write_bytes_per_sec ?? 0)}/s write
+                      </span>
+                    </MetadataItem>
+                  </MetadataGrid>
+                  <div className="space-y-3">
+                    <div>
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">RAM</p>
+                        <p className="text-sm font-medium tabular-nums">
+                          {formatBytes(server.host_metrics?.memory_used_bytes ?? 0)} /{" "}
+                          {formatBytes(server.host_metrics?.memory_total_bytes ?? 0)}
+                        </p>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-muted/70">
+                        <div
+                          className="h-full rounded-full bg-sky-500/70 transition-[width]"
+                          style={{
+                            width: `${ratioPercent(
+                              server.host_metrics?.memory_used_bytes,
+                              server.host_metrics?.memory_total_bytes,
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Root disk</p>
+                        <p className="text-sm font-medium tabular-nums">
+                          {formatBytes(server.host_metrics?.disk_used_bytes ?? 0)} /{" "}
+                          {formatBytes(server.host_metrics?.disk_total_bytes ?? 0)}
+                        </p>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-muted/70">
+                        <div
+                          className="h-full rounded-full bg-emerald-500/70 transition-[width]"
+                          style={{
+                            width: `${ratioPercent(server.host_metrics?.disk_used_bytes, server.host_metrics?.disk_total_bytes)}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                    {server.host_metrics?.state_disk_path ? (
+                      <div>
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                            State disk · {server.host_metrics.state_disk_path}
+                          </p>
+                          <p className="text-sm font-medium tabular-nums">
+                            {formatBytes(server.host_metrics.state_disk_used_bytes)} /{" "}
+                            {formatBytes(server.host_metrics.state_disk_total_bytes)}
+                          </p>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-muted/70">
+                          <div
+                            className="h-full rounded-full bg-emerald-500/50 transition-[width]"
+                            style={{
+                              width: `${ratioPercent(
+                                server.host_metrics.state_disk_used_bytes,
+                                server.host_metrics.state_disk_total_bytes,
+                              )}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-border/80 bg-muted/10 p-4 space-y-4">
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-lg border border-border/70 bg-background/40 px-3 py-3">
+                      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Total RPS</p>
+                      <p className="text-lg font-semibold tabular-nums">{formatRPS(server.traffic?.requests_per_second)}</p>
+                    </div>
+                    <div className="rounded-lg border border-border/70 bg-background/40 px-3 py-3">
+                      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">API RPS</p>
+                      <p className="text-lg font-semibold tabular-nums">
+                        {formatRPS(server.traffic?.control_plane_requests_per_second)}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-border/70 bg-background/40 px-3 py-3">
+                      <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">App RPS</p>
+                      <p className="text-lg font-semibold tabular-nums">{formatRPS(server.traffic?.app_requests_per_second)}</p>
+                    </div>
+                  </div>
+                  <MetadataGrid className="gap-3 sm:grid-cols-2">
+                    <MetadataItem label="Recent requests">{server.traffic?.request_count_recent ?? 0}</MetadataItem>
+                    <MetadataItem label="Recent 4xx / 5xx">
+                      {server.traffic?.status_4xx_recent ?? 0} / {server.traffic?.status_5xx_recent ?? 0}
+                    </MetadataItem>
+                    <MetadataItem label="Bytes in">{formatBytes(server.traffic?.bytes_in_recent ?? 0)}</MetadataItem>
+                    <MetadataItem label="Bytes out">{formatBytes(server.traffic?.bytes_out_recent ?? 0)}</MetadataItem>
+                  </MetadataGrid>
+                </div>
+              </div>
+            </SurfaceBody>
+          </Surface>
+        ) : null}
 
         {server.components && server.components.length > 0 ? (
           <Surface>

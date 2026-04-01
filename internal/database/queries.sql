@@ -95,6 +95,50 @@ SELECT * FROM server_component_statuses
 WHERE server_id = $1
 ORDER BY component;
 
+-- name: ServerHostMetricsUpsert :exec
+INSERT INTO server_host_metrics (
+    server_id, sampled_at, cpu_percent, load_avg_1m, load_avg_5m, load_avg_15m,
+    memory_total_bytes, memory_available_bytes, memory_used_bytes,
+    disk_total_bytes, disk_free_bytes, disk_used_bytes,
+    disk_read_bytes_per_sec, disk_write_bytes_per_sec,
+    state_disk_path, state_disk_total_bytes, state_disk_free_bytes, state_disk_used_bytes,
+    updated_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6,
+    $7, $8, $9,
+    $10, $11, $12,
+    $13, $14,
+    $15, $16, $17, $18,
+    NOW()
+)
+ON CONFLICT (server_id) DO UPDATE SET
+    sampled_at = EXCLUDED.sampled_at,
+    cpu_percent = EXCLUDED.cpu_percent,
+    load_avg_1m = EXCLUDED.load_avg_1m,
+    load_avg_5m = EXCLUDED.load_avg_5m,
+    load_avg_15m = EXCLUDED.load_avg_15m,
+    memory_total_bytes = EXCLUDED.memory_total_bytes,
+    memory_available_bytes = EXCLUDED.memory_available_bytes,
+    memory_used_bytes = EXCLUDED.memory_used_bytes,
+    disk_total_bytes = EXCLUDED.disk_total_bytes,
+    disk_free_bytes = EXCLUDED.disk_free_bytes,
+    disk_used_bytes = EXCLUDED.disk_used_bytes,
+    disk_read_bytes_per_sec = EXCLUDED.disk_read_bytes_per_sec,
+    disk_write_bytes_per_sec = EXCLUDED.disk_write_bytes_per_sec,
+    state_disk_path = EXCLUDED.state_disk_path,
+    state_disk_total_bytes = EXCLUDED.state_disk_total_bytes,
+    state_disk_free_bytes = EXCLUDED.state_disk_free_bytes,
+    state_disk_used_bytes = EXCLUDED.state_disk_used_bytes,
+    updated_at = NOW();
+
+-- name: ServerHostMetricsFindAll :many
+SELECT * FROM server_host_metrics
+ORDER BY server_id;
+
+-- name: ServerHostMetricsFindByServerID :one
+SELECT * FROM server_host_metrics
+WHERE server_id = $1;
+
 -- name: TrySessionAdvisoryLock :one
 SELECT pg_try_advisory_lock(hashtext($1));
 
@@ -2522,6 +2566,41 @@ DO UPDATE SET
     bytes_in = project_http_usage_rollups.bytes_in + EXCLUDED.bytes_in,
     bytes_out = project_http_usage_rollups.bytes_out + EXCLUDED.bytes_out,
     updated_at = NOW();
+
+-- name: ServerHTTPUsageRollupIncrement :exec
+INSERT INTO server_http_usage_rollups (
+    id, server_id, traffic_kind, bucket_start,
+    request_count, status_2xx, status_4xx, status_5xx, bytes_in, bytes_out, updated_at
+) VALUES (
+    gen_random_uuid(), $1, $2, $3,
+    $4, $5, $6, $7, $8, $9, NOW()
+)
+ON CONFLICT (server_id, traffic_kind, bucket_start)
+DO UPDATE SET
+    request_count = server_http_usage_rollups.request_count + EXCLUDED.request_count,
+    status_2xx = server_http_usage_rollups.status_2xx + EXCLUDED.status_2xx,
+    status_4xx = server_http_usage_rollups.status_4xx + EXCLUDED.status_4xx,
+    status_5xx = server_http_usage_rollups.status_5xx + EXCLUDED.status_5xx,
+    bytes_in = server_http_usage_rollups.bytes_in + EXCLUDED.bytes_in,
+    bytes_out = server_http_usage_rollups.bytes_out + EXCLUDED.bytes_out,
+    updated_at = NOW();
+
+-- name: ServerHTTPUsageRollupsAggregatedRecent :many
+SELECT
+    server_id,
+    traffic_kind,
+    bucket_start,
+    COALESCE(SUM(request_count), 0)::bigint AS request_count,
+    COALESCE(SUM(status_2xx), 0)::bigint AS status_2xx,
+    COALESCE(SUM(status_4xx), 0)::bigint AS status_4xx,
+    COALESCE(SUM(status_5xx), 0)::bigint AS status_5xx,
+    COALESCE(SUM(bytes_in), 0)::bigint AS bytes_in,
+    COALESCE(SUM(bytes_out), 0)::bigint AS bytes_out
+FROM server_http_usage_rollups
+WHERE bucket_start >= $1
+  AND bucket_start <= $2
+GROUP BY server_id, traffic_kind, bucket_start
+ORDER BY server_id, traffic_kind, bucket_start;
 
 -- name: ProjectHTTPUsageRollupsAggregated :many
 SELECT

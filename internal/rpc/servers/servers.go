@@ -4,6 +4,7 @@ package servers
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/netip"
 	"slices"
@@ -22,6 +23,8 @@ const (
 	serverHeartbeatExpected = 10 * time.Second
 	componentHeartbeatEvery = 10 * time.Second
 	usagePollerEvery        = 15 * time.Second
+	hostMetricsEvery        = 10 * time.Second
+	trafficRecentWindow     = 60 * time.Second
 )
 
 var serverComponentOrder = []string{"api", "edge", "worker", "usage_poller"}
@@ -33,6 +36,7 @@ type Handler struct {
 
 // RegisterRoutes mounts server management routes on the given mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/platform/health/overview", h.getPlatformHealthOverview)
 	mux.HandleFunc("GET /api/platform/servers", h.listPlatformServers)
 	mux.HandleFunc("GET /api/platform/servers/{id}/details", h.getPlatformServerDetails)
 	mux.HandleFunc("GET /api/servers", h.listServers)
@@ -53,17 +57,53 @@ type serverComponentOut struct {
 	Metadata         map[string]any `json:"metadata,omitempty"`
 }
 
+type serverHostMetricsOut struct {
+	SampledAt            *string `json:"sampled_at,omitempty"`
+	SampleAgeSeconds     *int64  `json:"sample_age_seconds,omitempty"`
+	SampleHealth         string  `json:"sample_health"`
+	CPUPercent           float64 `json:"cpu_percent"`
+	LoadAvg1m            float64 `json:"load_avg_1m"`
+	LoadAvg5m            float64 `json:"load_avg_5m"`
+	LoadAvg15m           float64 `json:"load_avg_15m"`
+	MemoryTotalBytes     int64   `json:"memory_total_bytes"`
+	MemoryAvailableBytes int64   `json:"memory_available_bytes"`
+	MemoryUsedBytes      int64   `json:"memory_used_bytes"`
+	DiskTotalBytes       int64   `json:"disk_total_bytes"`
+	DiskFreeBytes        int64   `json:"disk_free_bytes"`
+	DiskUsedBytes        int64   `json:"disk_used_bytes"`
+	DiskReadBytesPerSec  float64 `json:"disk_read_bytes_per_sec"`
+	DiskWriteBytesPerSec float64 `json:"disk_write_bytes_per_sec"`
+	StateDiskPath        string  `json:"state_disk_path,omitempty"`
+	StateDiskTotalBytes  int64   `json:"state_disk_total_bytes"`
+	StateDiskFreeBytes   int64   `json:"state_disk_free_bytes"`
+	StateDiskUsedBytes   int64   `json:"state_disk_used_bytes"`
+}
+
+type serverTrafficOut struct {
+	WindowSeconds              int64   `json:"window_seconds"`
+	RequestCountRecent         int64   `json:"request_count_recent"`
+	Status4xxRecent            int64   `json:"status_4xx_recent"`
+	Status5xxRecent            int64   `json:"status_5xx_recent"`
+	BytesInRecent              int64   `json:"bytes_in_recent"`
+	BytesOutRecent             int64   `json:"bytes_out_recent"`
+	RequestsPerSecond          float64 `json:"requests_per_second"`
+	AppRequestsPerSecond       float64 `json:"app_requests_per_second"`
+	ControlPlaneRequestsPerSec float64 `json:"control_plane_requests_per_second"`
+}
+
 type serverSummaryOut struct {
 	queries.Server
-	InstanceCount        int64                `json:"instance_count"`
-	ActiveInstanceCount  int64                `json:"active_instance_count"`
-	RunningInstanceCount int64                `json:"running_instance_count"`
-	Health               string               `json:"health"`
-	HeartbeatHealth      string               `json:"heartbeat_health"`
-	HeartbeatAgeSeconds  int64                `json:"heartbeat_age_seconds"`
-	Runtime              string               `json:"runtime,omitempty"`
-	EnabledComponents    []string             `json:"enabled_components"`
-	Components           []serverComponentOut `json:"components"`
+	InstanceCount        int64                 `json:"instance_count"`
+	ActiveInstanceCount  int64                 `json:"active_instance_count"`
+	RunningInstanceCount int64                 `json:"running_instance_count"`
+	Health               string                `json:"health"`
+	HeartbeatHealth      string                `json:"heartbeat_health"`
+	HeartbeatAgeSeconds  int64                 `json:"heartbeat_age_seconds"`
+	Runtime              string                `json:"runtime,omitempty"`
+	EnabledComponents    []string              `json:"enabled_components"`
+	Components           []serverComponentOut  `json:"components"`
+	HostMetrics          *serverHostMetricsOut `json:"host_metrics,omitempty"`
+	Traffic              *serverTrafficOut     `json:"traffic,omitempty"`
 }
 
 type serverInstanceOut struct {
@@ -109,6 +149,25 @@ type serverDetailOut struct {
 	Volumes   []serverVolumeOut   `json:"volumes"`
 }
 
+type controlPlaneHealthSummaryOut struct {
+	HostCount                  int64   `json:"host_count"`
+	UnhealthyHostCount         int64   `json:"unhealthy_host_count"`
+	TotalRequestsPerSecond     float64 `json:"total_requests_per_second"`
+	AppRequestsPerSecond       float64 `json:"app_requests_per_second"`
+	ControlPlaneRequestsPerSec float64 `json:"control_plane_requests_per_second"`
+	Status5xxRecent            int64   `json:"status_5xx_recent"`
+	MemoryUsedBytes            int64   `json:"memory_used_bytes"`
+	MemoryTotalBytes           int64   `json:"memory_total_bytes"`
+	DiskUsedBytes              int64   `json:"disk_used_bytes"`
+	DiskTotalBytes             int64   `json:"disk_total_bytes"`
+	CPUPressurePercent         float64 `json:"cpu_pressure_percent"`
+}
+
+type controlPlaneHealthOverviewOut struct {
+	Summary controlPlaneHealthSummaryOut `json:"summary"`
+	Hosts   []serverSummaryOut           `json:"hosts"`
+}
+
 func redactServerSummary(summary serverSummaryOut) serverSummaryOut {
 	summary.InternalIp = ""
 	summary.IpRange = netip.Prefix{}
@@ -118,6 +177,8 @@ func redactServerSummary(summary serverSummaryOut) serverSummaryOut {
 	summary.Runtime = ""
 	summary.EnabledComponents = nil
 	summary.Components = nil
+	summary.HostMetrics = nil
+	summary.Traffic = nil
 	return summary
 }
 
@@ -264,6 +325,80 @@ func (h *Handler) listPlatformServers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rpcutil.WriteJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) getPlatformHealthOverview(w http.ResponseWriter, r *http.Request) {
+	p, ok := rpcutil.MustPrincipal(w, r)
+	if !ok {
+		return
+	}
+	if !rpcutil.RequirePlatformAdmin(w, p) {
+		return
+	}
+
+	ctx := r.Context()
+	now := time.Now().UTC()
+	hosts, err := h.overviewRowsClusterWide(ctx)
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "platform_health_overview", err)
+		return
+	}
+	hostMetricRows, err := h.Q.ServerHostMetricsFindAll(ctx)
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "platform_health_overview", err)
+		return
+	}
+	trafficRows, err := h.Q.ServerHTTPUsageRollupsAggregatedRecent(ctx, queries.ServerHTTPUsageRollupsAggregatedRecentParams{
+		BucketStart:   pgtype.Timestamptz{Time: now.Add(-trafficRecentWindow).Truncate(time.Minute), Valid: true},
+		BucketStart_2: pgtype.Timestamptz{Time: now.Truncate(time.Minute), Valid: true},
+	})
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "platform_health_overview", err)
+		return
+	}
+
+	metricsByServer := buildServerHostMetricsMap(hostMetricRows, now)
+	trafficByServer := buildServerTrafficMap(trafficRows, now)
+
+	filtered := make([]serverSummaryOut, 0, len(hosts))
+	summary := controlPlaneHealthSummaryOut{}
+	for _, host := range hosts {
+		if !isControlPlaneHost(host.EnabledComponents) {
+			continue
+		}
+		metrics := defaultServerHostMetricsOut()
+		if m, ok := metricsByServer[pguuid.ToString(host.ID)]; ok {
+			metrics = m
+		}
+		traffic := defaultServerTrafficOut()
+		if t, ok := trafficByServer[pguuid.ToString(host.ID)]; ok {
+			traffic = t
+		}
+		host.HostMetrics = &metrics
+		host.Traffic = &traffic
+		filtered = append(filtered, host)
+
+		summary.HostCount++
+		if isUnhealthyHost(host, metrics) {
+			summary.UnhealthyHostCount++
+		}
+		summary.TotalRequestsPerSecond += traffic.RequestsPerSecond
+		summary.AppRequestsPerSecond += traffic.AppRequestsPerSecond
+		summary.ControlPlaneRequestsPerSec += traffic.ControlPlaneRequestsPerSec
+		summary.Status5xxRecent += traffic.Status5xxRecent
+		summary.MemoryUsedBytes += metrics.MemoryUsedBytes
+		summary.MemoryTotalBytes += metrics.MemoryTotalBytes
+		summary.DiskUsedBytes += metrics.DiskUsedBytes
+		summary.DiskTotalBytes += metrics.DiskTotalBytes
+		if metrics.CPUPercent > summary.CPUPressurePercent {
+			summary.CPUPressurePercent = metrics.CPUPercent
+		}
+	}
+
+	rpcutil.WriteJSON(w, http.StatusOK, controlPlaneHealthOverviewOut{
+		Summary: summary,
+		Hosts:   filtered,
+	})
 }
 
 func (h *Handler) listServers(w http.ResponseWriter, r *http.Request) {
@@ -413,6 +548,8 @@ func (h *Handler) writeServerDetails(w http.ResponseWriter, r *http.Request, clu
 		activeCount     int64
 		usageRows       []queries.ServerInstanceUsageLatestRow
 		volumesByServer []queries.ProjectVolume
+		hostMetrics     = defaultServerHostMetricsOut()
+		traffic         = defaultServerTrafficOut()
 	)
 	if clusterWide {
 		instanceCount, err = h.Q.DeploymentInstanceCountByServerID(ctx, id)
@@ -479,6 +616,23 @@ func (h *Handler) writeServerDetails(w http.ResponseWriter, r *http.Request, clu
 	}
 
 	now := time.Now().UTC()
+	if row, hostErr := h.Q.ServerHostMetricsFindByServerID(ctx, id); hostErr == nil {
+		hostMetrics = buildServerHostMetricsOut(row, now)
+	} else if hostErr != pgx.ErrNoRows {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", hostErr)
+		return
+	}
+	trafficRows, err := h.Q.ServerHTTPUsageRollupsAggregatedRecent(ctx, queries.ServerHTTPUsageRollupsAggregatedRecentParams{
+		BucketStart:   pgtype.Timestamptz{Time: now.Add(-trafficRecentWindow).Truncate(time.Minute), Valid: true},
+		BucketStart_2: pgtype.Timestamptz{Time: now.Truncate(time.Minute), Valid: true},
+	})
+	if err != nil {
+		rpcutil.WriteAPIErrorFromErr(w, http.StatusInternalServerError, "server_details", err)
+		return
+	}
+	if t, ok := buildServerTrafficMap(trafficRows, now)[pguuid.ToString(id)]; ok {
+		traffic = t
+	}
 	instances, runningCount := buildServerInstancesFromUsageLatest(usageRows, now)
 
 	slices.SortFunc(instances, func(a, b serverInstanceOut) int {
@@ -542,6 +696,8 @@ func (h *Handler) writeServerDetails(w http.ResponseWriter, r *http.Request, clu
 	})
 
 	summary := buildServerSummary(server, instanceCount, activeCount, runningCount, statuses, now)
+	summary.HostMetrics = &hostMetrics
+	summary.Traffic = &traffic
 	if redact {
 		summary = redactServerSummary(summary)
 	}
@@ -729,6 +885,141 @@ func buildComponentOut(row queries.ServerComponentStatus, now time.Time) serverC
 		LastErrorMessage: row.LastErrorMessage,
 		Metadata:         metadata,
 	}
+}
+
+func defaultServerHostMetricsOut() serverHostMetricsOut {
+	return serverHostMetricsOut{SampleHealth: "missing"}
+}
+
+func buildServerHostMetricsMap(rows []queries.ServerHostMetric, now time.Time) map[string]serverHostMetricsOut {
+	out := make(map[string]serverHostMetricsOut, len(rows))
+	for _, row := range rows {
+		out[pguuid.ToString(row.ServerID)] = buildServerHostMetricsOut(row, now)
+	}
+	return out
+}
+
+func buildServerHostMetricsOut(row queries.ServerHostMetric, now time.Time) serverHostMetricsOut {
+	out := serverHostMetricsOut{
+		SampledAt:            rpcutil.FormatTS(row.SampledAt),
+		CPUPercent:           row.CpuPercent,
+		LoadAvg1m:            row.LoadAvg1m,
+		LoadAvg5m:            row.LoadAvg5m,
+		LoadAvg15m:           row.LoadAvg15m,
+		MemoryTotalBytes:     row.MemoryTotalBytes,
+		MemoryAvailableBytes: row.MemoryAvailableBytes,
+		MemoryUsedBytes:      row.MemoryUsedBytes,
+		DiskTotalBytes:       row.DiskTotalBytes,
+		DiskFreeBytes:        row.DiskFreeBytes,
+		DiskUsedBytes:        row.DiskUsedBytes,
+		DiskReadBytesPerSec:  row.DiskReadBytesPerSec,
+		DiskWriteBytesPerSec: row.DiskWriteBytesPerSec,
+		StateDiskPath:        row.StateDiskPath,
+		StateDiskTotalBytes:  row.StateDiskTotalBytes,
+		StateDiskFreeBytes:   row.StateDiskFreeBytes,
+		StateDiskUsedBytes:   row.StateDiskUsedBytes,
+		SampleHealth:         "missing",
+	}
+	if row.SampledAt.Valid {
+		age := ageSeconds(now, row.SampledAt.Time)
+		out.SampleAgeSeconds = &age
+		out.SampleHealth = "fresh"
+		if now.Sub(row.SampledAt.Time) > 2*hostMetricsEvery {
+			out.SampleHealth = "stale"
+		}
+	}
+	return out
+}
+
+func defaultServerTrafficOut() serverTrafficOut {
+	return serverTrafficOut{WindowSeconds: int64(trafficRecentWindow.Seconds())}
+}
+
+func buildServerTrafficMap(rows []queries.ServerHTTPUsageRollupsAggregatedRecentRow, now time.Time) map[string]serverTrafficOut {
+	type trafficAccumulator struct {
+		requestTotal   float64
+		requestApp     float64
+		requestControl float64
+		status4xx      float64
+		status5xx      float64
+		bytesIn        float64
+		bytesOut       float64
+	}
+	windowStart := now.Add(-trafficRecentWindow)
+	accByServer := make(map[string]*trafficAccumulator)
+	for _, row := range rows {
+		if !row.BucketStart.Valid {
+			continue
+		}
+		weight := bucketOverlapWeight(row.BucketStart.Time, windowStart, now)
+		if weight <= 0 {
+			continue
+		}
+		key := pguuid.ToString(row.ServerID)
+		acc := accByServer[key]
+		if acc == nil {
+			acc = &trafficAccumulator{}
+			accByServer[key] = acc
+		}
+		req := float64(row.RequestCount) * weight
+		acc.requestTotal += req
+		acc.status4xx += float64(row.Status4xx) * weight
+		acc.status5xx += float64(row.Status5xx) * weight
+		acc.bytesIn += float64(row.BytesIn) * weight
+		acc.bytesOut += float64(row.BytesOut) * weight
+		switch row.TrafficKind {
+		case "app_edge":
+			acc.requestApp += req
+		case "control_plane_api":
+			acc.requestControl += req
+		}
+	}
+
+	out := make(map[string]serverTrafficOut, len(accByServer))
+	for key, acc := range accByServer {
+		windowSeconds := trafficRecentWindow.Seconds()
+		out[key] = serverTrafficOut{
+			WindowSeconds:              int64(windowSeconds),
+			RequestCountRecent:         int64(math.Round(acc.requestTotal)),
+			Status4xxRecent:            int64(math.Round(acc.status4xx)),
+			Status5xxRecent:            int64(math.Round(acc.status5xx)),
+			BytesInRecent:              int64(math.Round(acc.bytesIn)),
+			BytesOutRecent:             int64(math.Round(acc.bytesOut)),
+			RequestsPerSecond:          acc.requestTotal / windowSeconds,
+			AppRequestsPerSecond:       acc.requestApp / windowSeconds,
+			ControlPlaneRequestsPerSec: acc.requestControl / windowSeconds,
+		}
+	}
+	return out
+}
+
+func bucketOverlapWeight(bucketStart, windowStart, windowEnd time.Time) float64 {
+	bucketEnd := bucketStart.Add(time.Minute)
+	start := bucketStart
+	if start.Before(windowStart) {
+		start = windowStart
+	}
+	end := bucketEnd
+	if end.After(windowEnd) {
+		end = windowEnd
+	}
+	if !end.After(start) {
+		return 0
+	}
+	return end.Sub(start).Seconds() / time.Minute.Seconds()
+}
+
+func isControlPlaneHost(enabled []string) bool {
+	for _, component := range enabled {
+		if component == "api" || component == "edge" {
+			return true
+		}
+	}
+	return false
+}
+
+func isUnhealthyHost(host serverSummaryOut, metrics serverHostMetricsOut) bool {
+	return host.Health != "healthy" || metrics.SampleHealth == "stale" || metrics.SampleHealth == "missing"
 }
 
 func decodeStatusMetadata(raw []byte) map[string]any {

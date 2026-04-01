@@ -492,6 +492,42 @@ type ServerComponentStatus struct {
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ServerHostMetric struct {
+	ServerID             pgtype.UUID        `json:"server_id"`
+	SampledAt            pgtype.Timestamptz `json:"sampled_at"`
+	CpuPercent           float64            `json:"cpu_percent"`
+	LoadAvg1m            float64            `json:"load_avg_1m"`
+	LoadAvg5m            float64            `json:"load_avg_5m"`
+	LoadAvg15m           float64            `json:"load_avg_15m"`
+	MemoryTotalBytes     int64              `json:"memory_total_bytes"`
+	MemoryAvailableBytes int64              `json:"memory_available_bytes"`
+	MemoryUsedBytes      int64              `json:"memory_used_bytes"`
+	DiskTotalBytes       int64              `json:"disk_total_bytes"`
+	DiskFreeBytes        int64              `json:"disk_free_bytes"`
+	DiskUsedBytes        int64              `json:"disk_used_bytes"`
+	DiskReadBytesPerSec  float64            `json:"disk_read_bytes_per_sec"`
+	DiskWriteBytesPerSec float64            `json:"disk_write_bytes_per_sec"`
+	StateDiskPath        string             `json:"state_disk_path"`
+	StateDiskTotalBytes  int64              `json:"state_disk_total_bytes"`
+	StateDiskFreeBytes   int64              `json:"state_disk_free_bytes"`
+	StateDiskUsedBytes   int64              `json:"state_disk_used_bytes"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ServerHttpUsageRollup struct {
+	ID           pgtype.UUID        `json:"id"`
+	ServerID     pgtype.UUID        `json:"server_id"`
+	TrafficKind  string             `json:"traffic_kind"`
+	BucketStart  pgtype.Timestamptz `json:"bucket_start"`
+	RequestCount int64              `json:"request_count"`
+	Status2xx    int64              `json:"status_2xx"`
+	Status4xx    int64              `json:"status_4xx"`
+	Status5xx    int64              `json:"status_5xx"`
+	BytesIn      int64              `json:"bytes_in"`
+	BytesOut     int64              `json:"bytes_out"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ServerSetting struct {
 	ServerID                     pgtype.UUID        `json:"server_id"`
 	RuntimeOverride              string             `json:"runtime_override"`

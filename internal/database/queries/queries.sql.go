@@ -10312,6 +10312,117 @@ func (q *Queries) ServerFindLeastLoaded(ctx context.Context) (Server, error) {
 	return i, err
 }
 
+const serverHTTPUsageRollupIncrement = `-- name: ServerHTTPUsageRollupIncrement :exec
+INSERT INTO server_http_usage_rollups (
+    id, server_id, traffic_kind, bucket_start,
+    request_count, status_2xx, status_4xx, status_5xx, bytes_in, bytes_out, updated_at
+) VALUES (
+    gen_random_uuid(), $1, $2, $3,
+    $4, $5, $6, $7, $8, $9, NOW()
+)
+ON CONFLICT (server_id, traffic_kind, bucket_start)
+DO UPDATE SET
+    request_count = server_http_usage_rollups.request_count + EXCLUDED.request_count,
+    status_2xx = server_http_usage_rollups.status_2xx + EXCLUDED.status_2xx,
+    status_4xx = server_http_usage_rollups.status_4xx + EXCLUDED.status_4xx,
+    status_5xx = server_http_usage_rollups.status_5xx + EXCLUDED.status_5xx,
+    bytes_in = server_http_usage_rollups.bytes_in + EXCLUDED.bytes_in,
+    bytes_out = server_http_usage_rollups.bytes_out + EXCLUDED.bytes_out,
+    updated_at = NOW()
+`
+
+type ServerHTTPUsageRollupIncrementParams struct {
+	ServerID     pgtype.UUID        `json:"server_id"`
+	TrafficKind  string             `json:"traffic_kind"`
+	BucketStart  pgtype.Timestamptz `json:"bucket_start"`
+	RequestCount int64              `json:"request_count"`
+	Status2xx    int64              `json:"status_2xx"`
+	Status4xx    int64              `json:"status_4xx"`
+	Status5xx    int64              `json:"status_5xx"`
+	BytesIn      int64              `json:"bytes_in"`
+	BytesOut     int64              `json:"bytes_out"`
+}
+
+func (q *Queries) ServerHTTPUsageRollupIncrement(ctx context.Context, arg ServerHTTPUsageRollupIncrementParams) error {
+	_, err := q.db.Exec(ctx, serverHTTPUsageRollupIncrement,
+		arg.ServerID,
+		arg.TrafficKind,
+		arg.BucketStart,
+		arg.RequestCount,
+		arg.Status2xx,
+		arg.Status4xx,
+		arg.Status5xx,
+		arg.BytesIn,
+		arg.BytesOut,
+	)
+	return err
+}
+
+const serverHTTPUsageRollupsAggregatedRecent = `-- name: ServerHTTPUsageRollupsAggregatedRecent :many
+SELECT
+    server_id,
+    traffic_kind,
+    bucket_start,
+    COALESCE(SUM(request_count), 0)::bigint AS request_count,
+    COALESCE(SUM(status_2xx), 0)::bigint AS status_2xx,
+    COALESCE(SUM(status_4xx), 0)::bigint AS status_4xx,
+    COALESCE(SUM(status_5xx), 0)::bigint AS status_5xx,
+    COALESCE(SUM(bytes_in), 0)::bigint AS bytes_in,
+    COALESCE(SUM(bytes_out), 0)::bigint AS bytes_out
+FROM server_http_usage_rollups
+WHERE bucket_start >= $1
+  AND bucket_start <= $2
+GROUP BY server_id, traffic_kind, bucket_start
+ORDER BY server_id, traffic_kind, bucket_start
+`
+
+type ServerHTTPUsageRollupsAggregatedRecentParams struct {
+	BucketStart   pgtype.Timestamptz `json:"bucket_start"`
+	BucketStart_2 pgtype.Timestamptz `json:"bucket_start_2"`
+}
+
+type ServerHTTPUsageRollupsAggregatedRecentRow struct {
+	ServerID     pgtype.UUID        `json:"server_id"`
+	TrafficKind  string             `json:"traffic_kind"`
+	BucketStart  pgtype.Timestamptz `json:"bucket_start"`
+	RequestCount int64              `json:"request_count"`
+	Status2xx    int64              `json:"status_2xx"`
+	Status4xx    int64              `json:"status_4xx"`
+	Status5xx    int64              `json:"status_5xx"`
+	BytesIn      int64              `json:"bytes_in"`
+	BytesOut     int64              `json:"bytes_out"`
+}
+
+func (q *Queries) ServerHTTPUsageRollupsAggregatedRecent(ctx context.Context, arg ServerHTTPUsageRollupsAggregatedRecentParams) ([]ServerHTTPUsageRollupsAggregatedRecentRow, error) {
+	rows, err := q.db.Query(ctx, serverHTTPUsageRollupsAggregatedRecent, arg.BucketStart, arg.BucketStart_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ServerHTTPUsageRollupsAggregatedRecentRow{}
+	for rows.Next() {
+		var i ServerHTTPUsageRollupsAggregatedRecentRow
+		if err := rows.Scan(
+			&i.ServerID,
+			&i.TrafficKind,
+			&i.BucketStart,
+			&i.RequestCount,
+			&i.Status2xx,
+			&i.Status4xx,
+			&i.Status5xx,
+			&i.BytesIn,
+			&i.BytesOut,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const serverHeartbeat = `-- name: ServerHeartbeat :exec
 UPDATE servers
 SET last_heartbeat_at = NOW(),
@@ -10325,6 +10436,165 @@ WHERE id = $1
 
 func (q *Queries) ServerHeartbeat(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, serverHeartbeat, id)
+	return err
+}
+
+const serverHostMetricsFindAll = `-- name: ServerHostMetricsFindAll :many
+SELECT server_id, sampled_at, cpu_percent, load_avg_1m, load_avg_5m, load_avg_15m, memory_total_bytes, memory_available_bytes, memory_used_bytes, disk_total_bytes, disk_free_bytes, disk_used_bytes, disk_read_bytes_per_sec, disk_write_bytes_per_sec, state_disk_path, state_disk_total_bytes, state_disk_free_bytes, state_disk_used_bytes, updated_at FROM server_host_metrics
+ORDER BY server_id
+`
+
+func (q *Queries) ServerHostMetricsFindAll(ctx context.Context) ([]ServerHostMetric, error) {
+	rows, err := q.db.Query(ctx, serverHostMetricsFindAll)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ServerHostMetric{}
+	for rows.Next() {
+		var i ServerHostMetric
+		if err := rows.Scan(
+			&i.ServerID,
+			&i.SampledAt,
+			&i.CpuPercent,
+			&i.LoadAvg1m,
+			&i.LoadAvg5m,
+			&i.LoadAvg15m,
+			&i.MemoryTotalBytes,
+			&i.MemoryAvailableBytes,
+			&i.MemoryUsedBytes,
+			&i.DiskTotalBytes,
+			&i.DiskFreeBytes,
+			&i.DiskUsedBytes,
+			&i.DiskReadBytesPerSec,
+			&i.DiskWriteBytesPerSec,
+			&i.StateDiskPath,
+			&i.StateDiskTotalBytes,
+			&i.StateDiskFreeBytes,
+			&i.StateDiskUsedBytes,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const serverHostMetricsFindByServerID = `-- name: ServerHostMetricsFindByServerID :one
+SELECT server_id, sampled_at, cpu_percent, load_avg_1m, load_avg_5m, load_avg_15m, memory_total_bytes, memory_available_bytes, memory_used_bytes, disk_total_bytes, disk_free_bytes, disk_used_bytes, disk_read_bytes_per_sec, disk_write_bytes_per_sec, state_disk_path, state_disk_total_bytes, state_disk_free_bytes, state_disk_used_bytes, updated_at FROM server_host_metrics
+WHERE server_id = $1
+`
+
+func (q *Queries) ServerHostMetricsFindByServerID(ctx context.Context, serverID pgtype.UUID) (ServerHostMetric, error) {
+	row := q.db.QueryRow(ctx, serverHostMetricsFindByServerID, serverID)
+	var i ServerHostMetric
+	err := row.Scan(
+		&i.ServerID,
+		&i.SampledAt,
+		&i.CpuPercent,
+		&i.LoadAvg1m,
+		&i.LoadAvg5m,
+		&i.LoadAvg15m,
+		&i.MemoryTotalBytes,
+		&i.MemoryAvailableBytes,
+		&i.MemoryUsedBytes,
+		&i.DiskTotalBytes,
+		&i.DiskFreeBytes,
+		&i.DiskUsedBytes,
+		&i.DiskReadBytesPerSec,
+		&i.DiskWriteBytesPerSec,
+		&i.StateDiskPath,
+		&i.StateDiskTotalBytes,
+		&i.StateDiskFreeBytes,
+		&i.StateDiskUsedBytes,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const serverHostMetricsUpsert = `-- name: ServerHostMetricsUpsert :exec
+INSERT INTO server_host_metrics (
+    server_id, sampled_at, cpu_percent, load_avg_1m, load_avg_5m, load_avg_15m,
+    memory_total_bytes, memory_available_bytes, memory_used_bytes,
+    disk_total_bytes, disk_free_bytes, disk_used_bytes,
+    disk_read_bytes_per_sec, disk_write_bytes_per_sec,
+    state_disk_path, state_disk_total_bytes, state_disk_free_bytes, state_disk_used_bytes,
+    updated_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6,
+    $7, $8, $9,
+    $10, $11, $12,
+    $13, $14,
+    $15, $16, $17, $18,
+    NOW()
+)
+ON CONFLICT (server_id) DO UPDATE SET
+    sampled_at = EXCLUDED.sampled_at,
+    cpu_percent = EXCLUDED.cpu_percent,
+    load_avg_1m = EXCLUDED.load_avg_1m,
+    load_avg_5m = EXCLUDED.load_avg_5m,
+    load_avg_15m = EXCLUDED.load_avg_15m,
+    memory_total_bytes = EXCLUDED.memory_total_bytes,
+    memory_available_bytes = EXCLUDED.memory_available_bytes,
+    memory_used_bytes = EXCLUDED.memory_used_bytes,
+    disk_total_bytes = EXCLUDED.disk_total_bytes,
+    disk_free_bytes = EXCLUDED.disk_free_bytes,
+    disk_used_bytes = EXCLUDED.disk_used_bytes,
+    disk_read_bytes_per_sec = EXCLUDED.disk_read_bytes_per_sec,
+    disk_write_bytes_per_sec = EXCLUDED.disk_write_bytes_per_sec,
+    state_disk_path = EXCLUDED.state_disk_path,
+    state_disk_total_bytes = EXCLUDED.state_disk_total_bytes,
+    state_disk_free_bytes = EXCLUDED.state_disk_free_bytes,
+    state_disk_used_bytes = EXCLUDED.state_disk_used_bytes,
+    updated_at = NOW()
+`
+
+type ServerHostMetricsUpsertParams struct {
+	ServerID             pgtype.UUID        `json:"server_id"`
+	SampledAt            pgtype.Timestamptz `json:"sampled_at"`
+	CpuPercent           float64            `json:"cpu_percent"`
+	LoadAvg1m            float64            `json:"load_avg_1m"`
+	LoadAvg5m            float64            `json:"load_avg_5m"`
+	LoadAvg15m           float64            `json:"load_avg_15m"`
+	MemoryTotalBytes     int64              `json:"memory_total_bytes"`
+	MemoryAvailableBytes int64              `json:"memory_available_bytes"`
+	MemoryUsedBytes      int64              `json:"memory_used_bytes"`
+	DiskTotalBytes       int64              `json:"disk_total_bytes"`
+	DiskFreeBytes        int64              `json:"disk_free_bytes"`
+	DiskUsedBytes        int64              `json:"disk_used_bytes"`
+	DiskReadBytesPerSec  float64            `json:"disk_read_bytes_per_sec"`
+	DiskWriteBytesPerSec float64            `json:"disk_write_bytes_per_sec"`
+	StateDiskPath        string             `json:"state_disk_path"`
+	StateDiskTotalBytes  int64              `json:"state_disk_total_bytes"`
+	StateDiskFreeBytes   int64              `json:"state_disk_free_bytes"`
+	StateDiskUsedBytes   int64              `json:"state_disk_used_bytes"`
+}
+
+func (q *Queries) ServerHostMetricsUpsert(ctx context.Context, arg ServerHostMetricsUpsertParams) error {
+	_, err := q.db.Exec(ctx, serverHostMetricsUpsert,
+		arg.ServerID,
+		arg.SampledAt,
+		arg.CpuPercent,
+		arg.LoadAvg1m,
+		arg.LoadAvg5m,
+		arg.LoadAvg15m,
+		arg.MemoryTotalBytes,
+		arg.MemoryAvailableBytes,
+		arg.MemoryUsedBytes,
+		arg.DiskTotalBytes,
+		arg.DiskFreeBytes,
+		arg.DiskUsedBytes,
+		arg.DiskReadBytesPerSec,
+		arg.DiskWriteBytesPerSec,
+		arg.StateDiskPath,
+		arg.StateDiskTotalBytes,
+		arg.StateDiskFreeBytes,
+		arg.StateDiskUsedBytes,
+	)
 	return err
 }
 
