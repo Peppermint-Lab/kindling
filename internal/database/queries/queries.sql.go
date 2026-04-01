@@ -10325,15 +10325,15 @@ SELECT
     di.created_at,
     di.updated_at,
     m.id AS migration_id,
-    m.state AS migration_state,
+    COALESCE(m.state, '') AS migration_state,
     m.destination_server_id AS migration_destination_server_id,
-    m.failure_message AS migration_failure_message,
+    COALESCE(m.failure_message, '') AS migration_failure_message,
     s.sampled_at,
     s.cpu_percent,
-    s.memory_rss_bytes,
-    s.disk_read_bytes,
-    s.disk_write_bytes,
-    s.source
+    COALESCE(s.memory_rss_bytes, 0) AS memory_rss_bytes,
+    COALESCE(s.disk_read_bytes, 0) AS disk_read_bytes,
+    COALESCE(s.disk_write_bytes, 0) AS disk_write_bytes,
+    COALESCE(s.source, '') AS source
 FROM deployment_instances di
 INNER JOIN deployments d ON d.id = di.deployment_id
   AND d.deleted_at IS NULL
@@ -10431,15 +10431,15 @@ SELECT
     di.created_at,
     di.updated_at,
     m.id AS migration_id,
-    m.state AS migration_state,
+    COALESCE(m.state, '') AS migration_state,
     m.destination_server_id AS migration_destination_server_id,
-    m.failure_message AS migration_failure_message,
+    COALESCE(m.failure_message, '') AS migration_failure_message,
     s.sampled_at,
     s.cpu_percent,
-    s.memory_rss_bytes,
-    s.disk_read_bytes,
-    s.disk_write_bytes,
-    s.source
+    COALESCE(s.memory_rss_bytes, 0) AS memory_rss_bytes,
+    COALESCE(s.disk_read_bytes, 0) AS disk_read_bytes,
+    COALESCE(s.disk_write_bytes, 0) AS disk_write_bytes,
+    COALESCE(s.source, '') AS source
 FROM deployment_instances di
 INNER JOIN deployments d ON d.id = di.deployment_id
   AND d.deleted_at IS NULL
